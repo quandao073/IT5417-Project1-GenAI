@@ -3,7 +3,7 @@
 > **Phiên bản:** 2.0  
 > **Phạm vi triển khai:** POC chạy hoàn toàn trên máy local bằng Docker Compose; chưa triển khai cloud/production  
 > **Nguồn dữ liệu chính:** ảnh từ CheXpert-v1.0-small, text/annotation từ CheXpert Plus, join bằng `path_to_image`  
-> **Giới hạn ổ đĩa:** đo được 215 GB trống; hard ceiling 120 GB, working target 25–40 GB, luôn giữ ≥ 40 GB trống  
+> **Dung lượng:** không còn là ràng buộc thiết kế — đo thực tế 182 GB trống, dataset 12 GB, dự báo thêm ~19 GB  
 > **Phần cứng mục tiêu:** i7-13800H (20 threads), 64 GB RAM, NVIDIA RTX 2000 Ada 8 GB VRAM, Docker 29.5 + Compose v5  
 > **Thời lượng đề xuất:** 12 tuần cho một người thực hiện
 
@@ -315,10 +315,10 @@ Không cần tải toàn bộ UMLS. Mỗi mapping thủ công phải có version
 
 ### 6.1. Quy tắc dung lượng
 
-- **Hard ceiling:** dừng pipeline khi thư mục dự án vượt 120 GB hoặc ổ đĩa còn dưới 40 GB.
+- Không có hard ceiling tự động. Dung lượng được theo dõi thủ công khi cần.
 - **Working target:** 25–40 GB trong lúc build; 20–30 GB ở trạng thái demo ổn định.
 - Docker cache, model cache và WSL2 virtual disk phải nằm trong ngân sách, không coi là “ngoài dự án”.
-- Lưu ý Windows: WSL2 không tự trả lại dung lượng khi xóa file trong container. Phải chạy `wsl --manage docker-desktop-data --set-sparse true` hoặc compact định kỳ; disk guard phải đo cả `ext4.vhdx`.
+- Lưu ý Windows: WSL2 không tự trả lại dung lượng khi xóa file trong container. Nếu ổ đĩa cạn bất thường, kiểm tra `docker system df` và compact `ext4.vhdx`.
 
 ### 6.2. Ngân sách dự kiến (kịch bản corpus đầy đủ ~190k ảnh frontal)
 
@@ -378,15 +378,13 @@ download CheXpert-v1.0-small archive
 
 Vì bản small đã là JPEG downsample nên không còn bước DICOM windowing/inversion. Đây là lý do chính khiến pipeline v2.0 đơn giản hơn v1.0 đáng kể.
 
-### 6.5. Disk guard bắt buộc
+### 6.5. Không dùng disk guard tự động
 
-Tạo `scripts/check_disk_budget.py` chạy trước và sau mỗi batch:
+v1.0 yêu cầu một `scripts/check_disk_budget.py` chặn pipeline theo ngưỡng. Công cụ đó đã được viết, chạy một lần, rồi **gỡ bỏ** ngày 2026-09-21.
 
-- in dung lượng theo thư mục, bao gồm cả WSL2 `ext4.vhdx`;
-- fail nếu free space < 40 GB;
-- fail nếu tổng thư mục dự án > 120 GB;
-- dọn cache tạm theo allowlist, không xóa recursive theo path không kiểm chứng;
-- ghi `artifacts/storage_report.json`.
+Lý do: nó được thiết kế dưới giả định 100 GB trống. Số đo thật là 182 GB trống, dataset 12 GB và dự báo phát sinh thêm ~19 GB. Một cái gate chặn ở ngưỡng 40 GB trong hoàn cảnh đó chỉ là chi phí bảo trì, không phải biện pháp bảo vệ.
+
+Khi cần kiểm tra dung lượng thì dùng `du -sh` và `docker system df` thủ công.
 
 ---
 
@@ -528,7 +526,7 @@ cxr-semantic-retrieval/
 ├── configs/                  # data, models, retrieval, ontology, evaluation (YAML)
 ├── data/                     # gitignored: raw/ staging/ processed/ manifests/ indexes/ fixtures/
 ├── artifacts/                # gitignored: metrics/ reports/ screenshots/
-├── scripts/                  # check_disk_budget, download_*, seed_demo, smoke_test
+├── scripts/                  # seed_demo, smoke_test (tạo khi cần)
 ├── tests/                    # unit/ integration/ e2e/ fixtures/
 ├── docs/                     # brief, architecture, data-dictionary, evaluation-design, adr/, data-governance/
 ├── compose.yaml              # mặc định CPU: web + api + qdrant + neo4j
@@ -549,7 +547,7 @@ Không commit `data/`, model weights, Qdrant/Neo4j volumes hoặc report chứa 
 
 - [ ] Viết one-page product brief: problem, user, value, non-goals.
 - [ ] Chốt 6 user stories bắt buộc và query demo chính.
-- [ ] Chốt quy tắc corpus theo bảng §2.3 và hard ceiling 120 GB.
+- [ ] Chốt quy tắc corpus theo bảng §2.3.
 - [ ] Chốt rằng đây là retrieval POC, không phải diagnostic tool.
 - [ ] Tạo backlog và Definition of Done cho từng phase.
 
@@ -578,20 +576,17 @@ Không commit `data/`, model weights, Qdrant/Neo4j volumes hoặc report chứa 
 - [ ] Tải CheXpert-v1.0-small; verify checksum; đo kích thước thật.
 - [ ] Đo GPU/RAM/thời gian embedding thử trên 500 ảnh, ngoại suy cho corpus mục tiêu.
 - [ ] Xác nhận WSL2 GPU passthrough hoạt động với `docker run --gpus all`.
-- [ ] Viết disk guard và storage report.
 
 ### Deliverables
 
 - `docs/data-dictionary.md`
 - `docs/data-governance/`
 - `artifacts/data_audit.json` — có trường `join_rate` và phân loại missing
-- `artifacts/storage_report.json`
 - quyết định corpus: toàn bộ frontal hay 25k stratified
 
 ### Exit criteria
 
 - Tỉ lệ join đã đo trên toàn bộ CSV, và corpus target đã chốt theo bảng §2.3.
-- Có ước lượng peak storage dựa trên số đo thực, nhỏ hơn 120 GB.
 - 500 ảnh đi qua preprocess và embedding thành công, có số đo throughput.
 
 ---
@@ -675,7 +670,7 @@ Không commit `data/`, model weights, Qdrant/Neo4j volumes hoặc report chứa 
 
 - ≥ 99,5% ảnh đã chọn đọc và hiển thị được.
 - Không có ảnh đảo trắng/đen sai trong mẫu QC.
-- Processed images nằm trong quota §6.2; disk guard xanh trước và sau mỗi batch.
+- Processed images nằm trong quota §6.2.
 
 ---
 
@@ -935,7 +930,6 @@ Mặc định là Ollama chạy native trên host và API gọi qua `host.docker
 - [ ] Viết architecture decision records.
 - [ ] Chuẩn bị demo script 7–10 phút.
 - [ ] Ghi video backup của demo.
-- [ ] Chạy final disk audit và xóa staging/cache không cần thiết.
 
 ### Deliverables
 
@@ -949,7 +943,6 @@ Mặc định là Ollama chạy native trên host và API gọi qua `host.docker
 
 - Clean-start demo thành công ít nhất 3 lần.
 - Không còn blocker P0/P1.
-- Tổng footprint ổn định nằm trong working target §6.1; không vượt hard ceiling 120 GB ở bất kỳ thời điểm nào.
 - Báo cáo nêu rõ limitation, bias, synthetic labels và phạm vi non-diagnostic.
 
 ---
@@ -958,7 +951,7 @@ Mặc định là Ollama chạy native trên host và API gọi qua `host.docker
 
 | Lớp test | Nội dung |
 |---|---|
-| Unit | label mapping, query schema, normalization, score fusion, disk guard |
+| Unit | label mapping, query schema, normalization, score fusion |
 | Data contract | schema, join coverage, duplicates, patient leakage, file checksums |
 | Integration | FastAPI–Qdrant, FastAPI–Neo4j, FTS, model adapter |
 | Retrieval regression | bộ 30–50 query cố định và top result expectations |
@@ -979,7 +972,6 @@ Mặc định là Ollama chạy native trên host và API gọi qua `host.docker
 | Ngưỡng nghiệm thu đoán trước khi đo | Hoặc quá dễ hoặc không đạt được | Chốt ngưỡng sau baseline Phase 4; phát biểu ở dạng tương đối |
 | Tích hợp và đóng gói dồn về cuối kỳ | Trễ tiến độ không cứu được | Phase 2B walking skeleton; Docker chạy từ tuần 3 |
 | Ảnh small mất độ phân giải | Không nhận được chi tiết mảnh | Ghi vào `docs/limitations.md`; không tuyên bố gì về nốt nhỏ/chi tiết vi thể |
-| WSL2 không trả lại dung lượng đã xóa | Đầy đĩa âm thầm | Disk guard đo cả `ext4.vhdx`; bật sparse; compact định kỳ |
 | GPU passthrough Docker Desktop hỏng | Không embedding được trong container | Xác nhận ở Phase 1; đường lui là chạy worker trực tiếp trên host |
 | VLM yếu với anatomy/negation | Kết quả sai | KG hard constraints + text evidence; ablation rõ ràng |
 | Report mô tả nhiều ảnh trong cùng study | Image-report mismatch | Một ảnh frontal/study nhưng gắn cờ limitation; không tuyên bố lesion localization chính xác |
@@ -1036,7 +1028,6 @@ POC được coi là hoàn thành khi tất cả điều kiện sau đạt:
 - [ ] Có benchmark tái lập, tách rõ ba trục đánh giá, kèm human review.
 - [ ] Báo cáo thừa nhận thẳng giới hạn phương pháp của trục 1 và 2.
 - [ ] Có error analysis và limitations.
-- [ ] Không vượt disk budget; staging đã được dọn.
 - [ ] Không có secret hoặc dataset raw trong Git.
 - [ ] Có disclaimer non-diagnostic.
 - [ ] Có demo script và video backup.
