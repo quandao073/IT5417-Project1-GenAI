@@ -1,11 +1,11 @@
-# Thiết kế đánh giá ba trục. Xem §8.0 và §8.1.
-# Quy tắc bất di bất dịch: CheXbert -> ground truth; RadGraph -> constraint. Không hoán đổi.
+# Three-axis evaluation design. See plan sections 8.0 and 8.1.
+# Inviolable rule: CheXbert is ground truth, RadGraph drives constraints. Never swap them.
 
 axes:
   retrieval_quality:
     ground_truth: chexbert_labels
     metrics: [precision@5, precision@10, ndcg@10, mrr]
-    # Recall chỉ có nghĩa khi tập relevant nhỏ
+    # Recall is only meaningful when the relevant set is small
     recall_when_relevant_lt: 50
     interpretation: >
       So sánh công bằng ba cấu hình. Vẫn tương quan với trục 2 vì cùng suy ra từ report;
@@ -29,7 +29,7 @@ axes:
 
 benchmark:
   total_queries: 400
-  # Query sinh từ CheXbert labels, KHÔNG sinh từ RadGraph (tránh rò rỉ vào trục 1)
+  # Queries are generated from CheXbert labels, never from RadGraph (avoids leaking into axis 1)
   generated_from: chexbert_labels
   verbatim_report_as_query: false
   groups:
@@ -45,8 +45,8 @@ configurations:
   - hybrid
 
 thresholds:
-  # Ngưỡng tuyệt đối chỉ hợp lệ cho tính đúng đắn logic, không cho chất lượng retrieval.
-  # Phần còn lại chốt sau khi có artifacts/metrics/baseline.json ở Phase 4.
+  # Absolute thresholds are only valid for logical correctness, not retrieval quality.
+  # The rest are fixed once artifacts/metrics/baseline.json exists in Phase 4.
   negation_constraint_satisfaction_min: 0.90
   evidence_faithfulness_min: 1.00
   hybrid_ndcg10_relative_gain_min: 0.05

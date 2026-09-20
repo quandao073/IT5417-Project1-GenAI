@@ -1,6 +1,6 @@
-"""Cong chan Phase 1: do ti le join giua CheXpert Plus va CheXpert-v1.0-small.
+"""Phase 1 gate: measure the join rate between CheXpert Plus and CheXpert-v1.0-small.
 
-Xem §2.3 cua ke hoach. Khong tai anh truoc khi cong chan nay dat.
+See plan section 2.3. Do not download images until this gate passes.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ SAMPLED_CORPUS_MIN_JOIN_RATE = 0.70
 
 
 class CorpusMode(Enum):
-    """Quyet dinh corpus rut ra tu ti le join."""
+    """Corpus decision derived from the measured join rate."""
 
     FULL_FRONTAL = "full_frontal"
     SAMPLED_25K = "sampled_25k"
@@ -25,9 +25,9 @@ class CorpusMode(Enum):
 
 
 def decide_corpus_mode(join_rate: float) -> CorpusMode:
-    """Ap bang quyet dinh §2.3 len ti le join da do."""
+    """Apply the plan's section 2.3 decision table to a measured join rate."""
     if not 0.0 <= join_rate <= 1.0:
-        raise ValueError(f"join_rate phai nam trong [0, 1], nhan duoc {join_rate}")
+        raise ValueError(f"join_rate must be within [0, 1], got {join_rate}")
     if join_rate >= FULL_CORPUS_MIN_JOIN_RATE:
         return CorpusMode.FULL_FRONTAL
     if join_rate >= SAMPLED_CORPUS_MIN_JOIN_RATE:
@@ -39,10 +39,10 @@ _TRIPLE = re.compile(r"(patient\d+)/(study\d+)/([^/]+?)(?:\.[A-Za-z0-9]+)?$")
 
 
 def image_key(path: str) -> str | None:
-    """Rut khoa `patientN/studyN/viewN_*` bo prefix va duoi file.
+    """Extract the `patientN/studyN/viewN_*` key, dropping any prefix and extension.
 
-    Tra None khi duong dan khong chua bo ba nay, de goi y goi phan biet
-    duoc "khong khop" voi "khong phai duong dan anh".
+    Returns None when the path holds no such triple, so callers can tell
+    "did not match" apart from "not an image path at all".
     """
     match = _TRIPLE.search(path.replace("\\", "/"))
     if match is None:
@@ -58,8 +58,8 @@ def _posix_lower(path: str) -> str | None:
     return path.replace("\\", "/").lower()
 
 
-# Tu chat den long. Chien luoc nao thang thi ghi vao data_audit.json va dung
-# no cho buoc join that o Phase 2.
+# Strictest to loosest. Whichever strategy wins gets recorded in data_audit.json
+# and is the one used for the real join in Phase 2.
 STRATEGIES: dict[str, Callable[[str], str | None]] = {
     "exact": _exact,
     "posix_lower": _posix_lower,
@@ -69,7 +69,7 @@ STRATEGIES: dict[str, Callable[[str], str | None]] = {
 
 @dataclass(frozen=True)
 class JoinReport:
-    """Ket qua do join cua mot chien luoc chuan hoa."""
+    """Join measurement for a single normalization strategy."""
 
     strategy: str
     plus_total: int
@@ -84,15 +84,16 @@ def evaluate_join(
     small_paths: Iterable[str],
     sample_size: int = 20,
 ) -> list[JoinReport]:
-    """Do ti le join cho tung chien luoc, tra ve danh sach xep theo ti le giam dan.
+    """Measure every strategy and return the reports sorted by join rate, best first.
 
-    `join_rate` la ti le dong cua CheXpert Plus tim duoc anh tuong ung, vi day
-    moi la con so quyet dinh corpus: report khong co anh thi khong dung duoc.
+    `join_rate` is the share of CheXpert Plus rows that found an image, because
+    that is the number driving the corpus decision: a report without an image
+    is unusable.
     """
     plus = list(plus_paths)
     small = list(small_paths)
     if not plus:
-        raise ValueError("plus_paths rong: khong do duoc ti le join")
+        raise ValueError("plus_paths is empty: cannot measure a join rate")
 
     reports = []
     for name, normalize in STRATEGIES.items():
@@ -117,22 +118,22 @@ IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png")
 
 
 def read_plus_image_paths(csv_path: Path) -> list[str]:
-    """Doc cot `path_to_image` cua df_chexpert_plus_*.csv."""
+    """Read the `path_to_image` column of df_chexpert_plus_*.csv."""
     with open(csv_path, encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
         if reader.fieldnames is None or PLUS_PATH_COLUMN not in reader.fieldnames:
             raise KeyError(
-                f"Khong thay cot {PLUS_PATH_COLUMN!r} trong {csv_path}. "
-                f"Cac cot doc duoc: {reader.fieldnames}"
+                f"Column {PLUS_PATH_COLUMN!r} not found in {csv_path}. "
+                f"Columns present: {reader.fieldnames}"
             )
         return [row[PLUS_PATH_COLUMN] for row in reader if row.get(PLUS_PATH_COLUMN)]
 
 
 def list_small_image_paths(root: Path) -> list[str]:
-    """Liet ke anh cua CheXpert-v1.0-small, tra ve duong dan POSIX tuong doi voi root."""
+    """List CheXpert-v1.0-small images as POSIX paths relative to `root`."""
     root = Path(root)
     if not root.is_dir():
-        raise FileNotFoundError(f"Khong tim thay thu muc anh: {root}")
+        raise FileNotFoundError(f"Image directory not found: {root}")
     return sorted(
         path.relative_to(root).as_posix()
         for path in root.rglob("*")
@@ -141,7 +142,7 @@ def list_small_image_paths(root: Path) -> list[str]:
 
 
 def run_audit(plus_csv: Path, small_root: Path, sample_size: int = 20) -> dict:
-    """Chay cong chan Phase 1 va tra ve bao cao ghi thang ra data_audit.json."""
+    """Run the Phase 1 gate and return the report written to data_audit.json."""
     plus_paths = read_plus_image_paths(plus_csv)
     small_paths = list_small_image_paths(small_root)
     reports = evaluate_join(plus_paths, small_paths, sample_size=sample_size)

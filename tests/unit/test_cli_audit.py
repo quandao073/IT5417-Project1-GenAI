@@ -1,4 +1,4 @@
-"""CLI `cxr audit` - cong chan phai dung pipeline khi khong dat."""
+"""CLI `cxr audit` - the gate must stop the pipeline when it fails."""
 
 import json
 

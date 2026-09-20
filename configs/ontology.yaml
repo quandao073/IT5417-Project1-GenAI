@@ -1,5 +1,5 @@
-# Mini-ontology 100-300 concept của POC. Xem §5.5.
-# Mọi mapping thủ công phải có version và test. KHÔNG ingest toàn bộ UMLS.
+# The POC's 100-300 concept mini-ontology. See plan section 5.5.
+# Every hand-written mapping needs a version and a test. Never ingest all of UMLS.
 
 version: 0.1.0
 source: manual
@@ -20,7 +20,7 @@ observations:
     label: Lung Opacity
     synonyms: [opacity, opacification, density]
     is_a: [OBS:parenchymal_abnormality]
-  # TODO Phase 7: bổ sung đủ 14 pathology + synonym phổ biến
+  # TODO Phase 7: complete all 14 pathologies plus their common synonyms
 
 anatomy:
   lung:

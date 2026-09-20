@@ -1,5 +1,5 @@
-# Candidate generation, fusion và reranking. Xem §7.
-# Trọng số chỉ được tune trên split validation, không bao giờ trên test.
+# Candidate generation, fusion and reranking. See plan section 7.
+# Weights are tuned on the validation split only, never on test.
 
 candidates:
   vector_top_k: 100
@@ -16,12 +16,12 @@ fusion:
     constraint_violation_penalty: 1.00
 
 constraints:
-  # Xem §5.3 và §7.3. NOT_MENTIONED không bao giờ được coi là bằng chứng phủ định.
+  # See plan sections 5.3 and 7.3. NOT_MENTIONED is never evidence of absence.
   include_accepts: [PRESENT]
   exclude_requires: [ABSENT]
   not_mentioned_satisfies_exclude: false
-  # strict: loại kết quả NOT_MENTIONED khi có điều kiện exclude
-  # lenient: giữ lại nhưng hạ hạng
+  # strict: drop NOT_MENTIONED results when an exclude condition is present
+  # lenient: keep them but demote
   strictness_default: lenient
   anatomy_mismatch: demote   # demote | filter
   hard_filter_min_parser_confidence: 0.8
@@ -31,12 +31,12 @@ results:
   max_top_k: 50
 
 modes:
-  # UI toggle để so sánh baseline với hybrid
+  # UI toggle for comparing baseline against hybrid
   vector_only: { use_vector: true,  use_text: false, use_kg: false }
   vector_text: { use_vector: true,  use_text: true,  use_kg: false }
   hybrid:      { use_vector: true,  use_text: true,  use_kg: true  }
 
 degradation:
-  # Hệ thống phải tiếp tục chạy khi KG hoặc LLM chết. Xem Phase 11.
+  # The system must keep serving when the KG or the LLM is down. See Phase 11.
   on_neo4j_unavailable: fall_back_to_vector_text
   on_llm_unavailable: fall_back_to_rule_parser

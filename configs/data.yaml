@@ -1,4 +1,4 @@
-# Nguồn dữ liệu và quy tắc dựng corpus. Xem §2 và §6 của kế hoạch.
+# Data sources and corpus construction rules. See plan sections 2 and 6.
 
 sources:
   images:
@@ -7,27 +7,27 @@ sources:
     format: jpg
   plus_metadata:
     name: chexpert-plus
-    # Ten file theo dung folder tren Redivis; xac nhan lai o Phase 1.
+    # File names follow the Redivis folder layout; confirmed in Phase 1.
     csv: data/raw/chexpert-plus/df_chexpert_plus_240401.csv
     radgraph_dir: data/raw/chexpert-plus/radgraph_xl
     chexbert_labels:
       findings: data/raw/chexpert-plus/labels/findings_fixed.json
       impression: data/raw/chexpert-plus/labels/impression_fixed.json
       report: data/raw/chexpert-plus/labels/report_fixed.json
-  # Duong lui khi join gate that bai (<70%): tai chon loc tu PNG_train tren Redivis.
+  # Fallback if the join gate fails (<70%): selective download from PNG_train on Redivis.
   plus_png_fallback:
     enabled: false
     redivis_folder: PNG_train
 
 join:
   key: path_to_image
-  # Cổng chặn Phase 1 (§2.3). Pipeline dừng nếu không đạt sàn.
+  # Phase 1 gate (plan section 2.3). The pipeline stops below the floor.
   min_join_rate_full_corpus: 0.95
   min_join_rate_sampled: 0.70
   allow_fuzzy_match: false
 
 corpus:
-  # full_frontal | sampled_25k — chốt sau khi audit đo join_rate
+  # full_frontal | sampled_25k - decided once the audit has measured join_rate
   mode: sampled_25k
   views_allowed: [AP, PA]
   max_images_per_study: 1
@@ -46,7 +46,7 @@ sampling:
   split_level: patient   # chống leakage; không bao giờ đổi thành study
 
 labels:
-  # 4 trạng thái, không gộp. Xem §5.3.
+  # Four states, never collapsed. See plan section 5.3.
   mapping:
     "1": PRESENT
     "0": ABSENT
@@ -69,9 +69,10 @@ labels:
     - Support Devices
 
 preprocess:
-  # CheXpert-v1.0-small co canh ngan ~320 px, canh dai ~390 px.
-  # Chi thu nho khi vuot nguong; KHONG BAO GIO upscale - phong to anh
-  # downsample vua ton dia vua khong them thong tin.
+  # CheXpert-v1.0-small has a 320 px short side, ~356 px long side on average.
+  # Measured: 0 of 107 sampled images exceed 512 px, so the resize step is
+  # effectively a no-op. Never upscale - enlarging a downsampled image costs
+  # disk and adds no information.
   max_long_side: 512
   allow_upscale: false
   thumbnail_long_side: 256

@@ -1,4 +1,4 @@
-"""Bao cao audit: gop do join va quyet dinh corpus thanh mot artifact."""
+"""Audit report: join measurement and corpus decision combined into one artifact."""
 
 import json
 

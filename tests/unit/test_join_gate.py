@@ -1,4 +1,4 @@
-"""Cong chan Phase 1: quyet dinh corpus tu ti le join. Xem §2.3 cua ke hoach."""
+"""Phase 1 gate: corpus decision from the measured join rate. See plan section 2.3."""
 
 import pytest
 
@@ -36,7 +36,7 @@ def test_rate_outside_zero_to_one_is_rejected():
 
 
 class TestImageKey:
-    """Khoa chuan hoa: patient/study/view, bo prefix va duoi file."""
+    """Normalized key: patient/study/view, without prefix or file extension."""
 
     def test_extracts_key_from_chexpert_small_style_path(self):
         from cxr_retrieval.data.audit import image_key
@@ -64,7 +64,7 @@ class TestImageKey:
 
 
 class TestEvaluateJoin:
-    """Do ti le join theo nhieu chien luoc chuan hoa, xep hang tot nhat len dau."""
+    """Measure the join across normalization strategies, best one first."""
 
     SMALL = [
         "CheXpert-v1.0-small/train/patient00001/study1/view1_frontal.jpg",

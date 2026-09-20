@@ -1,4 +1,4 @@
-# Structured logging. Không log toàn văn report hay đường dẫn ảnh gốc. Xem Phase 11.
+# Structured logging. Never log full report text or source image paths. See Phase 11.
 
 level: INFO
 format: json
@@ -16,7 +16,7 @@ loggers:
   uvicorn.access: WARNING
 
 search_trace:
-  # Ghi score breakdown phục vụ debug và UI "Why matched?"
+  # Record the score breakdown for debugging and the "Why matched?" panel
   enabled: true
   include_candidate_ranks: true
   max_candidates_logged: 20

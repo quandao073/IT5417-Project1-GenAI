@@ -1,4 +1,4 @@
-"""Doc duong dan tu CSV cua Plus va tu cay thu muc anh cua ban small."""
+"""Reading paths from the Plus CSV and from the small dataset's image tree."""
 
 import pytest
 

@@ -1,7 +1,7 @@
-# Model dùng cho embedding và query parsing. Mọi revision phải pin.
+# Models for embedding and query parsing. Every revision must be pinned.
 
 image_encoder:
-  # Ứng viên spike ở Phase 4; chốt một cái rồi ghi vào docs/model-card-poc.md
+  # Phase 4 spike candidates; pick one and record it in docs/model-card-poc.md
   candidates:
     - id: microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224
       framework: open_clip
@@ -15,7 +15,7 @@ image_encoder:
   device: cuda            # worker; runtime API dùng cpu
 
 text_encoder:
-  # Cùng model với image_encoder để embedding nằm chung không gian
+  # Same model as image_encoder so both embeddings share one space
   share_with_image_encoder: true
   device: cpu
 
@@ -26,5 +26,5 @@ llm:
   temperature: 0.0
   timeout_seconds: 20
   max_retries: 1
-  # Khi LLM lỗi hoặc trả JSON không hợp lệ -> rule parser. Xem §7.1.
+  # On LLM failure or invalid JSON, fall back to the rule parser. See plan section 7.1.
   fallback: rule_based

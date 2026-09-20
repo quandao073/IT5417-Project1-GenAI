@@ -1,4 +1,4 @@
-"""CLI cua worker. Moi lenh ung voi mot buoc trong ke hoach."""
+"""Worker CLI. Each command maps to one step of the plan."""
 
 from __future__ import annotations
 
@@ -17,18 +17,19 @@ def _cmd_audit(args: argparse.Namespace) -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    print(f"plus rows      : {report['plus_total']}")
-    print(f"small images   : {report['small_total']}")
+    print(f"plus rows      : {report['plus_total']:,}")
+    print(f"small images   : {report['small_total']:,}")
     print(f"best strategy  : {report['best_strategy']}")
     print(f"join rate      : {report['join_rate']:.4f}")
     print(f"decision       : {report['decision']}")
     print(f"report written : {out}")
 
-    # Cong chan phai dung pipeline, khong chi canh bao.
+    # The gate must stop the pipeline, not merely warn.
     if report["decision"] == CorpusMode.ABORT.value:
         print(
-            "\nJoin gate FAILED (<70%). Khong tai anh. Xem unmatched_samples "
-            "trong bao cao va can nhac tai chon loc tu PNG_train tren Redivis.",
+            "\nGATE FAILED (join rate below 70%). Do not download images. "
+            "Inspect unmatched_samples in the report, and consider selective "
+            "download from PNG_train on Redivis instead.",
             file=sys.stderr,
         )
         return 1
@@ -39,7 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cxr", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    audit = sub.add_parser("audit", help="Phase 1: do ti le join, quyet dinh corpus")
+    audit = sub.add_parser("audit", help="Phase 1: measure join rate, decide corpus")
     audit.add_argument("--plus-csv", default="data/raw/chexpert-plus/df_chexpert_plus_240401.csv")
     audit.add_argument("--small-root", default="data/raw/CheXpert-v1.0-small")
     audit.add_argument("--out", default="artifacts/data_audit.json")
