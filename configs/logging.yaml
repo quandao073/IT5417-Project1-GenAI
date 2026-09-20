@@ -1,0 +1,22 @@
+# Structured logging. Không log toàn văn report hay đường dẫn ảnh gốc. Xem Phase 11.
+
+level: INFO
+format: json
+
+redact:
+  - patient_id
+  - source_path
+  - findings
+  - impression
+
+loggers:
+  cxr_retrieval.retrieval: INFO
+  cxr_retrieval.query: INFO
+  cxr_retrieval.graph: WARNING
+  uvicorn.access: WARNING
+
+search_trace:
+  # Ghi score breakdown phục vụ debug và UI "Why matched?"
+  enabled: true
+  include_candidate_ranks: true
+  max_candidates_logged: 20

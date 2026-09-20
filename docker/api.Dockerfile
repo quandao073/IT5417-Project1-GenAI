@@ -1,0 +1,19 @@
+# syntax=docker/dockerfile:1.7
+FROM python:3.11-slim AS base
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
+
+FROM base AS builder
+WORKDIR /build
+COPY pyproject.toml ./
+COPY src ./src
+RUN pip install --prefix=/install ".[api]"
+
+FROM base AS runtime
+RUN useradd --create-home --uid 10001 app
+COPY --from=builder /install /usr/local
+WORKDIR /app
+COPY --chown=app:app src ./src
+COPY --chown=app:app configs ./configs
+USER app
+EXPOSE 8000
+CMD ["uvicorn", "cxr_retrieval.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

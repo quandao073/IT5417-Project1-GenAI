@@ -1,0 +1,113 @@
+# Mặc định CPU-only: đủ để demo vì embedding đã được precompute.
+# Ingestion cần GPU: docker compose -f compose.yaml -f compose.gpu.yaml --profile worker run --rm worker ...
+
+name: cxr-semantic-retrieval
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.9.2
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  neo4j:
+    image: neo4j:5.20-community
+    restart: unless-stopped
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      NEO4J_AUTH: "${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:?set NEO4J_PASSWORD in .env}"
+      NEO4J_server_memory_heap_max__size: 2G
+      NEO4J_server_memory_pagecache_size: 1G
+    volumes:
+      - neo4j_data:/data
+      - ./docker/neo4j/import:/var/lib/neo4j/import
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8000:8000"
+    volumes:
+      # Ảnh chỉ đọc. Index dùng named volume để không ghi vào bind-mount của Windows.
+      - ${HOST_IMAGE_DIR:-./data/processed/images}:/app/data/processed/images:ro
+      - index_data:/app/data/indexes
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  web:
+    build:
+      context: ./web
+      dockerfile: ../docker/web.Dockerfile
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: "${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}"
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # --- profile: worker (ingestion / embedding / graph build) ---
+  worker:
+    profiles: ["worker"]
+    build:
+      context: .
+      dockerfile: docker/worker.Dockerfile
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ./artifacts:/app/artifacts
+      - ./configs:/app/configs
+      - hf_cache:/app/.hf_cache
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    entrypoint: ["cxr"]
+    command: ["--help"]
+
+  # --- profile: local-llm (chỉ dùng khi không chạy Ollama native trên host) ---
+  ollama:
+    profiles: ["local-llm"]
+    image: ollama/ollama:0.3.12
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+
+volumes:
+  qdrant_data:
+  neo4j_data:
+  index_data:
+  hf_cache:
+  ollama_models:

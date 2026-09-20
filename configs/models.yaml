@@ -1,0 +1,30 @@
+# Model dùng cho embedding và query parsing. Mọi revision phải pin.
+
+image_encoder:
+  # Ứng viên spike ở Phase 4; chốt một cái rồi ghi vào docs/model-card-poc.md
+  candidates:
+    - id: microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224
+      framework: open_clip
+    - id: StanfordAIMI/CheXzero
+      framework: open_clip
+  selected: microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224
+  revision: null          # PHẢI điền commit hash sau khi chốt
+  embedding_dim: 512
+  normalize: true
+  batch_size: 64
+  device: cuda            # worker; runtime API dùng cpu
+
+text_encoder:
+  # Cùng model với image_encoder để embedding nằm chung không gian
+  share_with_image_encoder: true
+  device: cpu
+
+llm:
+  provider: ollama
+  model: qwen2.5:7b-instruct-q4_K_M
+  base_url_env: LLM_BASE_URL
+  temperature: 0.0
+  timeout_seconds: 20
+  max_retries: 1
+  # Khi LLM lỗi hoặc trả JSON không hợp lệ -> rule parser. Xem §7.1.
+  fallback: rule_based

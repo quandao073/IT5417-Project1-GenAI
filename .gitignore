@@ -1,0 +1,52 @@
+# --- Dataset & artifacts: never commit ---
+data/*
+!data/fixtures/
+data/fixtures/*
+!data/fixtures/synthetic/
+!data/fixtures/.gitkeep
+
+artifacts/*
+!artifacts/*/
+artifacts/*/*
+!artifacts/*/.gitkeep
+
+# Model weights / caches
+models/
+*.safetensors
+*.onnx
+*.ckpt
+.cache/
+.hf_cache/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- Node / Next.js ---
+node_modules/
+web/.next/
+web/out/
+web/.turbo/
+*.tsbuildinfo
+
+# --- Docker / local state ---
+.env
+.env.*
+!.env.example
+compose.override.yaml
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

@@ -1,0 +1,86 @@
+# Nguồn dữ liệu và quy tắc dựng corpus. Xem §2 và §6 của kế hoạch.
+
+sources:
+  images:
+    name: chexpert-v1.0-small
+    root: data/raw/CheXpert-v1.0-small
+    format: jpg
+  plus_metadata:
+    name: chexpert-plus
+    # Ten file theo dung folder tren Redivis; xac nhan lai o Phase 1.
+    csv: data/raw/chexpert-plus/df_chexpert_plus_240401.csv
+    radgraph_dir: data/raw/chexpert-plus/radgraph_xl
+    chexbert_labels:
+      findings: data/raw/chexpert-plus/labels/findings_fixed.json
+      impression: data/raw/chexpert-plus/labels/impression_fixed.json
+      report: data/raw/chexpert-plus/labels/report_fixed.json
+  # Duong lui khi join gate that bai (<70%): tai chon loc tu PNG_train tren Redivis.
+  plus_png_fallback:
+    enabled: false
+    redivis_folder: PNG_train
+
+join:
+  key: path_to_image
+  # Cổng chặn Phase 1 (§2.3). Pipeline dừng nếu không đạt sàn.
+  min_join_rate_full_corpus: 0.95
+  min_join_rate_sampled: 0.70
+  allow_fuzzy_match: false
+
+corpus:
+  # full_frontal | sampled_25k — chốt sau khi audit đo join_rate
+  mode: sampled_25k
+  views_allowed: [AP, PA]
+  max_images_per_study: 1
+  require_impression: true
+  prefer_findings: true
+
+sampling:
+  seed: 20260101
+  target_studies: 25000
+  stratify_by_labels: true
+  oversample_rare: true
+  splits:
+    development: 18000
+    validation: 3500
+    test: 3500
+  split_level: patient   # chống leakage; không bao giờ đổi thành study
+
+labels:
+  # 4 trạng thái, không gộp. Xem §5.3.
+  mapping:
+    "1": PRESENT
+    "0": ABSENT
+    "-1": UNCERTAIN
+    "null": NOT_MENTIONED
+  pathologies:
+    - No Finding
+    - Enlarged Cardiomediastinum
+    - Cardiomegaly
+    - Lung Opacity
+    - Lung Lesion
+    - Edema
+    - Consolidation
+    - Pneumonia
+    - Atelectasis
+    - Pneumothorax
+    - Pleural Effusion
+    - Pleural Other
+    - Fracture
+    - Support Devices
+
+preprocess:
+  # CheXpert-v1.0-small co canh ngan ~320 px, canh dai ~390 px.
+  # Chi thu nho khi vuot nguong; KHONG BAO GIO upscale - phong to anh
+  # downsample vua ton dia vua khong them thong tin.
+  max_long_side: 512
+  allow_upscale: false
+  thumbnail_long_side: 256
+  grayscale: true
+  output_format: webp
+  strip_metadata: true
+  batch_size: 2000
+
+disk_guard:
+  min_free_gb: 40
+  project_ceiling_gb: 120
+  include_wsl_vhdx: true

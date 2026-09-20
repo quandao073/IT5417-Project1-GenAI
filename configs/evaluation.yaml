@@ -1,0 +1,59 @@
+# Thiết kế đánh giá ba trục. Xem §8.0 và §8.1.
+# Quy tắc bất di bất dịch: CheXbert -> ground truth; RadGraph -> constraint. Không hoán đổi.
+
+axes:
+  retrieval_quality:
+    ground_truth: chexbert_labels
+    metrics: [precision@5, precision@10, ndcg@10, mrr]
+    # Recall chỉ có nghĩa khi tập relevant nhỏ
+    recall_when_relevant_lt: 50
+    interpretation: >
+      So sánh công bằng ba cấu hình. Vẫn tương quan với trục 2 vì cùng suy ra từ report;
+      phải nêu rõ điều này trong báo cáo.
+
+  constraint_compliance:
+    ground_truth: radgraph_xl
+    metrics: [exclude_violation_rate@10, anatomy_match_rate@10]
+    interpretation: >
+      Hybrid thắng THEO THIẾT KẾ vì nó lọc bằng chính nguồn này.
+      Báo cáo như một tính chất của hệ thống, không phải thành tích retrieval.
+
+  human_judged:
+    ground_truth: manual_review
+    query_count: 150
+    reviewers: 2
+    report_agreement: cohen_kappa
+    metrics: [precision@10]
+    interpretation: >
+      Trục độc lập duy nhất. Đây là trục có trọng lượng khi bảo vệ.
+
+benchmark:
+  total_queries: 400
+  # Query sinh từ CheXbert labels, KHÔNG sinh từ RadGraph (tránh rò rỉ vào trục 1)
+  generated_from: chexbert_labels
+  verbatim_report_as_query: false
+  groups:
+    simple: 120
+    multi_finding: 80
+    negation: 80
+    anatomy: 80
+    uncertainty: 40
+
+configurations:
+  - vector_only
+  - vector_text
+  - hybrid
+
+thresholds:
+  # Ngưỡng tuyệt đối chỉ hợp lệ cho tính đúng đắn logic, không cho chất lượng retrieval.
+  # Phần còn lại chốt sau khi có artifacts/metrics/baseline.json ở Phase 4.
+  negation_constraint_satisfaction_min: 0.90
+  evidence_faithfulness_min: 1.00
+  hybrid_ndcg10_relative_gain_min: 0.05
+  api_p95_seconds_max: 3.0
+  end_to_end_with_llm_seconds_max: 6.0
+  baseline_file: artifacts/metrics/baseline.json
+
+latency:
+  percentiles: [50, 95]
+  exclude_cold_start: true

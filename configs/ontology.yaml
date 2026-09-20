@@ -1,0 +1,51 @@
+# Mini-ontology 100-300 concept của POC. Xem §5.5.
+# Mọi mapping thủ công phải có version và test. KHÔNG ingest toàn bộ UMLS.
+
+version: 0.1.0
+source: manual
+
+observations:
+  cardiomegaly:
+    id: OBS:cardiomegaly
+    label: Cardiomegaly
+    synonyms: [enlarged heart, cardiac enlargement, enlarged cardiac silhouette]
+    is_a: [OBS:cardiac_abnormality]
+  pleural_effusion:
+    id: OBS:pleural_effusion
+    label: Pleural Effusion
+    synonyms: [effusion, fluid in pleural space]
+    is_a: [OBS:pleural_abnormality]
+  lung_opacity:
+    id: OBS:lung_opacity
+    label: Lung Opacity
+    synonyms: [opacity, opacification, density]
+    is_a: [OBS:parenchymal_abnormality]
+  # TODO Phase 7: bổ sung đủ 14 pathology + synonym phổ biến
+
+anatomy:
+  lung:
+    id: ANA:lung
+    label: Lung
+  left_lung:
+    id: ANA:left_lung
+    label: Left lung
+    part_of: [ANA:lung]
+    laterality: left
+  right_lung:
+    id: ANA:right_lung
+    label: Right lung
+    part_of: [ANA:lung]
+    laterality: right
+  left_lower_lung:
+    id: ANA:left_lower_lung
+    label: Left lower lung
+    synonyms: [left base, left lower zone, left lower lobe]
+    part_of: [ANA:left_lung]
+    laterality: left
+    zone: lower
+  # TODO Phase 7: upper/middle/lower x left/right, apex, base, pleura, mediastinum
+
+relations:
+  - IS_A
+  - PART_OF
+  - SYNONYM_OF
