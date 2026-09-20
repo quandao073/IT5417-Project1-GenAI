@@ -1,11 +1,25 @@
 ---
 name: commit
-description: Use when creating a git commit in this repository, or when the user asks to commit, save work, or check in changes.
+description: Use when the user invokes /commit in this repository.
 ---
 
 # Commit
 
 One-line commit messages in English, Conventional Commits style, with no attribution trailers.
+
+## Only commit when invoked
+
+**`/commit` is the only trigger.** Nothing else authorises a commit.
+
+None of these are permission:
+
+- Finishing a task, a phase, or a chunk of work that "feels" commit-worthy
+- The user saying "tiến hành", "ok", "go ahead", or approving a design
+- The user asking you to *create or edit* this skill
+- Having asked "should I commit?" in an earlier turn and received no objection
+- A previous `/commit` in the same session
+
+When work reaches a commit-worthy point, say so in one line and stop. The user decides when history gets written.
 
 ## Format
 
@@ -63,6 +77,7 @@ test: cover corpus decision thresholds at their boundaries
 
 | Mistake | Fix |
 |---|---|
+| Committing because the work looked finished | Only `/commit` authorises a commit |
 | Message describes the diff line by line | Say what the change accomplishes, once |
 | `update files`, `changes`, `wip` | Name the actual change |
 | Past tense (`added`, `fixed`) | Imperative: `add`, `fix` |
