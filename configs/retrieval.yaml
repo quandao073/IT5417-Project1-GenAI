@@ -39,7 +39,7 @@ label_resolution:
   # labels.parquet keeps every source with provenance and never overwrites, but
   # the label filter needs exactly one status per (study, concept).
   # CHEXPERT_V1 first: it is the dataset's own label and the only radiologist-
-  # assigned one, for the 234 valid/ studies. Impression outranks findings
+  # assigned one, for the 200 valid/ studies. Impression outranks findings
   # because impression covers 99.93% of rows against findings' 26.6%.
   source_priority: [CHEXPERT_V1, CHEXBERT_IMPRESSION, CHEXBERT_FINDINGS, CHEXBERT_REPORT]
   on_conflict: first_non_not_mentioned

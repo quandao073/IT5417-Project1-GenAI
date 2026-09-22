@@ -10,7 +10,7 @@
 |---|---|---|
 | 1. Retrieval quality | CheXbert labels | P@5/10, nDCG@10, MRR |
 | 2. Constraint compliance | CheXpert/CheXbert labels | exclude violation, constraint satisfaction |
-| 3. Human judged | 234 study có nhãn bác sĩ | Precision@10, Cohen's kappa |
+| 3. Human judged | 200 study có nhãn bác sĩ | Precision@10, Cohen's kappa |
 
 **Trục 1 và trục 2 cùng suy ra từ report nên tương quan với nhau.** Hybrid thắng
 trục 2 *theo thiết kế*, vì nó lọc trên đúng nguồn đó — phải báo cáo như một tính
@@ -25,7 +25,7 @@ Thứ *được* fit bằng tay là trọng số fusion, prompt và synonym — 
 là thứ phải hold out: 150 validation để tuning, 250 test chạy đúng một lần ở
 Phase 7, và hai tập không chia sẻ patient.
 
-234 study `valid/` là ground truth người duy nhất; chúng được ghim vào tập test
+200 study `valid/` (234 ảnh) là ground truth người duy nhất; chúng được ghim vào tập test
 và không bao giờ dùng để tuning.
 
 ## Vector mode áp ràng buộc gì

@@ -20,9 +20,10 @@ axes:
 
   human_judged:
     ground_truth: manual_review
-    # The 234 valid/ studies carry radiologist labels - the only human ground
-    # truth available. Pinned to the test query set, never used for tuning.
-    radiologist_labelled_studies: 234
+    # The valid/ split carries radiologist labels - the only human ground truth
+    # available. 234 images across 200 studies; one image per study means 200
+    # studies enter the corpus. Pinned to the test query set, never tuned on.
+    radiologist_labelled_studies: 200
     query_count: 150
     reviewers: 2
     report_agreement: cohen_kappa

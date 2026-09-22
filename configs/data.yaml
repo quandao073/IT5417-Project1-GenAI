@@ -56,7 +56,7 @@ manifest:
   # Every prefix of the manifest keeps the pool's label distribution, so
   # --limit picks a corpus size without re-running the sampler.
   interleave_by_stratum: true
-  # The 234 valid/ studies carry radiologist-assigned labels - the only human
+  # The 200 valid/ studies carry radiologist-assigned labels - the only human
   # ground truth in the dataset. They are pinned to the test query set and are
   # never spent on tuning. The corpus itself is not split; see
   # configs/evaluation.yaml:query_split.
