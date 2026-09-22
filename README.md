@@ -8,9 +8,13 @@ structured CheXpert labels và full-text search trên báo cáo.
 
 ## Trạng thái
 
-Khung dự án + data audit. Xem [kế hoạch triển khai](docs/ke-hoach-du-an-nho-cxr-semantic-retrieval-v1.md)
+Đang xây. Trạng thái hiện tại, các quyết định đang có hiệu lực và những bẫy đã
+biết nằm ở [WORKLOG.md](WORKLOG.md) — đọc file đó trước khi sửa code.
+
+Xem thêm [kế hoạch triển khai](docs/ke-hoach-du-an-nho-cxr-semantic-retrieval-v1.md)
 để biết lộ trình 8 tuần và thứ tự các phase, và [scope-and-non-goals](docs/scope-and-non-goals.md)
-để biết phần nào đã được hoãn sang V2.
+để biết phần nào đã được hoãn sang V2. Lưu ý kế hoạch viết trước khi có số đo nên
+vài yêu cầu đã bị override; WORKLOG là nguồn đúng.
 
 ## Kiến trúc
 
