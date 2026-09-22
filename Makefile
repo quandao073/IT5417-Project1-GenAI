@@ -19,7 +19,7 @@ setup: ## Create .env, make the gitignored data/artifacts dirs, install deps
 	@test -s .env || cp .env.example .env
 	@mkdir -p data/{raw,canonical,indexes,cache/thumbnails,fixtures/synthetic} \
 	          artifacts/{audit,metrics,reports,screenshots}
-	uv sync --extra api --extra dev
+	uv sync --all-extras
 
 # --- stack lifecycle ---
 up: ## Start web + api + qdrant
