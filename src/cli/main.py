@@ -43,7 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
     audit = sub.add_parser("audit", help="Phase 1: measure join rate, decide corpus")
     audit.add_argument("--plus-csv", default="data/raw/chexpert-plus/df_chexpert_plus_240401.csv")
     audit.add_argument("--small-root", default="data/raw/CheXpert-v1.0-small")
-    audit.add_argument("--out", default="artifacts/data_audit.json")
+    audit.add_argument("--out", default="artifacts/audit/data_audit.json")
     audit.set_defaults(func=_cmd_audit)
 
     return parser
