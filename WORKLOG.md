@@ -21,14 +21,13 @@ Ba mục đó đủ để không phá vỡ thứ gì. Các mục còn lại tra 
 
 > Cập nhật lại mục này mỗi lần ghi log. Mục này mà cũ thì tệ hơn là không có.
 
-**Cập nhật lần cuối:** 2026-09-22
+**Cập nhật lần cuối:** 2026-09-22 (sau khi dọn trước Phase 1)
 
 | | |
 |---|---|
-| Đã xong | Part A (thu gọn phạm vi) · Phase 0a (3 module nền) |
+| Đã xong | Part A (thu gọn phạm vi) · Phase 0a (3 module nền) · dọn trước Phase 1 |
 | Đang làm | — |
-| Tiếp theo | Phase 0b (synthetic corpus + `/api/v1/health`) hoặc Phase 1 (canonical corpus) |
-| Chặn Phase 1 | `make setup` chưa cài Pillow — xem T4 |
+| Tiếp theo | **Phase 1 (canonical corpus)** — không còn gì chặn |
 | Chặn Phase 0b | `pnpm` chưa cài trên máy — xem T5 |
 
 Mã thật hiện có: `src/common/ids.py`, `src/common/config.py`, `src/data/contracts.py`,
@@ -57,7 +56,7 @@ docker compose config > /dev/null
 | CheXpert-v1.0-small | 10,68 GB · 223.649 JPG | duyệt thư mục |
 | — train / valid | 223.415 / 234 ảnh | duyệt thư mục |
 | CheXpert Plus CSV | 386 MB · 223.462 record | `csv.DictReader` |
-| Join rate `path_to_image` | **1,0000** (strategy `exact`) | `cxr audit` → `artifacts/data_audit.json` |
+| Join rate `path_to_image` | **1,0000** (strategy `exact`) | `cxr audit` → `artifacts/audit/data_audit.json` |
 | Dòng frontal AP/PA | 191.054 | quét CSV |
 | → study duy nhất | **187.674** / 64.710 patient | quét CSV |
 | `section_impression` có nội dung | 190.913 / 191.054 = **99,93%** | quét CSV |
@@ -79,6 +78,23 @@ docker compose config > /dev/null
 - **FTS5 có sẵn** trong `sqlite3` của Python (SQLite 3.50.4). Phase 5 không cần
   build SQLite riêng.
 
+### Chi phí của Phase 1 (đo 2026-09-22)
+
+| Thao tác | Đo được | Ghi chú |
+|---|---|---|
+| `polars.read_csv` Plus CSV, 6 cột | **223.462 dòng — khớp đúng** ground truth của `csv.DictReader` | Polars xử lý đúng newline nhúng. Dùng polars, không tự parse |
+| Đọc kích thước ảnh (PIL) | 7,24 ms/ảnh → **~181 s cho 25k** | Đây là **cold disk I/O**, không phải chi phí decode |
+| sha256 toàn file | 0,08 ms/ảnh → ~1,9 s cho 25k | Rẻ vì file đã nằm trong page cache sau lượt đọc trên |
+| Tổng byte đọc cho 25k ảnh | ~1,30 GB (trung bình 50,6 KB/ảnh) | |
+
+**Hệ quả thiết kế:** chi phí thật là I/O của lượt duyệt đầu tiên, không phải phép
+tính. Phase 1 phải lấy **kích thước và checksum trong cùng một lượt mở file** để
+chỉ trả phí I/O một lần — khoảng 3 phút cho 25k ảnh.
+
+Đo thêm trên 500 ảnh ngẫu nhiên: cạnh dài nằm trong **320–483 px**, 500/500
+checksum phân biệt. Khẳng định lại `data.yaml`: không ảnh nào vượt 512 px, nên
+không có bước resize nào cả.
+
 ---
 
 ## Quyết định đang có hiệu lực
@@ -98,6 +114,7 @@ docker compose config > /dev/null
 | D5 | **LLM mặc định `qwen2.5:3b-instruct-q4_K_M`**, không phải 7b. | `models.yaml` cũ | 7B q4 trên CPU tốn 8–20 s/query, ăn trọn ngân sách 12 s end-to-end. 7B giữ làm nhánh so sánh trong parser ablation |
 | D6 | **Không hardcode embedding dim ở bất kỳ đâu.** Phase 2 gate chọn 1 trong 3 candidate; encoder tự báo dim, `build_manifest.json` ghi lại, `cxr validate-indexes` assert khớp. | §16 (`dimension: 768`), `models.yaml` (512) | Ba nguồn mâu thuẫn nhau; để số đo quyết |
 | D7 | **Qdrant point id = `uuid5(NAMESPACE_URL, normalized_path)`**, không phải `image_id`. | — | Qdrant chỉ nhận uint64 hoặc UUID; sha256 hex64 không phải cả hai. Cắt xuống 64 bit thì mời câu hỏi birthday-collision vô ích |
+| D8 | **Không có disk guard.** §9.2, task "Viết disk guard" của Phase 1 và mục disk guard trong §19 đều **không thực hiện**. | §9.2, §17, §19 | 191 GB trống, V1 thêm <1 GB, `serve_originals` nghĩa là không stage nào ghi ảnh. §9.2 viết cho kịch bản materialize ảnh đã xử lý — kịch bản đó đã bị loại. → `docs/adr/0003` |
 
 ### Lấp lỗ hổng của kế hoạch
 
@@ -117,26 +134,29 @@ Kế hoạch không quyết những điểm này, nhưng chúng âm thầm quy�
 
 | # | Bẫy | Cách xử lý |
 |---|---|---|
-| T1 | **Hai CSV viết path khác nhau.** `train.csv`/`valid.csv` cột `Path` **có** prefix `CheXpert-v1.0-small/`; Plus `path_to_image` **không có**. `artifacts/data_audit.json` báo `exact`=1.0 chỉ vì `audit.py` duyệt filesystem, **không** đọc CSV. | Luôn đi qua `src/common/ids.py:normalize_image_path()`. Đã có 23 test + kiểm chứng trên CSV thật |
+| T1 | **Hai CSV viết path khác nhau.** `train.csv`/`valid.csv` cột `Path` **có** prefix `CheXpert-v1.0-small/`; Plus `path_to_image` **không có**. `artifacts/audit/data_audit.json` báo `exact`=1.0 chỉ vì `audit.py` duyệt filesystem, **không** đọc CSV. | Luôn đi qua `src/common/ids.py:normalize_image_path()`. Đã có 23 test + kiểm chứng trên CSV thật |
 | T2 | **Plus CSV có newline nhúng** trong `report`/`section_*`: 48 dòng vật lý / record. | **Bắt buộc dùng CSV parser thật.** Đọc theo dòng sẽ sai ~48×, và sai âm thầm |
 | T3 | **`labels/*_fixed.json` là JSONL**, không phải JSON, dù đuôi `.json`. Path bên trong cũng **không** có prefix dataset root. | Đọc từng dòng một object; chuẩn hóa path qua `ids.py` |
-| T4 | **`make setup` không cài Pillow** (nó ở extra `worker`, setup chỉ sync `api,dev`). Phase 1 cần Pillow để điền `width`/`height` vào `images.parquet`. | Phải sửa trước khi bắt đầu Phase 1 |
 | T5 | **`pnpm` chưa cài** trên máy dev. Chỉ chặn phần web. | `corepack enable` |
 | T6 | **`findings` chỉ có ở 26,6% dòng.** Không bao giờ được đặt làm điều kiện bắt buộc. | `search_text` = impression làm chính, nối findings khi có |
 | T7 | **`NOT_MENTIONED` không bao giờ là `ABSENT`.** Đây là semantics mà toàn bộ luận điểm của đồ án dựa vào. | `contracts.py` chặn ở mức schema; Phase 4 phải có test parametrized 4 status × 4 policy |
 | T8 | **Console Windows là cp1252**, in tiếng Việt từ script Python sẽ `UnicodeEncodeError`. | In ASCII trong script kiểm tra, hoặc ghi ra file UTF-8 |
+| T9 | **`section_impression` thường mở đầu bằng ký tự xuống dòng** và có đánh số `1. 2. 3.` bên trong. | `.strip()` trước khi kiểm tra rỗng và trước khi ghép `search_text`. Con số 99,93% ở trên đã tính sau khi strip |
+| T10 | **`grep -r` ở gốc repo sẽ quét cả `data/` (12 GB, 223k file)** và treo. | Dùng `git grep` hoặc thêm `--exclude-dir=data` |
+
+T4 (`make setup` thiếu Pillow) đã xử lý 2026-09-22 — `setup` giờ dùng
+`uv sync --all-extras`. Số được giữ nguyên, không đánh lại, để tham chiếu cũ không lệch.
 
 ---
 
 ## Đang chờ quyết định
 
 > Đã triển khai theo một hướng, nhưng chưa được người dùng xác nhận. Đừng coi là đã chốt.
+> P1 (disk guard) và P3 (`docker/qdrant`) đã được chốt 2026-09-22 — xem D8 và nhật ký.
 
 | # | Vấn đề | Hiện đang | Chờ gì |
 |---|---|---|---|
-| P1 | **Disk guard.** §9.2 của kế hoạch đòi lại thứ đã bị xóa ở commit `9d3dca3`/`b4b55e5`. | **Không hồi sinh.** 191 GB trống, V1 thêm <1 GB, `serve_originals` nghĩa là không stage file lớn. | Xác nhận bỏ hẳn, hay thay bằng một check free-space trong `cxr embed` |
 | P2 | **`absence_policy` mặc định.** §11.3 nói `explicit_absence_required`. | `exclude_present` trong `configs/retrieval.yaml`. | Phase 1 sẽ ghi prevalence `ABSENT` từng concept vào corpus report → quyết bằng số |
-| P3 | `docker/qdrant/.gitkeep` là scaffolding chết (compose dùng named volume, không bind vào đó). | Giữ nguyên. | Xóa hay không |
 
 ---
 
@@ -144,6 +164,23 @@ Kế hoạch không quyết những điểm này, nhưng chúng âm thầm quy�
 
 > Mới nhất lên đầu. Mỗi entry ≤ 10 dòng và trả lời **vì sao**, không kể lại **cái gì**
 > (`git log` đã kể rồi).
+
+### 2026-09-22 — Dọn trước Phase 1
+
+`make setup` đổi sang `uv sync --all-extras`: các lệnh corpus chạy **native** chứ
+không trong Docker (chỉ `embed` trong Docker), nên venv dev chính là worker và
+phải có Pillow. Dùng `--all-extras` thay vì liệt kê từng extra để không lệch khi
+thêm extra mới.
+
+Gom output audit về `artifacts/audit/data_audit.json` trước khi Phase 1 bắt đầu
+ghi `corpus_report.json` cạnh nó — tránh hai quy ước đường dẫn tồn tại song song
+rồi có người "sửa cho thống nhất" sau.
+
+Chốt P1: bỏ hẳn disk guard (→ `docs/adr/0003`). Chốt P3: xóa `docker/qdrant/`,
+scaffolding chết giống `docker/neo4j/`.
+
+Đo trước 3 thứ Phase 1 phụ thuộc, xem *Chi phí của Phase 1*. Quan trọng nhất:
+polars parse đúng CSV có newline nhúng — nếu sai thì Phase 1 sẽ sinh rác âm thầm.
 
 ### 2026-09-22 — Phase 0a: ba module nền
 
