@@ -1,11 +1,14 @@
-# Override chỉ dành cho profile worker. Dùng kèm compose.yaml:
+# Override for the worker profile only. Use together with compose.yaml:
 #   docker compose -f compose.yaml -f compose.gpu.yaml --profile worker run --rm worker embed
 #
-# Yêu cầu: WSL2 + NVIDIA Container Toolkit. Kiểm tra trước bằng:
+# Requires WSL2 + NVIDIA Container Toolkit. Check first with:
 #   docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
 
 services:
   worker:
+    build:
+      args:
+        TORCH_INDEX: https://download.pytorch.org/whl/cu124
     environment:
       EMBEDDING_DEVICE: cuda
     deploy:

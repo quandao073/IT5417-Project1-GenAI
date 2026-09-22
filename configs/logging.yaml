@@ -1,4 +1,4 @@
-# Structured logging. Never log full report text or source image paths. See Phase 11.
+# Structured logging. Never log full report text or source image paths. See plan section 5.1.
 
 level: INFO
 format: json
@@ -10,9 +10,8 @@ redact:
   - impression
 
 loggers:
-  cxr_retrieval.retrieval: INFO
-  cxr_retrieval.query: INFO
-  cxr_retrieval.graph: WARNING
+  src.retrieval: INFO
+  src.query: INFO
   uvicorn.access: WARNING
 
 search_trace:

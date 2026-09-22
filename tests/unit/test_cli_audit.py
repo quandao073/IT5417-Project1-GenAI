@@ -2,7 +2,7 @@
 
 import json
 
-from cxr_retrieval.cli.main import main
+from src.cli.main import main
 
 
 def _fixture(tmp_path, plus_patients, small_patients):

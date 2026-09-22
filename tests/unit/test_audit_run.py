@@ -2,7 +2,7 @@
 
 import json
 
-from cxr_retrieval.data.audit import run_audit
+from src.data.audit import run_audit
 
 
 def _make_small_tree(root, patients):

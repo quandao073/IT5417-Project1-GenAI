@@ -1,58 +1,79 @@
-# Three-axis evaluation design. See plan sections 8.0 and 8.1.
-# Inviolable rule: CheXbert is ground truth, RadGraph drives constraints. Never swap them.
+# Three-axis evaluation. See plan section 18.
+# Axis 1 and axis 2 both derive from report-generated labels, so they are
+# correlated by construction; axis 3 is the only independent one. Say so in
+# the write-up rather than presenting the three as if they were independent.
 
 axes:
   retrieval_quality:
     ground_truth: chexbert_labels
     metrics: [precision@5, precision@10, ndcg@10, mrr]
-    # Recall is only meaningful when the relevant set is small
+    # Recall is only meaningful when the relevant set is small. A single-label
+    # query has thousands of relevant studies, capping Recall@10 near 0.005.
     recall_when_relevant_lt: 50
-    interpretation: >
-      So sánh công bằng ba cấu hình. Vẫn tương quan với trục 2 vì cùng suy ra từ report;
-      phải nêu rõ điều này trong báo cáo.
 
   constraint_compliance:
-    ground_truth: radgraph_xl
-    metrics: [exclude_violation_rate@10, anatomy_match_rate@10]
+    ground_truth: chexpert_labels
+    metrics: [exclude_violation_rate@10, constraint_satisfaction_rate@10]
     interpretation: >
-      Hybrid thắng THEO THIẾT KẾ vì nó lọc bằng chính nguồn này.
-      Báo cáo như một tính chất của hệ thống, không phải thành tích retrieval.
+      Hybrid wins BY DESIGN here, since it filters on this very source.
+      Report it as a property of the system, never as a retrieval result.
 
   human_judged:
     ground_truth: manual_review
+    # The 234 valid/ studies carry radiologist labels - the only human ground
+    # truth available. Pinned to the test query set, never used for tuning.
+    radiologist_labelled_studies: 234
     query_count: 150
     reviewers: 2
     report_agreement: cohen_kappa
     metrics: [precision@10]
     interpretation: >
-      Trục độc lập duy nhất. Đây là trục có trọng lượng khi bảo vệ.
+      The only independent axis, and the one that carries weight at defence.
 
 benchmark:
   total_queries: 400
-  # Queries are generated from CheXbert labels, never from RadGraph (avoids leaking into axis 1)
   generated_from: chexbert_labels
   verbatim_report_as_query: false
   groups:
-    simple: 120
-    multi_finding: 80
-    negation: 80
-    anatomy: 80
-    uncertainty: 40
+    single_finding:        { count: 100, answerable_by_labels: true }
+    multi_finding:         { count: 100, answerable_by_labels: true }
+    negation:              { count: 100, answerable_by_labels: partial }
+    uncertainty:           { count: 50,  answerable_by_labels: partial }
+    view:                  { count: 50,  answerable_by_labels: true }
+    vietnamese_paraphrase: { count: 100, overlaps_other_groups: true }
 
-configurations:
-  - vector_only
-  - vector_text
-  - hybrid
+query_split:
+  # The corpus is NEVER split - every indexed study stays searchable, exactly
+  # as in real use. Nothing is trained, so there is no leakage to prevent at
+  # corpus level. What does get fitted by hand is fusion weights, prompts and
+  # synonyms, so the queries are what must be held out.
+  validation: 150   # tuning
+  test: 250         # run once, in Phase 7
+  patient_disjoint: true
+
+configurations: [label_only, vector_only, hybrid]
+
+parser_ablation:
+  # Gives the reportable number for the LLM's contribution over the rule parser.
+  baseline: rule_parser
+  candidate: llm_parser
+  labelled_queries: 150
+  metrics: [concept_macro_f1, status_macro_f1, view_macro_f1, schema_valid_rate]
 
 thresholds:
-  # Absolute thresholds are only valid for logical correctness, not retrieval quality.
-  # The rest are fixed once artifacts/metrics/baseline.json exists in Phase 4.
-  negation_constraint_satisfaction_min: 0.90
+  # From plan section 18.4. Absolute thresholds are valid only for logical
+  # correctness; retrieval quality is stated relative to the vector baseline,
+  # which is measured, not guessed.
+  parser_schema_valid_rate_min: 0.99
+  parser_macro_f1_min: 0.90
+  simple_label_precision10_min: 0.70
+  constraint_satisfaction_min: 0.95
   evidence_faithfulness_min: 1.00
-  hybrid_ndcg10_relative_gain_min: 0.05
-  api_p95_seconds_max: 3.0
-  end_to_end_with_llm_seconds_max: 6.0
-  baseline_file: artifacts/metrics/baseline.json
+  hybrid_ndcg10_relative_gain_min: 0.05   # hybrid over vector_only
+  vector_warm_p95_seconds_max: 1.0
+  end_to_end_p95_seconds_max: 5.0         # without the local LLM
+  end_to_end_with_llm_seconds_max: 12.0   # with a CPU LLM
+  baseline_file: artifacts/metrics/vector_baseline.json
 
 latency:
   percentiles: [50, 95]

@@ -7,7 +7,7 @@ import json
 import sys
 from pathlib import Path
 
-from cxr_retrieval.data.audit import CorpusMode, run_audit
+from src.data.audit import CorpusMode, run_audit
 
 
 def _cmd_audit(args: argparse.Namespace) -> int:

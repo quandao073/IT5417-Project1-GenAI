@@ -1,25 +1,28 @@
 # Makefile for the CXR semantic retrieval POC.
-# On Windows use Git Bash or WSL. Requires `make` (choco install make).
+# On Windows use Git Bash or WSL. Requires `make` (choco install make) and `uv`.
 
 SHELL := /bin/bash
 COMPOSE := docker compose
 COMPOSE_GPU := docker compose -f compose.yaml -f compose.gpu.yaml
+PY := uv run
 
 .DEFAULT_GOAL := help
 .PHONY: help setup up down logs ps seed smoke test lint typecheck \
-        audit ingest preprocess embed index graph evaluate benchmark clean
+        audit-data build-corpus embed build-report-index validate-indexes \
+        evaluate benchmark clean
 
 help: ## List targets
-	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n",$$1,$$2}'
+	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-20s\033[0m %s\n",$$1,$$2}'
 
 # --- environment ---
-setup: ## Create .env, make the gitignored data/artifacts dirs, install dev deps
-	@test -f .env || cp .env.example .env
-	@mkdir -p data/{raw,staging,processed/images,manifests,indexes} artifacts/{metrics,reports,screenshots}
-	pip install -e ".[api,dev]"
+setup: ## Create .env, make the gitignored data/artifacts dirs, install deps
+	@test -s .env || cp .env.example .env
+	@mkdir -p data/{raw,canonical,indexes,cache/thumbnails,fixtures/synthetic} \
+	          artifacts/{audit,metrics,reports,screenshots}
+	uv sync --extra api --extra dev
 
 # --- stack lifecycle ---
-up: ## Start web + api + qdrant + neo4j
+up: ## Start web + api + qdrant
 	$(COMPOSE) up -d --build
 down: ## Stop the stack, keep volumes
 	$(COMPOSE) down
@@ -30,35 +33,33 @@ ps: ## Service status
 
 # --- demo data ---
 seed: ## Load synthetic fixtures so the demo runs without the dataset
-	$(COMPOSE) --profile worker run --rm worker seed --fixtures data/fixtures/synthetic
+	$(PY) cxr seed --fixtures data/fixtures/synthetic
 
-# --- ingestion pipeline (GPU) ---
-audit: ## Phase 1 GATE: measure join rate, exit nonzero below 70%
-	PYTHONPATH=src python -m cxr_retrieval.cli.main audit
-ingest: ## Join metadata, build the master table and sample manifest
-	$(COMPOSE) --profile worker run --rm worker ingest
-preprocess: ## Normalize images, cap long side at 512 px (never upscale)
-	$(COMPOSE) --profile worker run --rm worker preprocess
-embed: ## Generate image embeddings on the GPU
+# --- corpus and index pipeline ---
+audit-data: ## Measure the join rate between CheXpert Plus and CheXpert-small
+	$(PY) cxr audit
+build-corpus: ## Join, sample and write the canonical Parquet tables
+	$(PY) cxr build-corpus
+embed: ## Embed the corpus and index the vectors into Qdrant (GPU)
 	$(COMPOSE_GPU) --profile worker run --rm worker embed
-index: ## Index vectors into Qdrant and build the SQLite FTS
-	$(COMPOSE) --profile worker run --rm worker index
-graph: ## RadGraph -> study_facts.parquet -> Neo4j
-	$(COMPOSE) --profile worker run --rm worker graph
+build-report-index: ## Build the SQLite FTS5 report index
+	$(PY) cxr build-report-index
+validate-indexes: ## Check canonical tables, Qdrant and the report index agree
+	$(PY) cxr validate-indexes
 
 # --- testing and evaluation ---
-test: ## Unit and integration tests
-	pytest -q
+test: ## Unit, data-contract and integration tests
+	$(PY) pytest -q
 smoke: ## Smoke test against the running stack
 	./scripts/smoke_test.sh
 evaluate: ## Run the three-axis benchmark
-	$(COMPOSE) --profile worker run --rm worker evaluate
+	$(PY) cxr evaluate
 benchmark: evaluate ## Alias for evaluate
 lint: ## ruff
-	ruff check src tests
+	$(PY) ruff check src tests
 typecheck: ## mypy
-	mypy
+	$(PY) mypy
 
 # --- operations ---
-clean: ## Remove the stack AND all volumes (destroys index and graph)
+clean: ## Remove the stack AND all volumes (destroys the vector index)
 	$(COMPOSE) down -v

@@ -1,15 +1,17 @@
 # syntax=docker/dockerfile:1.7
-# Build context là ./web
+# Build context is ./web
 FROM node:20-alpine AS deps
 WORKDIR /app
-COPY package.json package-lock.json* ./
-RUN npm ci
+RUN corepack enable
+COPY package.json pnpm-lock.yaml* ./
+RUN pnpm install --frozen-lockfile
 
 FROM node:20-alpine AS builder
 WORKDIR /app
+RUN corepack enable
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN npm run build
+RUN pnpm build
 
 FROM node:20-alpine AS runtime
 ENV NODE_ENV=production

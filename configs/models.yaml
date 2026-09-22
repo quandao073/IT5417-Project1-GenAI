@@ -1,18 +1,27 @@
-# Models for embedding and query parsing. Every revision must be pinned.
+# Models for embedding and query parsing. Every revision must be pinned before
+# the full embedding run. See plan section 6.4.
 
 image_encoder:
-  # Phase 4 spike candidates; pick one and record it in docs/model-card-poc.md
+  # Phase 2 spike runs all three on 1,000 images and the gate picks the winner;
+  # record the decision in docs/model-decision.md. BiomedCLIP is the lower-risk
+  # default (a plain open_clip checkpoint, no bespoke loader); CheXzero and
+  # XrayCLIP are trained on chest radiographs specifically.
   candidates:
     - id: microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224
       framework: open_clip
     - id: StanfordAIMI/CheXzero
       framework: open_clip
-  selected: microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224
-  revision: null          # PHẢI điền commit hash sau khi chốt
-  embedding_dim: 512
+    - id: StanfordAIMI/XrayCLIP
+      framework: open_clip
+  selected: null          # fill in after the Phase 2 gate passes
+  revision: null          # fill in the commit hash together with `selected`
+  # Never hardcoded. The encoder reports its own dimension, build_manifest.json
+  # records it, and `cxr validate-indexes` asserts the Qdrant collection matches.
+  embedding_dim: null
   normalize: true
   batch_size: 64
-  device: cuda            # worker; runtime API dùng cpu
+  # CPU is the portable default; compose.gpu.yaml overrides the worker to cuda.
+  device: cpu
 
 text_encoder:
   # Same model as image_encoder so both embeddings share one space
@@ -21,10 +30,15 @@ text_encoder:
 
 llm:
   provider: ollama
-  model: qwen2.5:7b-instruct-q4_K_M
+  # A 7B q4 model needs roughly 8-20 s on CPU for a ~150-token JSON completion,
+  # which alone exhausts the 12 s end-to-end budget. 3B is the default; 7B stays
+  # available as a quality arm in the parser ablation.
+  model: qwen2.5:3b-instruct-q4_K_M
   base_url_env: LLM_BASE_URL
   temperature: 0.0
   timeout_seconds: 20
   max_retries: 1
-  # On LLM failure or invalid JSON, fall back to the rule parser. See plan section 7.1.
+  # Parsed queries are cached by sha256 of the normalized user query.
+  cache_parsed_queries: true
+  # On LLM failure or invalid JSON, fall back to the rule parser. See plan 10.3.
   fallback: rule_based

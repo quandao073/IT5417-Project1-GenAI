@@ -1,4 +1,5 @@
-# Data sources and corpus construction rules. See plan sections 2 and 6.
+# Data sources and corpus construction. See plan sections 7 and 8.
+# Every number here was measured on the downloaded data, not taken from a paper.
 
 sources:
   images:
@@ -7,46 +8,62 @@ sources:
     format: jpg
   plus_metadata:
     name: chexpert-plus
-    # File names follow the Redivis folder layout; confirmed in Phase 1.
     csv: data/raw/chexpert-plus/df_chexpert_plus_240401.csv
-    radgraph_dir: data/raw/chexpert-plus/radgraph_xl
+    # Despite the .json extension these are JSONL, one object per line,
+    # keyed by path_to_image.
     chexbert_labels:
       findings: data/raw/chexpert-plus/labels/findings_fixed.json
       impression: data/raw/chexpert-plus/labels/impression_fixed.json
       report: data/raw/chexpert-plus/labels/report_fixed.json
-  # Fallback if the join gate fails (<70%): selective download from PNG_train on Redivis.
-  plus_png_fallback:
-    enabled: false
-    redivis_folder: PNG_train
+  # RadGraph-XL is present under data/raw/chexpert-plus/radgraph_xl/ but is NOT
+  # ingested in V1. It belongs to the knowledge-graph work deferred to V2.
 
 join:
-  key: path_to_image
-  # Phase 1 gate (plan section 2.3). The pipeline stops below the floor.
-  min_join_rate_full_corpus: 0.95
-  min_join_rate_sampled: 0.70
-  allow_fuzzy_match: false
+  # Measured 2026-09-21 over all 223,462 rows: join rate 1.0000.
+  images:
+    key: path_to_image
+    strategy: exact
+    allow_fuzzy_match: false
+    # CheXpert-small train.csv/valid.csv carry `Path` WITH the dataset-root
+    # prefix; CheXpert Plus `path_to_image` does NOT. Normalize both to the
+    # Plus form before joining. Deterministic operations only - no fuzzy or
+    # approximate filename matching. See plan section 7.2.
+    normalize: [backslash_to_slash, strip_whitespace, collapse_separators]
+    strip_root_prefix: "CheXpert-v1.0-small/"
+    min_full_join_rate: 0.95
 
 corpus:
-  # full_frontal | sampled_25k - decided once the audit has measured join_rate
-  mode: sampled_25k
+  # Measured on the Plus CSV: 191,054 frontal AP/PA rows -> 187,674 studies
+  # across 64,710 patients, of which 190,913 rows carry a non-empty impression
+  # (99.93%). The eligible pool is 7.5x the target, so every selected study has
+  # a report and the Tier A / Tier B split of plan 7.4 is empty by construction.
+  target_studies: 25000
+  min_studies: 10000          # Definition of Done floor, plan section 22
+  frontal_only: true
   views_allowed: [AP, PA]
   max_images_per_study: 1
+  # Deterministic and unbiased. Preferring PA would give cleaner frontals but
+  # skew the corpus away from the dataset's real 161,622 AP / 29,432 PA mix.
+  image_selection: lowest_view_index
   require_impression: true
+  # Findings exist for only 26.6% of rows, so they can never be required;
+  # search_text is impression-primary with findings appended when present.
   prefer_findings: true
 
-sampling:
+manifest:
   seed: 20260101
-  target_studies: 25000
   stratify_by_labels: true
-  oversample_rare: true
-  splits:
-    development: 18000
-    validation: 3500
-    test: 3500
-  split_level: patient   # chống leakage; không bao giờ đổi thành study
+  # Every prefix of the manifest keeps the pool's label distribution, so
+  # --limit picks a corpus size without re-running the sampler.
+  interleave_by_stratum: true
+  # The 234 valid/ studies carry radiologist-assigned labels - the only human
+  # ground truth in the dataset. They are pinned to the test query set and are
+  # never spent on tuning. The corpus itself is not split; see
+  # configs/evaluation.yaml:query_split.
+  reserve_valid_split_for_human_eval: true
 
 labels:
-  # Four states, never collapsed. See plan section 5.3.
+  # Four states, never collapsed. NOT_MENTIONED is not ABSENT.
   mapping:
     "1": PRESENT
     "0": ABSENT
@@ -68,20 +85,12 @@ labels:
     - Fracture
     - Support Devices
 
-preprocess:
-  # CheXpert-v1.0-small has a 320 px short side, ~356 px long side on average.
-  # Measured: 0 of 107 sampled images exceed 512 px, so the resize step is
-  # effectively a no-op. Never upscale - enlarging a downsampled image costs
-  # disk and adds no information.
-  max_long_side: 512
-  allow_upscale: false
+images:
+  # There is no preprocessing stage. Measured on 107 random images: all are
+  # mode L, none exceeds 512 px (356 px long side on average), none carries
+  # EXIF, average 50.9 KB. Grayscale conversion, resizing and metadata
+  # stripping would all be no-ops, and a JPEG->WebP transcode is lossy on
+  # top of lossy. Serve the originals.
+  serve_originals: true
   thumbnail_long_side: 256
-  grayscale: true
-  output_format: webp
-  strip_metadata: true
-  batch_size: 2000
-
-disk_guard:
-  min_free_gb: 40
-  project_ceiling_gb: 120
-  include_wsl_vhdx: true
+  generate_thumbnails: false   # enable only if the result grid needs it

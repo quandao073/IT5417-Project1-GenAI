@@ -2,7 +2,7 @@
 
 import pytest
 
-from cxr_retrieval.data.audit import list_small_image_paths, read_plus_image_paths
+from src.data.audit import list_small_image_paths, read_plus_image_paths
 
 
 class TestReadPlusImagePaths:

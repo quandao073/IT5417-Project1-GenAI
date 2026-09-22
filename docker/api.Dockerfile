@@ -12,8 +12,7 @@ FROM base AS runtime
 RUN useradd --create-home --uid 10001 app
 COPY --from=builder /install /usr/local
 WORKDIR /app
-COPY --chown=app:app src ./src
 COPY --chown=app:app configs ./configs
 USER app
 EXPOSE 8000
-CMD ["uvicorn", "cxr_retrieval.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

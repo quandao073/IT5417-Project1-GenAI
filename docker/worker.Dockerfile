@@ -1,5 +1,7 @@
 # syntax=docker/dockerfile:1.7
-# Worker chạy ingestion/embedding. Cần GPU -> dùng kèm compose.gpu.yaml.
+# Worker runs corpus build, embedding and index build.
+# CPU by default so the image builds anywhere; compose.gpu.yaml passes the CUDA
+# index so the same Dockerfile produces the GPU image.
 FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 
@@ -9,9 +11,8 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# Torch cài riêng để pin đúng CUDA build; đổi cu124 -> cpu nếu chạy không GPU.
-RUN pip install --index-url https://download.pytorch.org/whl/cu124 \
-      torch==2.4.1 torchvision==0.19.1
+ARG TORCH_INDEX=https://download.pytorch.org/whl/cpu
+RUN pip install --index-url ${TORCH_INDEX} torch==2.4.1 torchvision==0.19.1
 
 COPY pyproject.toml ./
 COPY src ./src

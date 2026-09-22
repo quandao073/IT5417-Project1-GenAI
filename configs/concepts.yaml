@@ -1,0 +1,96 @@
+# English and Vietnamese surface forms for the 14 CheXpert labels.
+#
+# Replaces the medical ontology, which is V2 work: no CUIs, no anatomy, no
+# hierarchy, no relations. Three consumers:
+#   - the LLM parser prompt, as the allowlist of legal `concept` values
+#   - the deterministic rule parser, as a longest-match trie over EN + VI
+#   - the FTS5 MATCH builder and the evidence extractor, which use `en` ONLY,
+#     because the reports are English even when the query is Vietnamese
+#
+# The keys are exactly the 14 CheXpert column names, so this file joins to
+# configs/data.yaml:labels.pathologies and to labels.parquet:concept.
+# tests/unit/test_concepts_config.py enforces that.
+
+version: 1.0.0
+
+concepts:
+  No Finding:
+    en: [no finding, normal study, unremarkable, no acute abnormality]
+    vi: [bình thường, không bất thường, không có bất thường cấp]
+
+  Enlarged Cardiomediastinum:
+    en: [enlarged cardiomediastinum, mediastinal widening, widened mediastinum,
+         cardiomediastinal enlargement]
+    vi: [trung thất giãn rộng, bóng tim trung thất to, giãn trung thất]
+
+  Cardiomegaly:
+    en: [cardiomegaly, enlarged heart, cardiac enlargement, enlarged cardiac silhouette]
+    vi: [tim to, bóng tim to, tim lớn, bóng tim lớn]
+
+  Lung Opacity:
+    en: [lung opacity, pulmonary opacity, opacification, airspace opacity, haziness]
+    vi: [mờ phổi, đám mờ phổi, tăng đậm độ phổi, mờ nhu mô]
+
+  Lung Lesion:
+    en: [lung lesion, pulmonary nodule, lung nodule, lung mass, pulmonary mass]
+    vi: [tổn thương phổi, nốt phổi, khối phổi, u phổi]
+
+  Edema:
+    en: [pulmonary edema, edema, vascular congestion, interstitial edema]
+    vi: [phù phổi, phù, sung huyết mạch máu, phù mô kẽ]
+
+  Consolidation:
+    en: [consolidation, airspace consolidation, airspace disease]
+    vi: [đông đặc phổi, đông đặc]
+
+  Pneumonia:
+    en: [pneumonia, pulmonary infection, infectious process]
+    vi: [viêm phổi, nhiễm trùng phổi]
+
+  Atelectasis:
+    en: [atelectasis, atelectatic change, volume loss, lung collapse]
+    vi: [xẹp phổi, xẹp thùy phổi, giảm thể tích phổi]
+
+  Pneumothorax:
+    en: [pneumothorax, collapsed lung]
+    vi: [tràn khí màng phổi, tràn khí]
+
+  Pleural Effusion:
+    en: [pleural effusion, effusion, pleural fluid]
+    vi: [tràn dịch màng phổi, tràn dịch, dịch màng phổi]
+
+  Pleural Other:
+    en: [pleural thickening, pleural scarring, pleural plaque, pleural abnormality]
+    vi: [dày màng phổi, xơ màng phổi, bất thường màng phổi]
+
+  Fracture:
+    en: [fracture, rib fracture, clavicle fracture, displaced fracture]
+    vi: [gãy xương, gãy xương sườn, gãy xương đòn]
+
+  Support Devices:
+    en: [support device, endotracheal tube, chest tube, catheter, central line,
+         picc line, pacemaker, sternotomy wire]
+    vi: [dụng cụ hỗ trợ, ống nội khí quản, ống dẫn lưu màng phổi,
+         máy tạo nhịp, chỉ khâu xương ức]
+
+views:
+  AP:
+    en: [ap, anteroposterior, ap view]
+    vi: [ap, tư thế ap]
+  PA:
+    en: [pa, posteroanterior, pa view]
+    vi: [pa, tư thế pa]
+  FRONTAL:
+    en: [frontal, front view, frontal view]
+    vi: [thẳng, chụp thẳng, phim thẳng, tư thế thẳng]
+
+negation_cues:
+  # A cue within a 5-token window before a concept turns it into an exclusion.
+  en: [no, without, absent, free of, negative for, rules out, ruled out,
+       denies, not, no evidence of, resolution of]
+  vi: [không, không có, chưa thấy, không thấy, loại trừ, không kèm, đã hết]
+
+uncertainty_cues:
+  en: [possible, probable, suspected, suspicious for, cannot exclude,
+       questionable, may represent, uncertain, equivocal, likely]
+  vi: [nghi ngờ, có thể, không loại trừ, chưa rõ, khả năng, nghi]

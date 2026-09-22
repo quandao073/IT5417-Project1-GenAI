@@ -3,13 +3,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "cxr-retrieval"
+name = "cxr-search"
 version = "0.1.0"
-description = "Semantic retrieval for chest X-rays using image embeddings, report FTS and a RadGraph-derived knowledge graph"
+description = "Semantic retrieval for chest X-rays using image embeddings, structured CheXpert labels and report full-text search"
 requires-python = ">=3.11,<3.13"
 license = { text = "MIT" }
 
-# Chỉ những gì cả API lẫn worker đều cần.
+# Only what both the API and the worker need.
 dependencies = [
   "pydantic>=2.7",
   "pydantic-settings>=2.3",
@@ -23,32 +23,31 @@ api = [
   "uvicorn[standard]>=0.30",
   "httpx>=0.27",
   "qdrant-client>=1.9",
-  "neo4j>=5.20",
+  "polars>=1.0",
   "pyarrow>=16.0",
-  "pandas>=2.2",
 ]
 worker = [
-  "pandas>=2.2",
+  "polars>=1.0",
   "pyarrow>=16.0",
   "pillow>=10.3",
+  "numpy>=1.26",
   "tqdm>=4.66",
   "qdrant-client>=1.9",
-  "neo4j>=5.20",
-  # torch/open_clip cài riêng trong docker/worker.Dockerfile theo đúng CUDA build
+  # torch/open_clip are installed separately in docker/worker.Dockerfile so the
+  # CUDA build can be pinned per machine.
 ]
 dev = [
   "pytest>=8.2",
   "pytest-asyncio>=0.23",
   "ruff>=0.4",
   "mypy>=1.10",
-  "pandera>=0.19",
 ]
 
 [project.scripts]
-cxr = "cxr_retrieval.cli.main:app"
+cxr = "src.cli.main:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/cxr_retrieval"]
+packages = ["src"]
 
 [tool.ruff]
 line-length = 100
@@ -59,13 +58,13 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["."]
 markers = [
-  "integration: cần service ngoài (qdrant/neo4j) đang chạy",
-  "e2e: chạy qua toàn bộ stack đã up",
+  "integration: needs an external service (qdrant) running",
+  "e2e: runs against the whole stack once it is up",
 ]
 
 [tool.mypy]
 python_version = "3.11"
-packages = ["cxr_retrieval"]
+packages = ["src"]
 ignore_missing_imports = true
