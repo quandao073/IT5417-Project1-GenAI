@@ -3,8 +3,11 @@
 > Cập nhật liên tục. Bắt buộc có trước khi bảo vệ.
 
 - Ảnh dùng bản CheXpert-v1.0-small đã downsample: không dùng được cho chi tiết mảnh.
-- Nhãn CheXbert sinh tự động từ report, không phải ground truth lâm sàng. Chỉ 234
-  study trong `valid/` có nhãn do bác sĩ gán.
+- Nhãn CheXbert sinh tự động từ report, không phải ground truth lâm sàng. Chỉ 200
+  study trong `valid/` (234 ảnh) có nhãn do bác sĩ gán.
+- Nhãn CheXbert suy từ section `findings` chỉ dùng được cho 25,6% study thực sự
+  có section đó. Với study không có, labeler chạy trên chuỗi rỗng và luôn xuất
+  `No Finding = present`; những assertion đó bị loại khỏi `labels.parquet`.
 - Trục 1 và trục 2 của đánh giá cùng suy ra từ report nên còn tương quan; human
   review tồn tại để bù phần đó.
 - Một ảnh frontal đại diện cho mỗi study: report có thể mô tả ảnh khác trong cùng study.
