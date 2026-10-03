@@ -32,8 +32,17 @@ image_encoder:
   # Filled with configs/concepts.yaml:<concept>.en[0]. Part of the pinned setup:
   # changing it changes every score.
   text_prompt_template: "chest x-ray showing {}"
-  selected: null          # fill in after the Phase 2 gate passes
-  revision: null          # fill in together with `selected`
+  selected: biomedclip    # Phase 2 gate winner, see docs/model-decision.md
+  revision: 9f341de24bfb00180f1b847274256e9b65a3a32e
+  # Copied from artifacts/metrics/model_spike.json -> models.biomedclip.preprocessing.
+  preprocessing:
+    image_size: 224
+    resize: "open_clip image_transform: shortest side, bicubic, center crop"
+    mean: [0.48145466, 0.4578275, 0.40821073]
+    std: [0.26862954, 0.26130258, 0.27577711]
+    context_length: 256
+    tokenizer: microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224@9f341de24bfb00180f1b847274256e9b65a3a32e
+    text_arch_config_unpinned: microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract
   # Never hardcoded. The encoder reports its own dimension, build_manifest.json
   # records it, and `cxr validate-indexes` asserts the Qdrant collection matches.
   embedding_dim: null
