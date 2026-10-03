@@ -21,28 +21,32 @@ Ba mục đó đủ để không phá vỡ thứ gì. Các mục còn lại tra 
 
 > Cập nhật lại mục này mỗi lần ghi log. Mục này mà cũ thì tệ hơn là không có.
 
-**Cập nhật lần cuối:** 2026-09-23 (sau Phase 1)
+**Cập nhật lần cuối:** 2026-10-03 (sau Phase 2)
 
 | | |
 |---|---|
-| Đã xong | Part A · Phase 0a · **Phase 1 (canonical corpus 25.000 study)** |
+| Đã xong | Part A · Phase 0a · Phase 1 (canonical corpus 25.000 study) · **Phase 2 (model gate: BiomedCLIP)** |
 | Đang làm | — |
-| Tiếp theo | **Phase 2 (VLM spike + model gate)**, hoặc Phase 0b song song |
-| Chặn Phase 2 | không có; chỉ cần tải model từ HuggingFace |
+| Tiếp theo | **Phase 3 (embed 25k bằng BiomedCLIP)**, hoặc Phase 0b song song |
+| Chặn Phase 3 | không có; model đã pin trong `configs/models.yaml` (D11). P4 đang mở nhưng không chặn |
 | Chặn Phase 0b | `pnpm` chưa cài trên máy — xem T5 |
 
 Mã thật hiện có: `src/common/{ids,config}.py`,
-`src/data/{contracts,labels,join,sample,canonical,audit}.py`, `src/cli/main.py`.
-`src/{api,embeddings,query,retrieval,evaluation,explanation}/` còn rỗng.
+`src/data/{contracts,labels,join,sample,canonical,audit}.py`,
+`src/embeddings/{base,spike,biomedclip,chexzero,xrayclip}.py`,
+`src/evaluation/zero_shot.py`, `src/cli/main.py`.
+`src/{api,query,retrieval,explanation}/` còn rỗng.
 
 Dữ liệu đã dựng: `data/canonical/*.parquet` (5 bảng, 11 MB) và
 `artifacts/audit/corpus_report.json`. Cả hai gitignored — dựng lại bằng
-`uv run cxr build-corpus --limit 25000` (~4 phút).
+`uv run cxr build-corpus --limit 25000` (~4 phút). Spike Phase 2:
+`data/cache/model_spike/` + `artifacts/metrics/model_spike.json`, cũng gitignored.
 
 Lệnh kiểm tra sau mỗi thay đổi:
 
 ```bash
-uv run pytest -q                 # 208 tests
+uv run pytest -q                 # 269 tests (3 test `model` bị bỏ chọn mặc định)
+uv run pytest -m model           # 3 smoke test adapter thật, cần weights đã tải
 uv run ruff check src tests
 uv run cxr --help
 docker compose config > /dev/null
@@ -140,6 +144,29 @@ Phân bố lưỡng cực: bác sĩ chủ động loại trừ vài thứ (tràn
 thất) nên `ABSENT` phổ biến; còn xẹp phổi hay tổn thương phổi thì gần như không
 ai viết "không có". Median `ABSENT` 5,0%, bốn concept dưới 2%.
 
+### Phase 2 spike (đo 2026-10-03)
+
+**Cách đo:** `uv run cxr spike-models --models <tên>` cho từng model, mỗi model một tiến trình
+riêng chạy lần lượt, rồi `uv run cxr spike-models --rescore`. Mẫu manifest rank 200–1199
+(1.000 study, không có ca `valid/`), torch CPU, 14 luồng, batch 16. s/ảnh là trung bình warm
+(bỏ batch đầu); peak RSS là peak working set của tiến trình. Prompt
+`"chest x-ray showing {}"`, AUROC strict trên 11 concept đủ mẫu (≥ 10 dương và ≥ 10 `ABSENT`).
+Số lấy từ `artifacts/metrics/model_spike.json` (embed @ `0cb15d4`, `--rescore` @ `07314cd`);
+thư viện theo `library_versions` của JSON: torch 2.4.1, torchvision 0.19.1, open_clip_torch
+2.24.0, transformers 4.44.2, numpy 2.5.3.
+
+| Model | Macro strict (CI 95%) | Macro lenient (14 concept) | s/ảnh | Dự báo 25k | ms/query | Peak RSS | Weights | Dim |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| **BiomedCLIP** | **0,636** (0,607–0,663) | 0,609 | 0,093 | 0,644 h | 158 | 1.960 MiB | 784,6 MB | 512 |
+| CheXzero | 0,461 (0,432–0,489) | 0,540 | 0,031 | 0,215 h | 42 | 1.494 MiB | 353,5 MB | 512 |
+| XrayCLIP | 0,616 (0,587–0,645) | 0,626 | 0,637 | 4,421 h | 19 | 1.568 MiB | 603,0 MB | 512 |
+
+Hiệu BiomedCLIP − XrayCLIP: 0,0198; CI 95% −0,015–0,053 (bootstrap 1.000 lần, seed 20260101
+theo JSON, paired; chỉ báo cáo).
+0 ảnh lỗi ở cả ba. Concept thiếu mẫu strict: No Finding (0 `ABSENT`), Lung Lesion (8),
+Pleural Other (1). Nhãn của mẫu khớp bảng prevalence ở trên (vd Pleural Effusion 53,8% so với
+57,0%, Support Devices 80,7% so với 82,9%). Chi tiết từng concept: `docs/model-decision.md`.
+
 ---
 
 ## Quyết định đang có hiệu lực
@@ -162,6 +189,9 @@ ai viết "không có". Median `ABSENT` 5,0%, bốn concept dưới 2%.
 | D9 | **`absence_policy` mặc định là `exclude_present`**, không phải `explicit_absence_required`. Cái sau vẫn phơi ra UI và báo cáo song song trong evaluation. | §11.3 | Đo trên corpus thật: median `ABSENT` chỉ 5,0%, bốn concept dưới 2% (Pleural Other 0,9%, Atelectasis 1,3%, Lung Lesion 1,9%, No Finding 0,7%). Bắt buộc `ABSENT` sẽ làm recall sụp với phần lớn concept |
 | D10 | **`CHEXBERT_FINDINGS` không phát assertion cho study thiếu findings section.** Nguồn không có đầu vào thì không có assertion, nên không đóng góp dòng nào vào `labels.parquet`. | — | Xem T11 |
 | D8 | **Không có disk guard.** §9.2, task "Viết disk guard" của Phase 1 và mục disk guard trong §19 đều **không thực hiện**. | §9.2, §17, §19 | 191 GB trống, V1 thêm <1 GB, `serve_originals` nghĩa là không stage nào ghi ảnh. §9.2 viết cho kịch bản materialize ảnh đã xử lý — kịch bản đó đã bị loại. → `docs/adr/0003` |
+| D11 | **Image encoder là BiomedCLIP** (`microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224` @ `9f341de`), pin trong `configs/models.yaml`. | `models.yaml` (`selected: null`) | Luật gate cố định trước khi chạy: hard gate rồi macro strict AUROC; hai model đầu cách < 0,02 thì chọn rẻ hơn. BiomedCLIP 0,636 vs XrayCLIP 0,616: hiệu 0,0198, dưới ngưỡng chỉ 0,0002 → hòa, BiomedCLIP nhanh hơn 6,9× nên thắng. MIT (thay vì CC-BY-NC) là lợi ích đi kèm; bước license không được xét. CheXzero trượt (0,461). → `docs/model-decision.md` |
+| D12 | **200 ca nhãn bác sĩ (`valid/`, rank 0–199) không bao giờ tham gia chọn model hay tune.** Spike lấy rank 200–1199; `select_sample` raise nếu chạm ca `valid/`. | cách hiểu mặc định của §17 | Đó là ground truth người duy nhất của test. Chọn model là tune; dùng chúng ở đây thì con số test cuối cùng không còn sạch |
+| D13 | **Spike chấm bằng 14 prompt đơn concept** (`"chest x-ray showing {}"` + `concepts.yaml:<c>.en[0]`), không phải 30–50 canonical query. | §17 | Query phủ định/đa concept cần parser Phase 4; bịa chúng bây giờ là đo sai thứ. Prompt đơn dương là đúng phép vector mode sẽ chạy |
 
 ### Lấp lỗ hổng của kế hoạch
 
@@ -191,6 +221,7 @@ Kế hoạch không quyết những điểm này, nhưng chúng âm thầm quy�
 | T11 | **CheXbert chạy trên findings section RỖNG luôn xuất `No Finding = 1`.** Đo được **18.598/18.598 = 100,0%** ở study không có findings, so với 6,3% ở study có. 74,4% study không có section này. Vì `CHEXPERT_V1` và `CHEXBERT_IMPRESSION` thường im lặng về "No Finding", artifact thắng trong `resolve` và gán "bình thường" cho 78,5% corpus. Contract test vẫn xanh — chỉ số liệu mới lộ ra. | `canonical._read_all_labels` loại dòng `CHEXBERT_FINDINGS` khi `findings` null. Có test khóa cả hai chiều. **Nguồn nhãn mới nào cũng phải kiểm kiểu này trước khi tin** |
 | T9 | **`section_impression` thường mở đầu bằng ký tự xuống dòng** và có đánh số `1. 2. 3.` bên trong. | `.strip()` trước khi kiểm tra rỗng và trước khi ghép `search_text`. Con số 99,93% ở trên đã tính sau khi strip |
 | T10 | **`grep -r` ở gốc repo sẽ quét cả `data/` (12 GB, 223k file)** và treo. | Dùng `git grep` hoặc thêm `--exclude-dir=data` |
+| T12 | **Model ID và loader trong kế hoạch sai.** `models.yaml` từng ghi `StanfordAIMI/CheXzero` và `StanfordAIMI/XrayCLIP` — cả hai không tồn tại. CheXzero chỉ có trên Google Drive (state dict OpenAI CLIP). XrayCLIP là transformers `CLIPModel`, không phải open_clip. open_clip 2.24 với `hf-hub:` **bỏ qua revision** âm thầm, và không có `open_clip.__version__`. | ID thật + pin trong `configs/models.yaml`; CheXzero pin bằng sha256 file. BiomedCLIP nạp từ `snapshot_download(revision=...)` rồi load file local. Version: `open_clip.version.__version__`. Chỉ báo cáo của `cxr spike-models --rescore` là quyết định: chạy `--models <tên>` lẻ ghi đè `model_spike.json` bằng báo cáo một model |
 
 T4 (`make setup` thiếu Pillow) đã xử lý 2026-09-22 — `setup` giờ dùng
 `uv sync --all-extras`. Số được giữ nguyên, không đánh lại, để tham chiếu cũ không lệch.
@@ -201,8 +232,12 @@ T4 (`make setup` thiếu Pillow) đã xử lý 2026-09-22 — `setup` giờ dùn
 
 > Đã triển khai theo một hướng, nhưng chưa được người dùng xác nhận. Đừng coi là đã chốt.
 
-**Hiện không còn mục nào.** P1 (disk guard) và P3 (`docker/qdrant`) chốt
-2026-09-22 → D8. P2 (`absence_policy`) chốt 2026-09-23 bằng số liệu corpus → D9.
+| # | Câu hỏi | Đang làm theo | Vì sao còn mở |
+|---|---|---|---|
+| P4 | Có xem lại **giao thức chấm của gate** Phase 2 không (một prompt dương `"chest x-ray showing {}"`, spec Q3, khớp phép vector search lúc chạy)? | Giữ nguyên; D11 (BiomedCLIP) có hiệu lực tới khi người dùng quyết | Một lần chấm lại tạm thời, ngoài gate, trên embedding đã cache của CheXzero bằng cặp prompt `"{c}"`/`"no {c}"` cho điểm cao hơn. Lần đó khác cả giao thức lẫn cách viết concept, không có trong `model_spike.json`, script không giữ lại. Gợi ý: tiền xử lý CheXzero nhiều khả năng không hỏng, và giao thức một prompt dương có thể bất lợi cho nó. → `docs/model-decision.md` |
+
+P1 (disk guard) và P3 (`docker/qdrant`) chốt 2026-09-22 → D8. P2 (`absence_policy`) chốt
+2026-09-23 bằng số liệu corpus → D9.
 
 ---
 
@@ -210,6 +245,22 @@ T4 (`make setup` thiếu Pillow) đã xử lý 2026-09-22 — `setup` giờ dùn
 
 > Mới nhất lên đầu. Mỗi entry ≤ 10 dòng và trả lời **vì sao**, không kể lại **cái gì**
 > (`git log` đã kể rồi).
+
+### 2026-10-03 — Phase 2: VLM spike, chọn BiomedCLIP
+
+Luật gate viết và test trước khi có số, để kết quả không kéo được luật theo. Bước quyết định là
+tie < 0,02: hiệu BiomedCLIP − XrayCLIP 0,0198 lọt ngưỡng chỉ 0,0002, nên chi phí quyết — XrayCLIP
+chạy 512 px, chậm 6,9×. License không được xét; MIT chỉ là lợi ích đi kèm. Kết luận không phụ
+thuộc tie-break vì BiomedCLIP cũng nhỉnh hơn về điểm. CI bootstrap (chứa 0) chỉ để báo cáo.
+
+Macro lenient trung bình 14 concept, strict trung bình 11 concept: khác tập, không so trực tiếp,
+không tham gia gate. Lenient xếp XrayCLIP trên BiomedCLIP. Cùng 11 concept, lenient là 0,613 /
+0,528 / 0,627 (BiomedCLIP / CheXzero / XrayCLIP), tính từ `auroc_lenient` trong JSON.
+
+Bất ngờ: CheXzero 0,461, **dưới** ngẫu nhiên ở 7/11 concept (không phẳng quanh 0,5), trên cùng
+11 concept lenient (0,528) cao hơn strict. Một lần chấm lại tạm thời bằng cặp prompt dương/âm cho nó điểm cao hơn,
+nhưng khác giao thức và cách viết concept nên không so được với gate. Gate giữ nguyên; câu hỏi có
+xem lại giao thức chấm hay không để người dùng quyết → P4.
 
 ### 2026-09-23 — Phase 1: canonical corpus
 
