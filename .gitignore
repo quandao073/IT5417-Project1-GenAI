@@ -50,3 +50,7 @@ compose.override.yaml
 Thumbs.db
 .vscode/
 .idea/
+
+docs/superpowers/
+.superpowers/
+

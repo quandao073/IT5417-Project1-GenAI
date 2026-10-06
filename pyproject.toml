@@ -36,6 +36,20 @@ worker = [
   # torch/open_clip are installed separately in docker/worker.Dockerfile so the
   # CUDA build can be pinned per machine.
 ]
+# The Phase 2 spike and the embedding run. Pins must match docker/worker.Dockerfile;
+# tests/unit/test_embed_deps.py enforces that. PyPI's Windows torch wheel is the
+# CPU build, which is what the model gate requires. On Linux, `uv sync --all-extras`
+# pulls the CUDA torch build (several GB of nvidia packages); the Docker worker
+# installs CPU torch separately.
+embed = [
+  "torch==2.4.1",
+  "torchvision==0.19.1",
+  "open_clip_torch==2.24.0",
+  "transformers==4.44.2",
+  "huggingface_hub",
+  "gdown>=5.1",
+  "psutil>=5.9",
+]
 dev = [
   "pytest>=8.2",
   "pytest-asyncio>=0.23",
@@ -59,9 +73,13 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+# Model tests load real weights (seconds each, hundreds of MB). Run them with
+# `uv run pytest -m model`; a later -m overrides this one.
+addopts = '-m "not model"'
 markers = [
   "integration: needs an external service (qdrant) running",
   "e2e: runs against the whole stack once it is up",
+  "model: loads real VLM weights; skipped unless already downloaded",
 ]
 
 [tool.mypy]
