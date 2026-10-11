@@ -12,10 +12,10 @@ from pathlib import Path
 
 import polars as pl
 
-from src.common.config import load_config
+from src.common.config import Settings, load_config
 from src.data import canonical
 from src.data.audit import CorpusMode, run_audit
-from src.embeddings import embed, spike
+from src.embeddings import embed, index, spike
 
 
 def _cmd_audit(args: argparse.Namespace) -> int:
@@ -228,6 +228,52 @@ def _cmd_embed(args: argparse.Namespace) -> int:
     return 0
 
 
+def _resolve_build_dir(embeddings_dir: Path, build_id: str | None) -> Path:
+    if build_id:
+        return embeddings_dir / build_id
+    builds: list[Path] = []
+    if embeddings_dir.is_dir():
+        builds = sorted(p for p in embeddings_dir.iterdir() if (p / embed.SHARDS_FILE).is_file())
+    if len(builds) != 1:
+        raise SystemExit(
+            f"found {len(builds)} finished builds under {embeddings_dir}; pass --build-id"
+        )
+    return builds[0]
+
+
+def _qdrant_client(url: str | None):
+    from qdrant_client import QdrantClient
+
+    return QdrantClient(url=url or Settings().qdrant_url, timeout=60)
+
+
+def _cmd_index(args: argparse.Namespace) -> int:
+    from src.common.config import config_hash
+
+    shards_dir = _resolve_build_dir(Path(args.embeddings), args.build_id)
+    images = pl.read_parquet(Path(args.canonical_dir) / "images.parquet")
+    data_cfg = load_config("data")["sources"]
+    dataset = {"images": data_cfg["images"]["name"],
+               "plus_csv": Path(data_cfg["plus_metadata"]["csv"]).name}
+    client = _qdrant_client(args.qdrant_url)
+    try:
+        manifest = index.run_index(
+            client, shards_dir, images, Settings().qdrant_collection_prefix,
+            recreate=args.recreate, config_hash=config_hash(), git_commit=_git_commit(),
+            dataset=dataset, library_versions=_library_versions(),
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        print(f"INDEX FAILED: {exc}", file=sys.stderr)
+        return 1
+    out = Path(args.indexes_dir) / index.MANIFEST_FILE
+    index.write_manifest(out, manifest)
+    print(f"collection : {manifest['collection']}")
+    print(f"vectors    : {manifest['counts']['vectors']:,}  "
+          f"dim {manifest['embedding_model']['dimension']}")
+    print(f"manifest   : {out}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cxr", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -272,6 +318,15 @@ def build_parser() -> argparse.ArgumentParser:
     emb.add_argument("--build-id", default=None,
                      help="override the generated <YYYYMMDD>_chexpert25k_<model>_v1")
     emb.set_defaults(func=_cmd_embed)
+
+    idx = sub.add_parser("index", help="Phase 3: upsert shards into Qdrant, write manifest")
+    idx.add_argument("--embeddings", default="data/indexes/embeddings")
+    idx.add_argument("--build-id", default=None, help="required when several builds exist")
+    idx.add_argument("--canonical-dir", default="data/canonical")
+    idx.add_argument("--indexes-dir", default="data/indexes")
+    idx.add_argument("--qdrant-url", default=None, help="default: QDRANT_URL / Settings")
+    idx.add_argument("--recreate", action="store_true")
+    idx.set_defaults(func=_cmd_index)
 
     return parser
 
