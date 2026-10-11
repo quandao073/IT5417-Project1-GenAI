@@ -8,7 +8,7 @@ PY := uv run
 
 .DEFAULT_GOAL := help
 .PHONY: help setup up down logs ps seed smoke test lint typecheck \
-        audit-data build-corpus embed build-report-index validate-indexes \
+        audit-data build-corpus embed index build-report-index validate-indexes \
         evaluate benchmark clean
 
 help: ## List targets
@@ -40,8 +40,12 @@ audit-data: ## Measure the join rate between CheXpert Plus and CheXpert-small
 	$(PY) cxr audit
 build-corpus: ## Join, sample and write the canonical Parquet tables
 	$(PY) cxr build-corpus
-embed: ## Embed the corpus and index the vectors into Qdrant (GPU)
-	$(COMPOSE_GPU) --profile worker run --rm worker embed
+embed: ## Embed the corpus into shard files (CPU, native, ~35 min, resumable)
+	$(PY) cxr embed
+# GPU alternative via the Docker worker (needs WSL2 + NVIDIA Container Toolkit):
+#   $(COMPOSE_GPU) --profile worker run --rm worker embed
+index: ## Upsert the shards into Qdrant and write build_manifest.json (needs `make up` or `docker compose up -d qdrant`)
+	$(PY) cxr index
 build-report-index: ## Build the SQLite FTS5 report index
 	$(PY) cxr build-report-index
 validate-indexes: ## Check canonical tables, Qdrant and the report index agree
