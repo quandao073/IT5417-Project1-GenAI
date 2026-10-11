@@ -64,6 +64,7 @@ class Settings(BaseSettings):
     image_root: Path = Path("data/raw/CheXpert-v1.0-small")
     canonical_dir: Path = Path("data/canonical")
     fts_db_path: Path = Path("data/indexes/report_search.sqlite")
+    indexes_dir: Path = Path("data/indexes")
     # Blank in .env.example: the API then reads it from build_manifest.json.
     build_id: str | None = None
 
