@@ -7,6 +7,7 @@ import json
 import subprocess
 import sys
 import time
+from datetime import date
 from pathlib import Path
 
 import polars as pl
@@ -14,7 +15,7 @@ import polars as pl
 from src.common.config import load_config
 from src.data import canonical
 from src.data.audit import CorpusMode, run_audit
-from src.embeddings import spike
+from src.embeddings import embed, spike
 
 
 def _cmd_audit(args: argparse.Namespace) -> int:
@@ -174,6 +175,59 @@ def _cmd_spike_models(args: argparse.Namespace) -> int:
     return 0 if report["gate"]["winner"] else 1
 
 
+def _library_versions() -> dict[str, str | None]:
+    from importlib.metadata import PackageNotFoundError, version
+
+    out: dict[str, str | None] = {}
+    for dist in ("torch", "torchvision", "open_clip_torch", "transformers", "numpy",
+                 "qdrant-client"):
+        try:
+            out[dist] = version(dist)
+        except PackageNotFoundError:
+            out[dist] = None
+    return out
+
+
+def _selected_encoder(device: str):
+    """The pinned encoder from configs/models.yaml, or a clear error."""
+    from src.embeddings.base import load_encoder
+
+    cfg = load_config("models")["image_encoder"]
+    name = cfg["selected"]
+    if not name:
+        raise SystemExit("configs/models.yaml: image_encoder.selected is not set")
+    encoder = load_encoder(name, cfg["candidates"][name], device)
+    if encoder.revision != cfg["revision"]:
+        raise SystemExit(
+            f"encoder revision {encoder.revision} != models.yaml revision {cfg['revision']}"
+        )
+    return name, encoder
+
+
+def _cmd_embed(args: argparse.Namespace) -> int:
+    images = pl.read_parquet(Path(args.canonical_dir) / "images.parquet")
+    name, encoder = _selected_encoder(args.device)
+    build_id = args.build_id or embed.make_build_id(name, date.today())
+    out_dir = Path(args.out) / build_id
+    print(f"build_id   : {build_id}")
+    print(f"images     : {images.height:,}  shards of {args.shard_size}  -> {out_dir}")
+    try:
+        manifest = embed.run_embed(
+            images, encoder, Path(args.image_root), out_dir, build_id,
+            shard_size=args.shard_size, batch_size=args.batch_size,
+            library_versions=_library_versions(), git_commit=_git_commit(),
+        )
+    except RuntimeError as exc:
+        print(f"EMBED FAILED: {exc}", file=sys.stderr)
+        return 1
+    spi = manifest["s_per_image"]
+    print(f"embedded   : {manifest['embedded']:,}  skipped: {manifest['skipped']:,}  "
+          f"dim: {manifest['dim']}  "
+          f"{'n/a' if spi is None else f'{spi:.3f}'} s/image")
+    print(f"manifest   : {out_dir / embed.SHARDS_FILE}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cxr", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -207,6 +261,17 @@ def build_parser() -> argparse.ArgumentParser:
     spk.add_argument("--rescore", action="store_true",
                      help="score from the cache only; embed nothing")
     spk.set_defaults(func=_cmd_spike_models)
+
+    emb = sub.add_parser("embed", help="Phase 3: embed the corpus into shard files (resumable)")
+    emb.add_argument("--canonical-dir", default="data/canonical")
+    emb.add_argument("--image-root", default="data/raw/CheXpert-v1.0-small")
+    emb.add_argument("--out", default="data/indexes/embeddings")
+    emb.add_argument("--shard-size", type=int, default=1000)
+    emb.add_argument("--batch-size", type=int, default=32)
+    emb.add_argument("--device", default="cpu")
+    emb.add_argument("--build-id", default=None,
+                     help="override the generated <YYYYMMDD>_chexpert25k_<model>_v1")
+    emb.set_defaults(func=_cmd_embed)
 
     return parser
 
