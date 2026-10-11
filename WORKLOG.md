@@ -21,32 +21,41 @@ Ba mục đó đủ để không phá vỡ thứ gì. Các mục còn lại tra 
 
 > Cập nhật lại mục này mỗi lần ghi log. Mục này mà cũ thì tệ hơn là không có.
 
-**Cập nhật lần cuối:** 2026-10-03 (sau Phase 2)
+**Cập nhật lần cuối:** 2026-10-11 (sau Phase 3)
 
 | | |
 |---|---|
-| Đã xong | Part A · Phase 0a · Phase 1 (canonical corpus 25.000 study) · **Phase 2 (model gate: BiomedCLIP)** |
+| Đã xong | Part A · Phase 0a · Phase 1 (canonical corpus 25.000 study) · Phase 2 (model gate: BiomedCLIP) · **Phase 3 (vector baseline)** |
 | Đang làm | — |
-| Tiếp theo | **Phase 3 (embed 25k bằng BiomedCLIP)**, hoặc Phase 0b song song |
-| Chặn Phase 3 | không có; model đã pin trong `configs/models.yaml` (D11). P4 đang mở nhưng không chặn |
+| Tiếp theo | **Phase 4 (query parser)**, hoặc Phase 0b song song |
+| Chặn Phase 4 | không có. P4 đang mở nhưng không chặn |
 | Chặn Phase 0b | `pnpm` chưa cài trên máy — xem T5 |
 
 Mã thật hiện có: `src/common/{ids,config}.py`,
 `src/data/{contracts,labels,join,sample,canonical,audit}.py`,
-`src/embeddings/{base,spike,biomedclip,chexzero,xrayclip}.py`,
-`src/evaluation/zero_shot.py`, `src/cli/main.py`.
-`src/{api,query,retrieval,explanation}/` còn rỗng.
+`src/embeddings/{base,spike,biomedclip,chexzero,xrayclip,embed,index,validate}.py`,
+`src/retrieval/image_search.py`, `src/api/{main,dependencies}.py`, `src/api/routes/*`,
+`src/api/schemas/search.py`, `src/evaluation/{zero_shot,vector_baseline}.py`, `src/cli/main.py`.
+`src/{query,explanation}/` còn rỗng.
 
 Dữ liệu đã dựng: `data/canonical/*.parquet` (5 bảng, 11 MB) và
 `artifacts/audit/corpus_report.json`. Cả hai gitignored — dựng lại bằng
 `uv run cxr build-corpus --limit 25000` (~4 phút). Spike Phase 2:
 `data/cache/model_spike/` + `artifacts/metrics/model_spike.json`, cũng gitignored.
+Phase 3 (build `20261011_chexpert25k_biomedclip_v1`, gitignored hoặc trong Docker):
+`data/indexes/embeddings/<build_id>/` (25 shard + `shards.json`, 58 MB),
+`data/indexes/build_manifest.json`, volume Docker `cxr-semantic-retrieval_qdrant_data`
+(collection `cxr_images_<build_id>`), `artifacts/metrics/vector_baseline.json`. Dựng lại:
+`uv run cxr embed` → `uv run cxr index` → `uv run cxr validate-indexes`. Số đo:
+`docs/vector-baseline.md`.
 
 Lệnh kiểm tra sau mỗi thay đổi:
 
 ```bash
-uv run pytest -q                 # 269 tests (3 test `model` bị bỏ chọn mặc định)
-uv run pytest -m model           # 3 smoke test adapter thật, cần weights đã tải
+uv run pytest -q                 # 348 tests (4 test `model` + 1 `integration` bị bỏ chọn mặc định)
+uv run pytest -m model           # 4 smoke test adapter thật, cần weights đã tải
+uv run pytest -m integration     # đầu-cuối 50 ảnh, cần Qdrant Docker (`docker compose up -d qdrant`)
+uv run cxr validate-indexes      # 6 x PASS, cần Qdrant Docker
 uv run ruff check src tests
 uv run cxr --help
 docker compose config > /dev/null
@@ -167,6 +176,38 @@ theo JSON, paired; chỉ báo cáo).
 Pleural Other (1). Nhãn của mẫu khớp bảng prevalence ở trên (vd Pleural Effusion 53,8% so với
 57,0%, Support Devices 80,7% so với 82,9%). Chi tiết từng concept: `docs/model-decision.md`.
 
+### Phase 3 (đo 2026-10-11)
+
+**Cách đo:** build `20261011_chexpert25k_biomedclip_v1`, mọi lệnh ở commit `9f8aaa3`. Embed:
+`uv run --no-sync cxr embed --device cuda --batch-size 64` (GPU RTX 2000 Ada, torch `2.4.1+cu124`
+cài tạm); số lấy từ `shards.json`. `uv run cxr index` chạy khi venv **vẫn còn** torch `+cu124`
+(index không dùng torch, nhưng `build_manifest.json` ghi torch/torchvision `+cu124`, numpy 2.5.2;
+xem T14). Sau `uv sync --all-extras`, phần còn lại chạy trên torch `2.4.1+cpu`, 14 luồng:
+`uv run cxr validate-indexes`, `uv run cxr bench-vector --api-url http://localhost:8000`
+(uvicorn riêng trên cùng máy), `uv run cxr score-corpus --build-id <build_id>`, integration test;
+số lấy từ `artifacts/metrics/vector_baseline.json`. Chi tiết: `docs/vector-baseline.md`.
+
+| Hạng mục | Giá trị | Đo bằng |
+|---|---:|---|
+| Embed 25.000 ảnh, GPU | **0,0117 s/ảnh** · 293 s · 0 lỗi | `shards.json`: `s_per_image`, `started_at` → `finished_at` (không tính nạp model) |
+| Embed CPU (lần chạy bỏ dở, batch 32) | 0,081 s/ảnh → 25k ≈34 phút | mtime 17 shard trong `_cpu_partial_<build_id>/`, 16 khoảng liên tiếp; chưa tính nạp model |
+| Vector GPU vs CPU, 17.000 ảnh chung | cosine min 0,999995 · \|Δ\| max 4,6e-4 | so shard 0000–0016 của hai thư mục |
+| Shard trên đĩa | 25 × 1.000 · 57,6 MB | tổng kích thước `.npz` |
+| `cxr index` | 13 s | `time`, kể cả khởi động `uv run` |
+| Volume Qdrant | **95 MiB** thực chiếm (58 segment + 37 WAL) · 682 MiB biểu kiến | `du` trong container; `docker system df -v` báo 714,4 MB là kích thước biểu kiến |
+| HNSW | không dựng (`indexed_vectors_count` 0) → quét toàn bộ, chính xác | `GET /collections/<name>`: 8 segment × 3.125 point, dưới `indexing_threshold` 10.000 KB |
+| Cold start | 5.289 ms | dựng state như API + query đầu |
+| Warm p50 / p95 encode | 129 / 138 ms | n = 120 (30 query × 4, bỏ lần đầu) |
+| Warm p50 / p95 qdrant | 20,5 / 29,1 ms | như trên |
+| Warm p50 / p95 total | 154 / **158 ms** → §17 PASS | như trên |
+| Warm p50 / p95 HTTP | 150 / 158 ms → overhead HTTP không đo được | `POST /api/v1/search` qua uvicorn |
+| Macro strict AUROC, 14 concept | **0,599** (CI 95% 0,592–0,607) | `score-corpus`, bootstrap 1.000, seed 20260101; cả 14 concept đủ mẫu |
+| Macro strict, 11 concept của spike | 0,622 (spike 0,636, CI 0,607–0,663) | trung bình `auroc_strict` của 11 concept trong JSON |
+
+Nhãn 25k khớp bảng P2 ở trên tới 0,1 điểm cho cả 14 concept, cả `PRESENT` lẫn `ABSENT`.
+`vector_baseline.json` không có mục `embed{}`/`index{}` như spec §6.3 viết (Task 8 không ghi); số
+embed/index ở trên lấy từ `shards.json`, `build_manifest.json`, `du` và mtime shard.
+
 ---
 
 ## Quyết định đang có hiệu lực
@@ -192,6 +233,20 @@ Pleural Other (1). Nhãn của mẫu khớp bảng prevalence ở trên (vd Pleu
 | D11 | **Image encoder là BiomedCLIP** (`microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224` @ `9f341de`), pin trong `configs/models.yaml`. | `models.yaml` (`selected: null`) | Luật gate cố định trước khi chạy: hard gate rồi macro strict AUROC; hai model đầu cách < 0,02 thì chọn rẻ hơn. BiomedCLIP 0,636 vs XrayCLIP 0,616: hiệu 0,0198, dưới ngưỡng chỉ 0,0002 → hòa, BiomedCLIP nhanh hơn 6,9× nên thắng. MIT (thay vì CC-BY-NC) là lợi ích đi kèm; bước license không được xét. CheXzero trượt (0,461). → `docs/model-decision.md` |
 | D12 | **200 ca nhãn bác sĩ (`valid/`, rank 0–199) không bao giờ tham gia chọn model hay tune.** Spike lấy rank 200–1199; `select_sample` raise nếu chạm ca `valid/`. | cách hiểu mặc định của §17 | Đó là ground truth người duy nhất của test. Chọn model là tune; dùng chúng ở đây thì con số test cuối cùng không còn sạch |
 | D13 | **Spike chấm bằng 14 prompt đơn concept** (`"chest x-ray showing {}"` + `concepts.yaml:<c>.en[0]`), không phải 30–50 canonical query. | §17 | Query phủ định/đa concept cần parser Phase 4; bịa chúng bây giờ là đo sai thứ. Prompt đơn dương là đúng phép vector mode sẽ chạy |
+| D14 | **Embed hai bước qua shard file.** `cxr embed` ghi `data/indexes/embeddings/<build_id>/shard_NNNN.npz` + `shards.json`; `cxr index` upsert vào Qdrant và ghi `build_manifest.json`. `build_id` cố định lúc embed bắt đầu, `index` đọc lại chứ không sinh mới. | §17 ("Index vào Qdrant", không nói cách) | Embed CPU ≈34 phút (đo từ mtime shard của lần chạy CPU dở, chưa tính nạp model) là thứ đắt, còn Qdrant/Docker/payload là thứ hay đổi. Tách ra thì nâng image Qdrant hay `--recreate` không phải embed lại; resume theo shard là lưới an toàn; `cxr score-corpus` chấm chất lượng thẳng từ shard, không cần Qdrant. → `docs/vector-baseline.md` |
+| D15 | **API Phase 3 tối thiểu**: `/health`, `/search` (chỉ mode `vector`), `/images/{image_id}`. `query` tiếng Anh dùng nguyên văn làm `semantic_query` (`parser: "passthrough"`); `score` là cosine thô từ Qdrant, không chuẩn hóa. `/query/parse`, `/studies/{id}` hoãn sang Phase 4 và 6. | §13 | Parser là việc của Phase 4; một parser tạm sẽ làm baseline đo sai thứ. Hợp nhất ở Phase 5 dùng RRF theo thứ hạng nên không cần chuẩn hóa score; schema ghi rõ score không phải xác suất |
+
+**D4, bổ sung 2026-10-11:** `make embed` giờ chạy **trực tiếp trên CPU** (`uv run cxr embed`, cùng pin
+torch 2.4.1 với Phase 2 nên vector tái lập được), không qua Docker worker GPU như §20. Lệnh Docker
+GPU giữ làm comment trong `Makefile`. Riêng build `20261011_chexpert25k_biomedclip_v1` được embed
+**trên GPU, chạy trực tiếp** (torch `2.4.1+cu124` cài tạm, 293 s thay cho ≈34 phút CPU); mặc định
+vẫn là CPU. **Mỗi build chỉ embed trên một thiết bị**: phần CPU dở dang được để riêng ở
+`_cpu_partial_<build_id>/`, không resume trộn. Đo sau đó trên 17.000 ảnh chung: cosine giữa vector
+GPU và CPU của cùng ảnh nhỏ nhất 0,999995, sai lệch từng phần tử lớn nhất 4,6e-4, tức không trùng
+bit (*Sự thật đã đo*, Phase 3); ảnh hưởng lên thứ hạng chưa đo.
+
+**D15, ghi chú:** API nạp cả hai nhánh BiomedCLIP (weights 784,6 MB) dù chỉ cần text tower. Chấp nhận
+ở V1 (cold start 5,3 s, warm p95 158 ms). Đây là điểm tối ưu để sau, chưa phải quyết định.
 
 ### Lấp lỗ hổng của kế hoạch
 
@@ -222,6 +277,9 @@ Kế hoạch không quyết những điểm này, nhưng chúng âm thầm quy�
 | T9 | **`section_impression` thường mở đầu bằng ký tự xuống dòng** và có đánh số `1. 2. 3.` bên trong. | `.strip()` trước khi kiểm tra rỗng và trước khi ghép `search_text`. Con số 99,93% ở trên đã tính sau khi strip |
 | T10 | **`grep -r` ở gốc repo sẽ quét cả `data/` (12 GB, 223k file)** và treo. | Dùng `git grep` hoặc thêm `--exclude-dir=data` |
 | T12 | **Model ID và loader trong kế hoạch sai.** `models.yaml` từng ghi `StanfordAIMI/CheXzero` và `StanfordAIMI/XrayCLIP` — cả hai không tồn tại. CheXzero chỉ có trên Google Drive (state dict OpenAI CLIP). XrayCLIP là transformers `CLIPModel`, không phải open_clip. open_clip 2.24 với `hf-hub:` **bỏ qua revision** âm thầm, và không có `open_clip.__version__`. | ID thật + pin trong `configs/models.yaml`; CheXzero pin bằng sha256 file. BiomedCLIP nạp từ `snapshot_download(revision=...)` rồi load file local. Version: `open_clip.version.__version__`. Chỉ báo cáo của `cxr spike-models --rescore` là quyết định: chạy `--models <tên>` lẻ ghi đè `model_spike.json` bằng báo cáo một model |
+| T13 | **Qdrant và shard file.** `compose.yaml` từng pin server `qdrant/qdrant:v1.9.2` trong khi `qdrant-client` là 1.19.1 (lệch 10 minor). Docker Desktop phải chạy trước `cxr index` và API. `QdrantClient.search` đã deprecated. Client `:memory:` bỏ qua payload index (chỉ cảnh báo). `np.savez` tự nối `.npz` vào mọi tên khác đuôi, nên `shard.npz.part` thành `shard.npz.part.npz`. Chạy native mà `.env` có `QDRANT_URL=http://qdrant:6333` (hostname trong Docker) thì không kết nối được. `build_id` mặc định lấy ngày hôm nay. | Server nâng lên `v1.19.2`. Dùng `client.query_points`. Ghi shard qua file handle rồi rename. Unit test spy lời gọi `create_payload_index`; `tests/integration/test_vector_index.py` kiểm `payload_schema` trên server thật. Native: `QDRANT_URL=http://localhost:6333` hoặc `--qdrant-url`. `make setup` chép `.env.example` thành `.env` với `QDRANT_URL=http://qdrant:6333` và đường dẫn `/app/...`, nên mọi lệnh native (`cxr index`, `validate-indexes`, `bench-vector`, uvicorn) cần hoặc không có `.env`, hoặc ghi đè `QDRANT_URL=http://localhost:6333`, `IMAGE_ROOT=data/raw/CheXpert-v1.0-small`, `CANONICAL_DIR=data/canonical`, `INDEXES_DIR=data/indexes` (lần chạy thật chỉ chạy được vì `.env` lúc đó rỗng) Resume embed sang ngày khác: `--build-id <build_id cũ>` |
+| T14 | **`uv run` không gỡ torch CUDA cài bằng `uv pip`.** torch/numpy chỉ nằm trong extra, còn `uv run` sync inexact phần base, nên venv lặng lẽ ở `2.4.1+cu124`; `uv sync --all-extras` thì nhận ra và cài lại. Đã xảy ra: `cxr index` chạy sau khi embed GPU ghi torch `+cu124`, numpy 2.5.2 vào `build_manifest.json`. | Sau khi dùng GPU: `uv sync --all-extras`, rồi kiểm `torch.__version__` có `+cpu`. `uv sync --all-extras --dry-run` cho biết venv có lệch lockfile không |
+| T15 | **Image API chưa từng được build hay chạy.** Với cấu hình trước bản sửa này, HF cache (`HF_HOME=/app/.hf_cache`) không ghi được bởi uid 10001 nên `snapshot_download` báo PermissionError và API kẹt 503 vĩnh viễn; kể cả khi ghi được, container đầu tiên tải ≈785 MB trọng số trong cửa sổ healthcheck ≈3 phút. Image api nặng hơn ≈1 GB vì giờ mang torch CPU (spec §4.4) | Đã thêm `mkdir`+`chown` `/app/.hf_cache` vào `docker/api.Dockerfile`, mount volume `hf_cache` vào api, ghim `qdrant-client>=1.19,<1.20` trong extra `api`/`worker` (image pip-install từ pyproject, không từ lock). **Chưa kiểm**: Phase 6 phải chạy `docker compose build api` + `make up` thật |
 
 T4 (`make setup` thiếu Pillow) đã xử lý 2026-09-22 — `setup` giờ dùng
 `uv sync --all-extras`. Số được giữ nguyên, không đánh lại, để tham chiếu cũ không lệch.
@@ -235,6 +293,7 @@ T4 (`make setup` thiếu Pillow) đã xử lý 2026-09-22 — `setup` giờ dùn
 | # | Câu hỏi | Đang làm theo | Vì sao còn mở |
 |---|---|---|---|
 | P4 | Có xem lại **giao thức chấm của gate** Phase 2 không (một prompt dương `"chest x-ray showing {}"`, spec Q3, khớp phép vector search lúc chạy)? | Giữ nguyên; D11 (BiomedCLIP) có hiệu lực tới khi người dùng quyết | Một lần chấm lại tạm thời, ngoài gate, trên embedding đã cache của CheXzero bằng cặp prompt `"{c}"`/`"no {c}"` cho điểm cao hơn. Lần đó khác cả giao thức lẫn cách viết concept, không có trong `model_spike.json`, script không giữ lại. Gợi ý: tiền xử lý CheXzero nhiều khả năng không hỏng, và giao thức một prompt dương có thể bất lợi cho nó. → `docs/model-decision.md` |
+| P5 | API nên **đóng gói trọng số vào image** hay dựa vào volume `hf_cache`? | Dựa vào volume `hf_cache` (lần khởi động đầu tải ≈785 MB, sau đó dùng lại) | Đóng gói làm image to hơn nhưng khởi động đầu không cần mạng và không vướng healthcheck; chọn ở Phase 6 khi build image thật. → T15 |
 
 P1 (disk guard) và P3 (`docker/qdrant`) chốt 2026-09-22 → D8. P2 (`absence_policy`) chốt
 2026-09-23 bằng số liệu corpus → D9.
@@ -245,6 +304,17 @@ P1 (disk guard) và P3 (`docker/qdrant`) chốt 2026-09-22 → D8. P2 (`absence_
 
 > Mới nhất lên đầu. Mỗi entry ≤ 10 dòng và trả lời **vì sao**, không kể lại **cái gì**
 > (`git log` đã kể rồi).
+
+### 2026-10-11 — Phase 3: vector baseline
+
+Tách embed khỏi index (D14) trả công ngay lần đầu: đổi thiết bị embed từ CPU sang GPU giữa chừng mà
+Qdrant, index và API không phải đụng tới. Phần CPU dở được để riêng cho cả build cùng một thiết
+bị; đo lại sau đó thấy đúng là vector hai thiết bị lệch tới 4,6e-4 (cosine vẫn ≥ 0,99999).
+Macro 25k (0,599, 14 concept) thấp hơn spike (0,636, 11 concept) chủ yếu vì khác tập: ba concept
+mới đủ mẫu đều yếu. Cùng 11 concept là 0,622, trong CI spike. Fracture 0,642 → 0,520 cho thấy số
+từng concept của spike nhiễu, macro mới đáng tin.
+Bất ngờ: `uv run` không trả venv về torch CPU (T14). Qdrant chưa dựng HNSW ở 25k, nên vector
+search hiện là chính xác. Docker báo volume 714 MB, thực chiếm 95 MiB.
 
 ### 2026-10-03 — Phase 2: VLM spike, chọn BiomedCLIP
 
