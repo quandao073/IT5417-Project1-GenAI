@@ -20,3 +20,14 @@ def test_index_defaults():
 def test_validate_indexes_defaults():
     args = build_parser().parse_args(["validate-indexes"])
     assert args.indexes_dir == "data/indexes" and args.embeddings == "data/indexes/embeddings"
+
+
+def test_bench_vector_defaults():
+    args = build_parser().parse_args(["bench-vector"])
+    assert args.queries == 30 and args.repeats == 5 and args.api_url is None
+    assert args.out == "artifacts/metrics/vector_baseline.json"
+
+
+def test_score_corpus_defaults():
+    args = build_parser().parse_args(["score-corpus"])
+    assert args.n_boot == 1000 and args.out == "artifacts/metrics/vector_baseline.json"

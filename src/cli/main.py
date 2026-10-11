@@ -16,6 +16,7 @@ from src.common.config import Settings, load_config
 from src.data import canonical
 from src.data.audit import CorpusMode, run_audit
 from src.embeddings import embed, index, spike, validate
+from src.evaluation import vector_baseline as vb
 
 
 def _cmd_audit(args: argparse.Namespace) -> int:
@@ -294,6 +295,85 @@ def _cmd_validate_indexes(args: argparse.Namespace) -> int:
     return 0 if all(c.ok for c in checks) else 1
 
 
+def _merge_json(path: Path, section: str, payload: dict) -> None:
+    vb.merge_report(path, section, payload, git_commit=_git_commit(),
+                    library_versions=_library_versions())
+
+
+def _report_is_corrupt(path: Path) -> bool:
+    try:
+        vb.check_report_writable(path)
+    except ValueError as exc:
+        print(f"REPORT FILE CORRUPT: {path} ({exc})", file=sys.stderr)
+        return True
+    return False
+
+
+def _cmd_bench_vector(args: argparse.Namespace) -> int:
+    from src.api.dependencies import build_state
+
+    if _report_is_corrupt(Path(args.out)):
+        return 1
+    cfg = load_config("models")["image_encoder"]
+    queries = vb.bench_queries(
+        load_config("concepts"), cfg["text_prompt_template"])[: args.queries]
+
+    t0 = time.perf_counter()
+    state = build_state(Settings())
+    if not state.ready:
+        print(f"API state not ready: {state.not_ready_reason}", file=sys.stderr)
+        return 1
+    first = state.encoder.encode_texts([queries[0]])[0]
+    state.client.query_points(state.collection, query=first.tolist(), limit=10)
+    cold_ms = (time.perf_counter() - t0) * 1000
+
+    warm = vb.bench_warm(state.encoder, state.client, state.collection, queries, args.repeats)
+    report = {"build_id": state.manifest["build_id"], "cold_ms": round(cold_ms, 1),
+              "warm": warm, "torch_threads": spike._torch_threads()}
+    if args.api_url:
+        report["http"] = vb.bench_http(args.api_url, queries, args.repeats)
+    _merge_json(Path(args.out), "latency", report)
+
+    p95 = warm["total_ms"]["p95"]
+    print(f"cold       : {cold_ms:.0f} ms (load + first query)")
+    print(f"warm p50   : encode {warm['encode_ms']['p50']:.0f}  "
+          f"qdrant {warm['qdrant_ms']['p50']:.0f}  total {warm['total_ms']['p50']:.0f} ms")
+    print(f"warm p95   : total {p95:.0f} ms  -> {'PASS' if p95 < 1000 else 'FAIL'} (< 1000)")
+    if args.api_url:
+        print(f"http p95   : {report['http']['http_ms']['p95']:.0f} ms")
+    print(f"report     : {args.out}")
+    return 0 if p95 < 1000 else 1
+
+
+def _cmd_score_corpus(args: argparse.Namespace) -> int:
+    if _report_is_corrupt(Path(args.out)):
+        return 1
+    shards_dir = _resolve_build_dir(Path(args.embeddings), args.build_id)
+    canonical = Path(args.canonical_dir)
+    images = pl.read_parquet(canonical / "images.parquet")
+    labels = pl.read_parquet(canonical / "labels.parquet")
+    cfg = load_config("models")["image_encoder"]
+    _, encoder = _selected_encoder("cpu")
+    prompts = spike.build_prompts(load_config("concepts"), cfg["text_prompt_template"])
+    priority = load_config("retrieval")["label_resolution"]["source_priority"]
+    report = vb.score_corpus(shards_dir, encoder, labels, images, prompts, priority,
+                             n_boot=args.n_boot)
+    report["build_id"] = embed.load_shards_manifest(shards_dir)["build_id"]
+    _merge_json(Path(args.out), "quality", report)
+    macro = report["macro_auroc_strict"]
+    print(f"images     : {report['n_images']:,}  studies: {report['n_studies']:,}  "
+          f"eligible concepts: {len(report['eligible_concepts'])}")
+    ci = report["ci95"]
+    print(f"macro AUROC: strict {'n/a' if macro is None else f'{macro:.3f}'} "
+          f"CI95 {'n/a' if ci is None else [round(x, 3) for x in ci]}")
+    for c, v in report["concepts"].items():
+        a = v["auroc_strict"]
+        print(f"  {c:<28} {'  n/a' if a is None else f'{a:.3f}'}  pos={v['n_pos']:<5} "
+              f"neg={v['n_neg_strict']}")
+    print(f"report     : {args.out}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cxr", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -354,6 +434,22 @@ def build_parser() -> argparse.ArgumentParser:
     val.add_argument("--canonical-dir", default="data/canonical")
     val.add_argument("--qdrant-url", default=None)
     val.set_defaults(func=_cmd_validate_indexes)
+
+    bench = sub.add_parser("bench-vector", help="Phase 3: cold/warm latency of vector search")
+    bench.add_argument("--queries", type=int, default=30)
+    bench.add_argument("--repeats", type=int, default=5)
+    bench.add_argument("--api-url", default=None, help="also time POST /api/v1/search over HTTP")
+    bench.add_argument("--out", default="artifacts/metrics/vector_baseline.json")
+    bench.set_defaults(func=_cmd_bench_vector)
+
+    score = sub.add_parser("score-corpus",
+                           help="Phase 3: zero-shot AUROC on all embedded studies")
+    score.add_argument("--embeddings", default="data/indexes/embeddings")
+    score.add_argument("--build-id", default=None)
+    score.add_argument("--canonical-dir", default="data/canonical")
+    score.add_argument("--n-boot", type=int, default=1000)
+    score.add_argument("--out", default="artifacts/metrics/vector_baseline.json")
+    score.set_defaults(func=_cmd_score_corpus)
 
     return parser
 
