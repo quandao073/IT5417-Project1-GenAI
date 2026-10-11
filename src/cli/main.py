@@ -276,8 +276,6 @@ def _cmd_index(args: argparse.Namespace) -> int:
 
 
 def _cmd_validate_indexes(args: argparse.Namespace) -> int:
-    from src.common.config import config_hash
-
     manifest_path = Path(args.indexes_dir) / index.MANIFEST_FILE
     if not manifest_path.is_file():
         print(f"FAIL manifest    : {manifest_path} not found; run cxr index", file=sys.stderr)
@@ -286,9 +284,12 @@ def _cmd_validate_indexes(args: argparse.Namespace) -> int:
     shards_dir = Path(args.embeddings) / manifest["build_id"]
     images = pl.read_parquet(Path(args.canonical_dir) / "images.parquet")
     expected_revision = load_config("models")["image_encoder"]["revision"]
+    # Hash over the scope this manifest recorded, not today's default, so an
+    # index stays checkable across a change of scope (see D16).
     checks = validate.validate_indexes(
         _qdrant_client(args.qdrant_url), manifest, shards_dir, images,
-        expected_config_hash=config_hash(), expected_revision=expected_revision,
+        expected_config_hash=validate.expected_config_hash(manifest),
+        expected_revision=expected_revision,
     )
     for c in checks:
         print(f"{'PASS' if c.ok else 'FAIL'} {c.name:<12}: {c.detail}")

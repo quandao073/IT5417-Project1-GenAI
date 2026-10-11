@@ -24,6 +24,18 @@ class Check:
     detail: str
 
 
+# Manifests written before `config_scope` existed hashed these four files.
+_LEGACY_CONFIG_SCOPE = ("data", "models", "retrieval", "concepts")
+
+
+def expected_config_hash(manifest: dict, config_dir: Path | None = None) -> str:
+    """Recompute the hash over the scope the manifest itself recorded, so an
+    index stays checkable when the default scope changes."""
+    from src.common.config import config_hash
+
+    return config_hash(manifest.get("config_scope", _LEGACY_CONFIG_SCOPE), config_dir)
+
+
 def all_point_ids(client, collection: str, page: int = 5000) -> set[str]:
     ids: set[str] = set()
     offset = None

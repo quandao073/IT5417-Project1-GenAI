@@ -49,6 +49,19 @@ class TestRunIndex:
         assert manifest["counts"] == {"studies": 5, "images": 10, "reports": 0, "vectors": 10}
         assert manifest["config_hash"] == "cfg" and manifest["dataset"] == DATASET
 
+    def test_manifest_records_which_configs_the_hash_covers(self, shards):
+        """validate-indexes recomputes the hash from this scope, so a manifest
+        stays checkable after the hash's default scope changes."""
+        images, out = shards
+        manifest = _index(QdrantClient(":memory:"), out, images)
+        assert manifest["config_scope"] == ["data", "models:image_encoder"]
+        scoped = index.run_index(
+            QdrantClient(":memory:"), out, images, "cxr_images", recreate=False,
+            config_hash="cfg", git_commit=None, dataset=DATASET, library_versions={},
+            config_scope=("data",),
+        )
+        assert scoped["config_scope"] == ["data"]
+
     def test_point_ids_follow_d7_and_payload_has_five_fields(self, shards):
         images, out = shards
         client = QdrantClient(":memory:")

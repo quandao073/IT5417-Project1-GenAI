@@ -16,6 +16,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
+from src.common.config import VECTOR_INDEX_CONFIGS
 from src.common.ids import qdrant_point_id
 from src.embeddings import embed
 
@@ -93,6 +94,7 @@ def run_index(
     git_commit: str | None,
     dataset: dict,
     library_versions: dict,
+    config_scope: Sequence[str] = VECTOR_INDEX_CONFIGS,
 ) -> dict:
     from qdrant_client import models
 
@@ -126,6 +128,7 @@ def run_index(
         "collection": name,
         "git_commit": git_commit,
         "config_hash": config_hash,
+        "config_scope": list(config_scope),
         "dataset": dataset,
         "sampling_seed": 20260101,
         "embedding_model": {

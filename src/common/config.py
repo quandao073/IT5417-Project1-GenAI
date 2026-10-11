@@ -19,7 +19,11 @@ import yaml
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-BUILD_CONFIGS: tuple[str, ...] = ("data", "models", "retrieval", "concepts")
+# What shapes the vectors in Qdrant: the corpus definition and the image encoder.
+# retrieval.yaml, concepts.yaml and models.yaml:llm are query-time parameters that
+# Phase 4-5 tune freely; hashing them would fail validate-indexes on every edit.
+# A `name:section` selector hashes one top-level section of a config.
+VECTOR_INDEX_CONFIGS: tuple[str, ...] = ("data", "models:image_encoder")
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -43,12 +47,23 @@ def load_config(name: str, config_dir: Path | None = None) -> dict:
         return yaml.safe_load(handle)
 
 
+def _select(selector: str, config_dir: Path | None) -> object:
+    """`data` -> the whole parsed file; `models:image_encoder` -> that section."""
+    name, _, section = selector.partition(":")
+    parsed = load_config(name, config_dir)
+    if not section:
+        return parsed
+    if not isinstance(parsed, dict) or section not in parsed:
+        raise KeyError(f"{name}.yaml has no top-level section {section!r}")
+    return parsed[section]
+
+
 def config_hash(
-    names: Sequence[str] = BUILD_CONFIGS,
+    names: Sequence[str] = VECTOR_INDEX_CONFIGS,
     config_dir: Path | None = None,
 ) -> str:
-    """sha256 over the parsed contents of the named configs."""
-    parsed = {name: load_config(name, config_dir) for name in sorted(names)}
+    """sha256 over the parsed contents of the named configs or config sections."""
+    parsed = {selector: _select(selector, config_dir) for selector in sorted(names)}
     canonical = json.dumps(parsed, sort_keys=True, ensure_ascii=False, default=str)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 

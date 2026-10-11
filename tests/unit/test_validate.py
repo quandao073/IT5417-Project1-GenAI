@@ -37,6 +37,34 @@ def _failed(checks):
     return [c.name for c in checks if not c.ok]
 
 
+class TestExpectedConfigHash:
+    @pytest.fixture
+    def config_dir(self, tmp_path):
+        (tmp_path / "data.yaml").write_text("corpus:\n  target_studies: 1\n", encoding="utf-8")
+        (tmp_path / "models.yaml").write_text(
+            "image_encoder:\n  revision: abc\nllm:\n  model: small\n", encoding="utf-8"
+        )
+        (tmp_path / "retrieval.yaml").write_text("fusion:\n  rrf_k: 60\n", encoding="utf-8")
+        (tmp_path / "concepts.yaml").write_text("concepts: {}\n", encoding="utf-8")
+        return tmp_path
+
+    def test_uses_the_scope_the_manifest_recorded(self, config_dir):
+        from src.common.config import config_hash
+
+        manifest = {"config_scope": ["data"]}
+        assert validate.expected_config_hash(manifest, config_dir) == config_hash(
+            ("data",), config_dir
+        )
+
+    def test_a_manifest_without_a_scope_uses_the_phase_0a_four_configs(self, config_dir):
+        """Manifests indexed before config_scope existed hashed all four configs."""
+        from src.common.config import config_hash
+
+        assert validate.expected_config_hash({}, config_dir) == config_hash(
+            ("data", "models", "retrieval", "concepts"), config_dir
+        )
+
+
 def test_a_consistent_build_passes_all_six(built):
     checks = _run(built)
     assert len(checks) == 6 and _failed(checks) == []

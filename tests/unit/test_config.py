@@ -58,9 +58,30 @@ class TestConfigHash:
             ("data", "models"), config_dir
         )
 
-    def test_defaults_to_the_configs_that_affect_a_build(self):
-        """logging and evaluation must not invalidate a built index."""
-        assert set(config.BUILD_CONFIGS) == {"data", "models", "retrieval", "concepts"}
+    def test_a_section_selector_hashes_only_that_subtree(self, config_dir):
+        """Phase 4 tunes models.yaml:llm; that must not invalidate the vector index."""
+        (config_dir / "models.yaml").write_text(
+            "image_encoder:\n  revision: abc\nllm:\n  model: small\n", encoding="utf-8"
+        )
+        before = config.config_hash(("models:image_encoder",), config_dir)
+        (config_dir / "models.yaml").write_text(
+            "image_encoder:\n  revision: abc\nllm:\n  model: large\n", encoding="utf-8"
+        )
+        assert config.config_hash(("models:image_encoder",), config_dir) == before
+        (config_dir / "models.yaml").write_text(
+            "image_encoder:\n  revision: def\nllm:\n  model: large\n", encoding="utf-8"
+        )
+        assert config.config_hash(("models:image_encoder",), config_dir) != before
+
+    def test_an_unknown_section_is_an_error_that_names_it(self, config_dir):
+        with pytest.raises(KeyError, match="image_encoder"):
+            config.config_hash(("models:image_encoder",), config_dir)
+
+    def test_defaults_to_what_shapes_the_vectors(self):
+        """retrieval, concepts and models:llm are query-time; only the corpus
+        definition and the image encoder change what lands in Qdrant."""
+        assert config.VECTOR_INDEX_CONFIGS == ("data", "models:image_encoder")
+        assert config.config_hash() == config.config_hash(config.VECTOR_INDEX_CONFIGS)
         assert len(config.config_hash()) == 64
 
 

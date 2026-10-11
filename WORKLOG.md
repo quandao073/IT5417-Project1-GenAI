@@ -235,6 +235,7 @@ embed/index ở trên lấy từ `shards.json`, `build_manifest.json`, `du` và 
 | D13 | **Spike chấm bằng 14 prompt đơn concept** (`"chest x-ray showing {}"` + `concepts.yaml:<c>.en[0]`), không phải 30–50 canonical query. | §17 | Query phủ định/đa concept cần parser Phase 4; bịa chúng bây giờ là đo sai thứ. Prompt đơn dương là đúng phép vector mode sẽ chạy |
 | D14 | **Embed hai bước qua shard file.** `cxr embed` ghi `data/indexes/embeddings/<build_id>/shard_NNNN.npz` + `shards.json`; `cxr index` upsert vào Qdrant và ghi `build_manifest.json`. `build_id` cố định lúc embed bắt đầu, `index` đọc lại chứ không sinh mới. | §17 ("Index vào Qdrant", không nói cách) | Embed CPU ≈34 phút (đo từ mtime shard của lần chạy CPU dở, chưa tính nạp model) là thứ đắt, còn Qdrant/Docker/payload là thứ hay đổi. Tách ra thì nâng image Qdrant hay `--recreate` không phải embed lại; resume theo shard là lưới an toàn; `cxr score-corpus` chấm chất lượng thẳng từ shard, không cần Qdrant. → `docs/vector-baseline.md` |
 | D15 | **API Phase 3 tối thiểu**: `/health`, `/search` (chỉ mode `vector`), `/images/{image_id}`. `query` tiếng Anh dùng nguyên văn làm `semantic_query` (`parser: "passthrough"`); `score` là cosine thô từ Qdrant, không chuẩn hóa. `/query/parse`, `/studies/{id}` hoãn sang Phase 4 và 6. | §13 | Parser là việc của Phase 4; một parser tạm sẽ làm baseline đo sai thứ. Hợp nhất ở Phase 5 dùng RRF theo thứ hạng nên không cần chuẩn hóa score; schema ghi rõ score không phải xác suất |
+| D16 | **`config_hash` của vector index chỉ phủ `data.yaml` + `models.yaml:image_encoder`** (`VECTOR_INDEX_CONFIGS`, selector `name:section` hash một section đã parse). `build_manifest.json` ghi `config_scope`; `validate-indexes` tính lại hash theo scope đó, không theo mặc định của code. | Phase 0a (hash cả 4 config `data`, `models`, `retrieval`, `concepts`) | `retrieval.yaml`, `concepts.yaml` và `models.yaml:llm` là tham số lúc truy vấn; Phase 4–5 tune chúng liên tục mà vector trong Qdrant không đổi, nên hash 4 file sẽ làm check 1 FAIL ở mỗi lần sửa. Scope nằm trong manifest nên manifest cũ (scope 4 file) vẫn kiểm được; Phase 5 FTS index sẽ ghi scope riêng |
 
 **D4, bổ sung 2026-10-11:** `make embed` giờ chạy **trực tiếp trên CPU** (`uv run cxr embed`, cùng pin
 torch 2.4.1 với Phase 2 nên vector tái lập được), không qua Docker worker GPU như §20. Lệnh Docker
@@ -304,6 +305,14 @@ P1 (disk guard) và P3 (`docker/qdrant`) chốt 2026-09-22 → D8. P2 (`absence_
 
 > Mới nhất lên đầu. Mỗi entry ≤ 10 dòng và trả lời **vì sao**, không kể lại **cái gì**
 > (`git log` đã kể rồi).
+
+### 2026-10-11 — Phạm vi `config_hash` (D16)
+
+Phase 0a hash cả 4 config vì lúc đó chưa có artifact nào để biết cái gì thực sự quyết định nội
+dung index. Giờ đã rõ: vector chỉ phụ thuộc corpus và image encoder. Giữ hash 4 file thì mỗi lần
+tune `retrieval.yaml` ở Phase 4–5 sẽ làm `validate-indexes` báo lệch dù Qdrant không đổi, và một
+kiểm tra luôn đỏ là kiểm tra đã bị tắt. Scope được ghi vào manifest để kiểm tra tự mô tả chính nó.
+Index dựng lại bằng `--recreate` (shard giữ nguyên) cho manifest mang scope mới; validate 6/6.
 
 ### 2026-10-11 — Phase 3: vector baseline
 

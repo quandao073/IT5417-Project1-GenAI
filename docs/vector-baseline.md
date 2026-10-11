@@ -7,7 +7,9 @@ Nguồn của mọi số dưới đây: `data/indexes/embeddings/<build_id>/shar
 từ `uv run cxr bench-vector --api-url http://localhost:8000`, chất lượng từ
 `uv run cxr score-corpus --build-id 20261011_chexpert25k_biomedclip_v1`). Cả ba gitignored.
 Embed, index, bench và score đều chạy ở commit trên. Cột spike lấy từ
-`artifacts/metrics/model_spike.json` (Phase 2, mẫu 1.000 study).
+`artifacts/metrics/model_spike.json` (Phase 2, mẫu 1.000 study). Index được dựng lại một lần sau
+khi đổi phạm vi `config_hash` (WORKLOG D16, `cxr index --recreate`): shard và vector không đổi,
+`build_manifest.json` ghi thêm `config_scope`, `validate-indexes` 6/6.
 
 **Thiết bị.** Embed chạy trên **GPU** (RTX 2000 Ada, `--device cuda --batch-size 64`, torch
 `2.4.1+cu124` cài tạm vào venv bằng `uv pip`), rút thời gian từ ≈34 phút CPU xuống 293 s;
