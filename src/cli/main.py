@@ -15,7 +15,7 @@ import polars as pl
 from src.common.config import Settings, load_config
 from src.data import canonical
 from src.data.audit import CorpusMode, run_audit
-from src.embeddings import embed, index, spike
+from src.embeddings import embed, index, spike, validate
 
 
 def _cmd_audit(args: argparse.Namespace) -> int:
@@ -274,6 +274,26 @@ def _cmd_index(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_validate_indexes(args: argparse.Namespace) -> int:
+    from src.common.config import config_hash
+
+    manifest_path = Path(args.indexes_dir) / index.MANIFEST_FILE
+    if not manifest_path.is_file():
+        print(f"FAIL manifest    : {manifest_path} not found; run cxr index", file=sys.stderr)
+        return 1
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    shards_dir = Path(args.embeddings) / manifest["build_id"]
+    images = pl.read_parquet(Path(args.canonical_dir) / "images.parquet")
+    expected_revision = load_config("models")["image_encoder"]["revision"]
+    checks = validate.validate_indexes(
+        _qdrant_client(args.qdrant_url), manifest, shards_dir, images,
+        expected_config_hash=config_hash(), expected_revision=expected_revision,
+    )
+    for c in checks:
+        print(f"{'PASS' if c.ok else 'FAIL'} {c.name:<12}: {c.detail}")
+    return 0 if all(c.ok for c in checks) else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cxr", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -327,6 +347,13 @@ def build_parser() -> argparse.ArgumentParser:
     idx.add_argument("--qdrant-url", default=None, help="default: QDRANT_URL / Settings")
     idx.add_argument("--recreate", action="store_true")
     idx.set_defaults(func=_cmd_index)
+
+    val = sub.add_parser("validate-indexes", help="Phase 3: cross-check manifest, shards, Qdrant")
+    val.add_argument("--indexes-dir", default="data/indexes")
+    val.add_argument("--embeddings", default="data/indexes/embeddings")
+    val.add_argument("--canonical-dir", default="data/canonical")
+    val.add_argument("--qdrant-url", default=None)
+    val.set_defaults(func=_cmd_validate_indexes)
 
     return parser
 

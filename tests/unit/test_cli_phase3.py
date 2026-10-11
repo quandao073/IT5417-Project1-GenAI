@@ -15,3 +15,8 @@ def test_index_defaults():
     args = build_parser().parse_args(["index"])
     assert args.embeddings == "data/indexes/embeddings" and args.indexes_dir == "data/indexes"
     assert args.build_id is None and args.recreate is False and args.qdrant_url is None
+
+
+def test_validate_indexes_defaults():
+    args = build_parser().parse_args(["validate-indexes"])
+    assert args.indexes_dir == "data/indexes" and args.embeddings == "data/indexes/embeddings"
