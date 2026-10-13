@@ -10,6 +10,8 @@ import re
 import tomllib
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 PINNED = ("torch", "torchvision", "open_clip_torch", "transformers")
 
@@ -22,14 +24,41 @@ def _pins(requirements):
     return pins
 
 
-def test_embed_extra_matches_the_worker_dockerfile():
-    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    extra = _pins(pyproject["project"]["optional-dependencies"]["embed"])
-
-    dockerfile = (ROOT / "docker" / "worker.Dockerfile").read_text(encoding="utf-8")
-    docker = dict(
-        re.findall(r"\b(torch|torchvision|open_clip_torch|transformers)==([\w.+-]+)", dockerfile)
+def _docker_pins(name: str) -> dict[str, str]:
+    text = (ROOT / "docker" / name).read_text(encoding="utf-8")
+    return dict(
+        re.findall(r"\b(torch|torchvision|open_clip_torch|transformers)==([\w.+-]+)", text)
     )
 
-    assert set(PINNED) <= set(docker), "Dockerfile no longer pins every embed library"
-    assert {name: extra.get(name) for name in PINNED} == {name: docker[name] for name in PINNED}
+
+@pytest.mark.parametrize(
+    "extra, dockerfile",
+    [("embed", "worker.Dockerfile"), ("api", "api.Dockerfile")],
+)
+def test_extra_matches_its_dockerfile(extra, dockerfile):
+    """A model revision is only pinned if the library that loads it is too, in
+    every image that loads it: the worker embeds, the API encodes queries."""
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    pins = _pins(pyproject["project"]["optional-dependencies"][extra])
+    docker = _docker_pins(dockerfile)
+
+    assert set(PINNED) <= set(docker), f"{dockerfile} no longer pins every model library"
+    assert {name: pins.get(name) for name in PINNED} == {name: docker[name] for name in PINNED}
+
+
+def test_api_dockerfile_installs_torch_from_the_cpu_index():
+    """On Linux, plain `pip install torch` pulls the CUDA build and several GB of
+    nvidia packages into an image that only encodes short text queries."""
+    text = (ROOT / "docker" / "api.Dockerfile").read_text(encoding="utf-8")
+    assert "download.pytorch.org/whl/cpu" in text
+
+
+def test_compose_qdrant_image_matches_the_client_minor():
+    """qdrant-client 1.19 against a 1.9 server is 10 minors apart; keep them aligned."""
+    import importlib.metadata as md
+
+    client_minor = ".".join(md.version("qdrant-client").split(".")[:2])
+    compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
+    match = re.search(r"image:\s*qdrant/qdrant:v(\d+\.\d+)\.\d+", compose)
+    assert match, "compose.yaml must pin a qdrant/qdrant:vX.Y.Z image"
+    assert match.group(1) == client_minor

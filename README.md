@@ -24,8 +24,9 @@ web (Next.js) → api (FastAPI) → qdrant     (image vectors)
                               → ollama     (query parser, có rule fallback)
 ```
 
-Corpus build và embedding chạy offline qua profile `worker`; runtime thuần CPU
-vì embedding đã precompute.
+Corpus build và embedding chạy trực tiếp ngoài Docker (`make build-corpus`, `make embed`);
+Docker worker chỉ là đường thay thế khi muốn embed bằng GPU. API, web và Qdrant chạy trong
+compose, thuần CPU vì embedding đã precompute.
 
 ## Dữ liệu
 
@@ -62,11 +63,22 @@ Mở http://localhost:3000.
 ```bash
 make audit-data           # đo tỉ lệ join — CỔNG CHẶN
 make build-corpus         # canonical Parquet tables + sample manifest
-make embed                # embedding + index vào Qdrant
+make embed                # embed 25k ảnh ra shard file, chạy trực tiếp trên CPU, resume được
+make index                # upsert shard vào Qdrant + build_manifest.json (cần `docker compose up -d qdrant`)
 make build-report-index   # SQLite FTS5
 make validate-indexes     # kiểm tra build_id khớp nhau trước khi phục vụ
+make up                   # web + api + qdrant
 make evaluate             # benchmark ba trục
 ```
+
+`make embed` không cần Docker hay GPU, mất ≈34 phút (đo từ mtime shard của lần chạy CPU dở,
+chưa tính nạp model); đường GPU qua Docker worker nằm trong comment của `Makefile`. Số đo của vector baseline: [docs/vector-baseline.md](docs/vector-baseline.md).
+
+Chạy native (không qua Docker): `make setup` chép `.env.example` thành `.env` với
+`QDRANT_URL=http://qdrant:6333` và đường dẫn `/app/...`, chỉ đúng trong container. Các lệnh
+native (`cxr index`, `validate-indexes`, `bench-vector`, uvicorn) cần hoặc không có `.env`, hoặc
+ghi đè: `QDRANT_URL=http://localhost:6333`, `IMAGE_ROOT=data/raw/CheXpert-v1.0-small`,
+`CANONICAL_DIR=data/canonical`, `INDEXES_DIR=data/indexes`.
 
 `make help` liệt kê toàn bộ target.
 
