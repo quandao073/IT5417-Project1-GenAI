@@ -134,7 +134,9 @@ def resolve(long: pl.DataFrame, priority: Sequence[str]) -> pl.DataFrame:
 
     Takes the first source in `priority` that actually says something; a source
     that is silent is skipped rather than allowed to mask a later one. When every
-    source is silent the result stays NOT_MENTIONED.
+    source is silent the result stays NOT_MENTIONED. Returns one row per
+    (study_id, concept) with the winning status and its source (null when every
+    source was silent).
     """
     rank = {source: index for index, source in enumerate(priority)}
     return (
@@ -148,5 +150,14 @@ def resolve(long: pl.DataFrame, priority: Sequence[str]) -> pl.DataFrame:
         .sort("_silent", "_rank")
         .group_by("study_id", "concept")
         .first()
-        .select("study_id", "concept", "status")
+        .select(
+            "study_id",
+            "concept",
+            "status",
+            # A silent winner means every source was silent: there is no source.
+            pl.when(pl.col("status") == "NOT_MENTIONED")
+            .then(pl.lit(None, dtype=pl.Utf8))
+            .otherwise(pl.col("source"))
+            .alias("source"),
+        )
     )

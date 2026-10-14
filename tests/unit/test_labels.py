@@ -173,7 +173,7 @@ class TestResolve:
         )
         out = labels.resolve(df, self.PRIORITY)
         assert out.height == 1
-        assert set(out.columns) == {"study_id", "concept", "status"}
+        assert set(out.columns) == {"study_id", "concept", "status", "source"}
 
     def test_the_highest_priority_source_wins(self):
         df = long_frame(
@@ -216,10 +216,23 @@ class TestResolve:
         )
         out = labels.resolve(df, self.PRIORITY).sort("study_id", "concept")
         assert out.rows() == [
-            ("p1/s1", "Cardiomegaly", "ABSENT"),
-            ("p1/s1", "Edema", "PRESENT"),
-            ("p2/s1", "Edema", "UNCERTAIN"),
+            ("p1/s1", "Cardiomegaly", "ABSENT", "CHEXPERT_V1"),
+            ("p1/s1", "Edema", "PRESENT", "CHEXPERT_V1"),
+            ("p2/s1", "Edema", "UNCERTAIN", "CHEXPERT_V1"),
         ]
+
+    def test_reports_the_source_that_won(self):
+        df = long_frame(
+            [
+                ("p1/s1", "Edema", "NOT_MENTIONED", "CHEXPERT_V1"),
+                ("p1/s1", "Edema", "PRESENT", "CHEXBERT_IMPRESSION"),
+            ]
+        )
+        assert labels.resolve(df, self.PRIORITY).row(0)[3] == "CHEXBERT_IMPRESSION"
+
+    def test_all_silent_has_no_source(self):
+        df = long_frame([("p1/s1", "Edema", "NOT_MENTIONED", "CHEXPERT_V1")])
+        assert labels.resolve(df, self.PRIORITY).row(0)[3] is None
 
 
 def test_the_fourteen_labels_match_the_data_config():
