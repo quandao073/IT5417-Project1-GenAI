@@ -48,20 +48,20 @@ def build_label_matrix(
     concepts: Sequence[str] = CHEXPERT_LABELS,
 ) -> LabelMatrix:
     ids = list(study_ids)
+    row_of = {s: i for i, s in enumerate(ids)}
     resolved = resolve(labels_long.filter(pl.col("study_id").is_in(ids)), priority)
-    frame = pl.DataFrame({"study_id": ids})
     status = np.full((len(ids), len(concepts)), _NOT_MENTIONED, dtype=np.int8)
     source = np.full((len(ids), len(concepts)), None, dtype=object)
     for j, concept in enumerate(concepts):
-        one = resolved.filter(pl.col("concept") == concept).select("study_id", "status", "source")
-        joined = frame.join(one, on="study_id", how="left")
-        codes = joined["status"].fill_null("NOT_MENTIONED").replace_strict(
-            STATUS_CODE, return_dtype=pl.Int8)
-        status[:, j] = codes.to_numpy()
-        source[:, j] = joined["source"].to_list()
+        # Placed by study id: polars does not guarantee the row order of a join.
+        # Studies absent from `one` keep the NOT_MENTIONED / None defaults.
+        one = resolved.filter(pl.col("concept") == concept)
+        rows = [row_of[s] for s in one["study_id"].to_list()]
+        status[rows, j] = one["status"].replace_strict(STATUS_CODE, return_dtype=pl.Int8).to_numpy()
+        source[rows, j] = one["source"].to_list()
     return LabelMatrix(
         study_ids=np.asarray(ids, dtype=object),
-        row_of={s: i for i, s in enumerate(ids)},
+        row_of=row_of,
         concepts=tuple(concepts),
         col_of={c: j for j, c in enumerate(concepts)},
         status=status,

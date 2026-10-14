@@ -107,6 +107,11 @@ class TestNegation:
         include, exclude, _, _ = parsed(rp, "cardiomegaly without effusion")
         assert include == [("Cardiomegaly", "PRESENT")] and exclude == ["Pleural Effusion"]
 
+    def test_rule_out_is_a_negation_cue(self, rp):
+        assert parsed(rp, "rule out pneumothorax")[:2] == ([], ["Pneumothorax"])
+        assert parsed(rp, "edema, rule out pleural effusion")[:2] == (
+            [("Edema", "PRESENT")], ["Pleural Effusion"])
+
     def test_last_mention_wins(self, rp):
         assert parsed(rp, "effusion present, actually no effusion")[:2] == (
             [], ["Pleural Effusion"])

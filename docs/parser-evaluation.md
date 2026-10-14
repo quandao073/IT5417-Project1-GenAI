@@ -146,8 +146,10 @@ Mỗi vòng sửa `configs/prompts/query_parser_v1.txt` và/hoặc `configs/conc
 tiêu thêm một vòng trên dev.
 
 **Live test** (`uv run pytest -m llm`, `tests/integration/test_llm_parser_live.py`). Với prompt
-gốc (k=0): 2 passed. Với prompt cuối: 1 passed, 1 failed, lặp lại 4/4 lần. Test đó giờ được đánh
-dấu `xfail(strict=True)` (WORKLOG T17, P7), nên lệnh cho `1 passed, 1 xfailed`. Câu use case 6 ("Tìm ảnh
+gốc (k=0): 2 passed. Với prompt cuối: 1 passed, 1 failed, lặp lại 4/4 lần. Từ 2026-10-15 test đó
+được tách đôi: phần ràng buộc (tập concept, status, exclude, views) pass, phần thứ tự include,
+`language` và `semantic_query` mang `xfail(strict=False)` (WORKLOG T17, P7), nên lệnh cho
+`2 passed, 1 xfailed`. Câu use case 6 ("Tìm ảnh
 X-quang thẳng có tim to và phù phổi nhưng không có tràn dịch màng phổi.") ra include `[Edema,
 Cardiomegaly]` thay vì `[Cardiomegaly, Edema]` và `language` `en`. Exclude và tập concept vẫn
 đúng, nên mode `label` không bị ảnh hưởng; `semantic_query` thành "chest x-ray showing pulmonary
@@ -261,12 +263,26 @@ văn lấy làm điểm xuất phát.
   với `en-061`, `vi-061` (sung huyết phổi). Parse của các câu này vẫn đúng.
 - `semantic_query` không được chấm (văn bản tự do). Quy tắc dựng nó dùng chung cho cả hai parser
   (spec §4.2).
+- **Người dùng chưa duyệt benchmark trước lần đo heldout** (WORKLOG P8). Spec §7/§12 yêu cầu người
+  dùng duyệt `benchmarks/parser_queries_v1.jsonl` trước khi đo; kế hoạch bỏ cổng đó, và lần chạy
+  heldout duy nhất (2026-10-14) diễn ra trước mọi lần duyệt. Người dùng duyệt bây giờ; đổi bất kỳ
+  gold heldout nào thì phải khai báo một lần chạy heldout thứ hai (cùng quy tắc với P7).
+- **Lexicon đổi sau khi đo.** Review cuối (2026-10-15) thêm cue phủ định `rule out`: ví dụ của chính
+  prompt đưa "rule out X" vào exclude, trong khi rule parser include X. Không câu benchmark nào chứa
+  "rule out", nên số heldout của rule parser không đổi. `configs/concepts.yaml` giờ có sha256
+  `c2f29fc85ef50c5487bdb736199868ebc3c44d1151381135468917336095b0ca`; sha256 của prompt đã render
+  vẫn là `c975e4ca…` vì cue không được render vào prompt.
+- **Ngưỡng schema-valid 0,99 không kiểm gì trên `auto`:** fallback làm nó 1,0 theo construction.
+  Phép kiểm có thông tin là schema-valid của `llm` hoặc `1 − fallback_rate`; Phase 7 dùng chúng.
+- **Rule parser không tách từ tiếng Việt** (spec §12, WORKLOG T20). Dạng trần "phù" (Edema) khớp
+  trong "phù hợp": "tìm ca phù hợp viêm phổi" parse thành Edema + Pneumonia PRESENT. Không câu
+  benchmark nào chứa "phù hợp"; Phase 5 chặn hoặc bỏ dạng trần này.
 
 ## Tái lập
 
 ```bash
 curl -s http://localhost:11434/api/version          # 0.40.3; .env phải rỗng (WORKLOG T13)
-uv run pytest -m llm                                # 1 passed, 1 xfailed (use case 6, P7)
+uv run pytest -m llm                                # 2 passed, 1 xfailed (thứ tự và language của use case 6, P7)
 uv run cxr eval-parser --split heldout --parsers rule llm auto --label-filter   # ghi đè parser_eval.json
 uv run cxr eval-parser --split dev --parsers rule llm auto --out artifacts/metrics/parser_eval_dev.json
 docker compose up -d qdrant && uv run uvicorn src.api.main:app --port 8000   # cho phần API

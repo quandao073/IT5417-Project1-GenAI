@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import subprocess
@@ -20,6 +21,7 @@ from src.embeddings import embed, index, spike, validate
 from src.evaluation import parser_benchmark as pb
 from src.evaluation import parser_eval as pe
 from src.evaluation import vector_baseline as vb
+from src.query.schema import ParseError
 from src.retrieval import label_filter as lf
 
 
@@ -412,6 +414,11 @@ def _cmd_eval_parser(args: argparse.Namespace) -> int:
         return 1
     need_llm = any(m in ("llm", "auto") for m in args.parsers)
     parser, status = _build_parser_or_exit(need_llm)
+    if need_llm and status == "ok":
+        # The first call after a server start can exceed the timeout (WORKLOG T16);
+        # pay it here so it is not scored against the first benchmark row.
+        with contextlib.suppress(ParseError):
+            parser.parse("chest x-ray", mode="llm")
     thresholds = load_config("evaluation")["thresholds"]
     report = pe.evaluate_benchmark(rows, parser, args.parsers, thresholds)
     report["benchmark"] = {"file": args.benchmark, "split": args.split,
@@ -443,7 +450,7 @@ def _cmd_eval_parser(args: argparse.Namespace) -> int:
             pl.read_parquet(canonical / "labels.parquet"), studies["study_id"].to_list(),
             cfg["label_resolution"]["source_priority"], seed=cfg["results"]["label_order_seed"])
         counts = pe.label_filter_counts(rows, matrix)
-        _merge_json(Path(args.out), "label_filter", counts)
+        _merge_json(Path(args.out), "label_filter", {**counts, "benchmark": report["benchmark"]})
         for group, pairs in counts["summary"].items():
             cells = "  ".join(f"{pair}: med {s['median']:.0f} zero {s['zero']}"
                               for pair, s in pairs.items())

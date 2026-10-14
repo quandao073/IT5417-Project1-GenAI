@@ -63,8 +63,10 @@ class QueryParser:
             hit = self._cache.get(key)
             if hit is not None:
                 self._cache.move_to_end(key)
-                return dataclasses.replace(hit, cached=True)
+                return dataclasses.replace(hit, cached=True, llm_ms=None)
         result = self._parse(text, mode)
+        if result.fallback_used:
+            return result         # a transient LLM failure must not stick to this text
         with self._lock:
             self._cache[key] = result
             while len(self._cache) > self._cache_size:
@@ -146,7 +148,8 @@ class QueryParser:
                 warnings.append("no positive finding; vector leg skipped")
         elif query.language == "en":
             semantic = text[:SEMANTIC_MAX]
-            warnings.append("no known concept; vector leg encodes the raw text")
+            what = "no positive finding" if query.exclude else "no known concept"
+            warnings.append(f"{what}; vector leg encodes the raw text")
         else:
             semantic = ""
             warnings.append("no concept recognised in a Vietnamese query; vector leg skipped")

@@ -21,14 +21,14 @@ Ba mục đó đủ để không phá vỡ thứ gì. Các mục còn lại tra 
 
 > Cập nhật lại mục này mỗi lần ghi log. Mục này mà cũ thì tệ hơn là không có.
 
-**Cập nhật lần cuối:** 2026-10-15 (sau Phase 4)
+**Cập nhật lần cuối:** 2026-10-15 (sau đợt sửa review cuối Phase 4)
 
 | | |
 |---|---|
 | Đã xong | Part A · Phase 0a · Phase 1 (canonical corpus 25.000 study) · Phase 2 (model gate: BiomedCLIP) · Phase 3 (vector baseline) · **Phase 4 (parser + label mode)** — heldout parser **FAIL** (xem Phase 4 trong *Sự thật đã đo*) |
 | Đang làm | — |
 | Tiếp theo | **Phase 5 (report FTS + hybrid)**, hoặc Phase 0b song song |
-| Chặn Phase 5 | không có. P4–P6 đang mở nhưng không chặn |
+| Chặn Phase 5 | không có. P4–P9 đang mở nhưng không chặn |
 | Chặn Phase 0b | `pnpm` chưa cài trên máy — xem T5 |
 
 Mã thật hiện có: `src/common/{ids,config}.py`,
@@ -63,8 +63,8 @@ Số đo: `docs/parser-evaluation.md`.
 Lệnh kiểm tra sau mỗi thay đổi:
 
 ```bash
-uv run pytest -q                 # 618 tests (4 `model` + 1 `integration` + 2 `llm` bị bỏ chọn mặc định)
-uv run pytest -m llm             # 2 test parse thật qua Ollama: 1 passed, 1 xfailed (use case 6, T17, P7)
+uv run pytest -q                 # 629 tests (4 `model` + 1 `integration` + 3 `llm` bị bỏ chọn mặc định)
+uv run pytest -m llm             # 3 test parse thật qua Ollama: 2 passed, 1 xfailed (thứ tự include và language của use case 6, T17, P7)
 uv run pytest -m model           # 4 smoke test adapter thật, cần weights đã tải
 uv run pytest -m integration     # đầu-cuối 50 ảnh, cần Qdrant Docker (`docker compose up -d qdrant`)
 uv run cxr validate-indexes      # 6 x PASS, cần Qdrant Docker
@@ -330,6 +330,17 @@ encode `semantic_query` do `QueryParser` dựng (D20), có thêm mode `label` (D
   (`llm_parser.load_prompt`), không phải `configs/prompts/...` như spec §9 viết.
 - D21: spec §7 cho mỗi câu một list `groups`. Benchmark ghi một `group` chính do tác giả gán; `groups`
   được suy ra từ gold lúc nạp (`parser_benchmark.derive_groups`), và câu có `group` không khớp gold bị từ chối.
+- D21: `dev` là câu 001–020 của mỗi ngôn ngữ, không phải các câu chia hết cho 5 như spec §7 viết: với
+  chu kỳ 20 câu của `PATTERN`, bội số của 5 chỉ rơi vào nhóm uncertainty, multi và negation.
+- Rule parser: cue gần concept hơn thắng, hòa thì uncertainty thắng (review Task 2), thay cho
+  "uncertainty thắng mỗi khi cả hai cue cùng chạm tới" của spec §4.3.
+- `llm_first_try_valid_rate` của spec §8.1 bị bỏ: suy ra được từ `retry_rate` và `fallback_rate`.
+- JSON của `cxr eval-parser`: `model`, `ollama_version`, `prompt_sha256` nằm dưới `eval.llm`; breakdown
+  theo ngôn ngữ và nhóm nằm trong từng parser (`eval.parsers.<mode>`).
+- Test CLI của spec §10 lúc đầu bị thu hẹp thành test mặc định của argparse; đợt sửa 2026-10-15
+  khôi phục chúng (`tests/unit/test_cli_phase4.py`).
+- Spec §4.5 bước 6 được sửa: kết quả fallback **không** vào cache, vì một lần LLM lỗi thoáng qua
+  không được thành vĩnh viễn cho câu đó; cache hit trả `llm_ms` null.
 
 ### Lấp lỗ hổng của kế hoạch
 
@@ -364,8 +375,10 @@ Kế hoạch không quyết những điểm này, nhưng chúng âm thầm quy�
 | T14 | **`uv run` không gỡ torch CUDA cài bằng `uv pip`.** torch/numpy chỉ nằm trong extra, còn `uv run` sync inexact phần base, nên venv lặng lẽ ở `2.4.1+cu124`; `uv sync --all-extras` thì nhận ra và cài lại. Đã xảy ra: `cxr index` chạy sau khi embed GPU ghi torch `+cu124`, numpy 2.5.2 vào `build_manifest.json`. | Sau khi dùng GPU: `uv sync --all-extras`, rồi kiểm `torch.__version__` có `+cpu`. `uv sync --all-extras --dry-run` cho biết venv có lệch lockfile không |
 | T15 | **Image API chưa từng được build hay chạy.** Với cấu hình trước bản sửa này, HF cache (`HF_HOME=/app/.hf_cache`) không ghi được bởi uid 10001 nên `snapshot_download` báo PermissionError và API kẹt 503 vĩnh viễn; kể cả khi ghi được, container đầu tiên tải ≈785 MB trọng số trong cửa sổ healthcheck ≈3 phút. Image api nặng hơn ≈1 GB vì giờ mang torch CPU (spec §4.4) | Đã thêm `mkdir`+`chown` `/app/.hf_cache` vào `docker/api.Dockerfile`, mount volume `hf_cache` vào api, ghim `qdrant-client>=1.19,<1.20` trong extra `api`/`worker` (image pip-install từ pyproject, không từ lock). **Chưa kiểm**: Phase 6 phải chạy `docker compose build api` + `make up` thật |
 | T16 | **Ollama: cold start và server không tự lên.** Lần gọi `/api/chat` đầu tiên sau khi cài mất **72 s** (load 27 s + prompt eval 41 s, khởi tạo CUDA; đo 2026-10-13, spec §1), trong khi `llm.timeout_seconds` là 20 → câu đầu rơi về rule parser. Ngày 2026-10-14, server vừa khởi động lại, model đã trên đĩa nhưng chưa nạp (`/api/ps` rỗng): lần đầu chỉ 5,3 s. Vì sao chênh với 72 s thì chưa đo. `keep_alive` mặc định của Ollama là 5 phút. App Ollama (tray) không tự chạy lại sau khi khởi động lại phiên trên máy này. | API warm-up ở thread nền (`build_query_parser(warm_up=True)`); mọi request đặt `keep_alive: 30m`. `uv run pytest -m llm` ngay sau khi Ollama lên có thể fail vì timeout: chạy một `cxr parse` trước. Trước `cxr eval-parser`: `curl -s localhost:11434/api/version`; không trả lời thì chạy `ollama serve` hoặc mở app |
-| T17 | **3B với prompt thô thì hỏng; với few-shot thì chép mẫu.** Probe thiết kế (spec §1): điền `views` cả AP lẫn PA, gắn `UNCERTAIN` cho finding thường, câu VI sai gần hết. Prompt 5 ví dụ ban đầu: dev status F1 0,606. Khi thêm ví dụ, model gắn concept với list nó xuất hiện trong ví dụ ("không có xẹp phổi" → exclude làm "Which studies have atelectasis?" cũng thành exclude), chọn nhãn theo chữ cái đầu (pacemaker → Pneumothorax), và hai ví dụ có view làm 5/12 câu tự viết không nêu view bị đoán ra view (một lần chạy thăm dò, output không lưu; script ở `artifacts/metrics/views_probe.py`; theo T18, chạy lại sẽ không ra đúng số này). Prompt cuối làm hỏng câu use case 6, trong khi prompt gốc qua được: include ra Edema trước Cardiomegaly và `language` ra `en`, nên `test_use_case_six_through_the_llm` FAIL 4/4 lần. Tập concept vẫn đúng; chỉ `semantic_query` bị đảo thứ tự. | Few-shot trong `query_parser_v1.txt` là phần chịu lực, không phải trang trí. Sửa prompt thì đo lại trên `dev` **và** trên bộ câu tự viết trước khi tin. Không thêm ví dụ có view; cân để mỗi concept không chỉ xuất hiện ở một list. Không nới assertion của live test: test được đánh dấu `xfail(strict=True)`, tức sẽ đỏ khi prompt sửa xong mà quên gỡ marker. Có sửa prompt hay không là P7 |
+| T17 | **3B với prompt thô thì hỏng; với few-shot thì chép mẫu.** Probe thiết kế (spec §1): điền `views` cả AP lẫn PA, gắn `UNCERTAIN` cho finding thường, câu VI sai gần hết. Prompt 5 ví dụ ban đầu: dev status F1 0,606. Khi thêm ví dụ, model gắn concept với list nó xuất hiện trong ví dụ ("không có xẹp phổi" → exclude làm "Which studies have atelectasis?" cũng thành exclude), chọn nhãn theo chữ cái đầu (pacemaker → Pneumothorax), và hai ví dụ có view làm 5/12 câu tự viết không nêu view bị đoán ra view (một lần chạy thăm dò, output không lưu; script ở `artifacts/metrics/views_probe.py`; theo T18, chạy lại sẽ không ra đúng số này). Prompt cuối làm hỏng câu use case 6, trong khi prompt gốc qua được: include ra Edema trước Cardiomegaly và `language` ra `en`, nên `test_use_case_six_through_the_llm` FAIL 4/4 lần. Tập concept vẫn đúng; chỉ `semantic_query` bị đảo thứ tự. | Few-shot trong `query_parser_v1.txt` là phần chịu lực, không phải trang trí. Sửa prompt thì đo lại trên `dev` **và** trên bộ câu tự viết trước khi tin. Không thêm ví dụ có view; cân để mỗi concept không chỉ xuất hiện ở một list. Không nới assertion của live test: từ 2026-10-15 test tách đôi, phần ràng buộc (tập concept, status, exclude, views) phải pass, phần thứ tự include, `language` và `semantic_query` mang `xfail(strict=False)`. Có sửa prompt hay không là P7 |
 | T18 | **LLM không tái lập giữa các lần chạy.** Cùng prompt (`c975e4ca…`), cùng 40 câu dev, temperature 0, seed 20260101, Ollama 0.40.3 trên GPU: vòng k=4 và lần chạy dev cuối khác nhau ở **5/40** dự đoán (en-020, vi-002, vi-008, vi-016, vi-020); view F1 0,900 → 0,833, status 0,841 → 0,827. Trong một tiến trình, `llm` và `auto` có lúc cũng lệch (k=1: view 0,800 so với 0,667). | Coi mỗi số LLM từ một lần chạy là có nhiễu cỡ 1–2 câu / 40. Phase 7 chạy LLM parser ≥ 3 lần và báo cáo dao động. So hai prompt bằng nhiều câu hơn một lần chạy dev |
+| T19 | **`cxr bench-vector --api-url` (`bench_http`) giờ đo cả parse lẫn search.** Từ Phase 4, `/search` chạy `QueryParser` trước khi tìm: lần gọi đầu của mỗi câu gồm cả LLM (≈0,8 s), các lần lặp sau trúng cache parse. HTTP p50/p95 150/158 ms của Phase 3 vì vậy không còn so được với lần đo mới. | Phase 5: đo lại con số vector-only với `LLM_DISABLED=true` |
+| T20 | **Tiếng Việt không tách từ; dạng trần "phù" (Edema) khớp trong "phù hợp"** ("consistent with"). "tìm ca phù hợp viêm phổi" parse thành Edema + Pneumonia PRESENT (reviewer cuối thăm dò bằng `RuleParser.parse`, 2026-10-15). Spec §4.3 cho rằng khớp ở mức token tránh được chuyện này, nhưng "phù hợp" là hai token. Không câu benchmark nào chứa "phù hợp". | Phase 5: chặn hoặc bỏ dạng trần "phù". Đã ghi vào giới hạn trong `docs/parser-evaluation.md` |
 
 T4 (`make setup` thiếu Pillow) đã xử lý 2026-09-22 — `setup` giờ dùng
 `uv sync --all-extras`. Số được giữ nguyên, không đánh lại, để tham chiếu cũ không lệch.
@@ -381,7 +394,9 @@ T4 (`make setup` thiếu Pillow) đã xử lý 2026-09-22 — `setup` giờ dùn
 | P4 | Có xem lại **giao thức chấm của gate** Phase 2 không (một prompt dương `"chest x-ray showing {}"`, spec Q3, khớp phép vector search lúc chạy)? | Giữ nguyên; D11 (BiomedCLIP) có hiệu lực tới khi người dùng quyết | Một lần chấm lại tạm thời, ngoài gate, trên embedding đã cache của CheXzero bằng cặp prompt `"{c}"`/`"no {c}"` cho điểm cao hơn. Lần đó khác cả giao thức lẫn cách viết concept, không có trong `model_spike.json`, script không giữ lại. Gợi ý: tiền xử lý CheXzero nhiều khả năng không hỏng, và giao thức một prompt dương có thể bất lợi cho nó. → `docs/model-decision.md` |
 | P5 | API nên **đóng gói trọng số vào image** hay dựa vào volume `hf_cache`? | Dựa vào volume `hf_cache` (lần khởi động đầu tải ≈785 MB, sau đó dùng lại) | Đóng gói làm image to hơn nhưng khởi động đầu không cần mạng và không vướng healthcheck; chọn ở Phase 6 khi build image thật. → T15 |
 | P6 | Có pull **`qwen2.5:7b-instruct-q4_K_M`** (4,7 GB) làm nhánh chất lượng cho parser ablation không? | Không pull; mặc định vẫn 3B (D5) | Heldout 3B **FAIL** (concept / status / view 0,880 / 0,718 / 0,890), và rule parser hơn 3B ở status (0,862) lẫn view (0,945). 7B là bước kế tiếp đã khai báo trước (spec §12) nếu luận văn cần nhánh so sánh hoặc muốn thử vượt ngưỡng. Latency và VRAM của 7B trên máy này chưa đo. → `docs/parser-evaluation.md` |
-| P7 | Có sửa prompt cho câu use case 6 không? Prompt `c975e4ca` trả include Edema trước Cardiomegaly và `language` `en`, nên live test của câu này đang `xfail` | Giữ prompt hiện tại, test đánh dấu `xfail(strict=True)` | Sửa thì phải đo lại dev và khai báo một lần chạy heldout thứ hai (số heldout hiện tại gắn với `c975e4ca`). Giữ thì `semantic_query` của câu nhiều concept có thể đảo thứ tự; tập ràng buộc không đổi, nên mode `label` không bị ảnh hưởng. Người dùng quyết. → T17 |
+| P7 | Có sửa prompt cho câu use case 6 không? Prompt `c975e4ca` trả include Edema trước Cardiomegaly và `language` `en`, nên live test của câu này đang `xfail` | Giữ prompt hiện tại; phần thứ tự/`language` của live test mang `xfail(strict=False)`, phần ràng buộc phải pass | Sửa thì phải đo lại dev và khai báo một lần chạy heldout thứ hai (số heldout hiện tại gắn với `c975e4ca`). Giữ thì `semantic_query` của câu nhiều concept có thể đảo thứ tự; tập ràng buộc không đổi, nên mode `label` không bị ảnh hưởng. Người dùng quyết. → T17 |
+| P8 | Người dùng duyệt `benchmarks/parser_queries_v1.jsonl` có đổi gold heldout không? | Benchmark giữ nguyên như lúc đo (sha256 `8d19c619…`); người dùng duyệt bây giờ | Spec §7/§12 yêu cầu người dùng duyệt file trước khi đo; kế hoạch bỏ cổng đó, và lần chạy heldout duy nhất (2026-10-14) diễn ra trước mọi lần duyệt. Đổi bất kỳ gold heldout nào thì phải khai báo một lần chạy heldout thứ hai (cùng quy tắc với P7). → `docs/parser-evaluation.md` |
+| P9 | Câu chỉ có exclude ("no pleural effusion"): vector leg encode gì? | Hai parser đang khác nhau: rule parser encode nguyên câu tiếng Anh (warning `no positive finding; vector leg encodes the raw text`), LLM trả `findings` rỗng nên vector leg bị bỏ qua | 28/40 câu negation heldout chỉ có exclude, nên lựa chọn này quyết định baseline vector của nhóm phủ định. Phải chốt một hành vi trước khi hợp nhất ở Phase 5 và đánh giá ở Phase 7 |
 
 P1 (disk guard) và P3 (`docker/qdrant`) chốt 2026-09-22 → D8. P2 (`absence_policy`) chốt
 2026-09-23 bằng số liệu corpus → D9.
@@ -392,6 +407,18 @@ P1 (disk guard) và P3 (`docker/qdrant`) chốt 2026-09-22 → D8. P2 (`absence_
 
 > Mới nhất lên đầu. Mỗi entry ≤ 10 dòng và trả lời **vì sao**, không kể lại **cái gì**
 > (`git log` đã kể rồi).
+
+### 2026-10-15 — Sửa sau review cuối Phase 4
+
+Review toàn nhánh tìm ra những chỗ sai mà không test nào đỏ. `build_label_matrix` chép theo vị trí
+sau một `join` mà polars không hứa giữ thứ tự: nay đặt theo `study_id`. Kết quả fallback vào cache
+nên một lần Ollama lỗi thoáng qua thành vĩnh viễn cho câu đó: nay không cache. Ví dụ của chính prompt
+đưa "rule out X" vào exclude còn rule parser include X: thêm cue `rule out` sau khi đo; không câu
+benchmark nào chứa "rule out" nên số heldout của rule không đổi, `concepts.yaml` sha256 giờ là
+`c2f29fc8…`, prompt render vẫn `c975e4ca…` (cue không render vào prompt). Ngưỡng schema-valid 0,99
+vô nghĩa trên `auto` (fallback làm nó 1,0 theo construction); Phase 7 kiểm `llm` hoặc
+`1 − fallback_rate`. Cổng người dùng duyệt benchmark trước khi đo đã bị bỏ qua: chờ người dùng (P8).
+Hoãn sang Phase 5: P9 (câu chỉ có exclude), T19 (bench HTTP), T20 ("phù" trần).
 
 ### 2026-10-15 — Phase 4: query parser và label mode
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 from itertools import product
 
 import numpy as np
@@ -72,6 +73,27 @@ class TestBuild:
         rows = [("b", "Edema", "PRESENT", "CHEXPERT_V1"), ("a", "Edema", "ABSENT", "CHEXPERT_V1")]
         m = lf.build_label_matrix(labels_frame(rows), ["b", "a"], PRIORITY, seed=1)
         assert list(m.study_ids) == ["b", "a"] and m.row_of == {"b": 0, "a": 1}
+
+    def test_rows_align_when_labels_are_shuffled_and_ids_unsorted(self):
+        # The matrix must be filled by study id, never by the row order of a join.
+        rng = random.Random(20260101)
+        ids = [f"patient{i:05d}/study1" for i in range(1000)]
+        rng.shuffle(ids)
+        assert ids != sorted(ids)
+        concepts = ("Edema", "Pleural Effusion", "Cardiomegaly")
+        expected, rows = {}, []
+        for s in ids:
+            for c in concepts:
+                status = rng.choice(STATUSES)
+                source = None if status == "NOT_MENTIONED" else rng.choice(PRIORITY)
+                expected[s, c] = (status, source)
+                if source is not None:
+                    rows.append((s, c, status, source))
+        rng.shuffle(rows)
+        m = lf.build_label_matrix(labels_frame(rows), ids, PRIORITY, seed=1)
+        got = {(s, c): (lf.CODE_STATUS[int(m.status[m.row_of[s], m.col_of[c]])],
+                        m.source[m.row_of[s], m.col_of[c]]) for s in ids for c in concepts}
+        assert got == expected
 
     def test_order_is_a_permutation_fixed_by_the_seed(self):
         ids = [f"s{i}" for i in range(50)]

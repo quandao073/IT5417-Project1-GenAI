@@ -146,6 +146,12 @@ class TestSemanticQuery:
         assert r.query.semantic_query == "dense white area near the hilum"
         assert r.warnings == ("no known concept; vector leg encodes the raw text",)
 
+    def test_rule_english_exclude_only_warns_about_no_positive_finding(self, rule):
+        r = parser(rule).parse("no pleural effusion")
+        assert r.query.exclude == ["Pleural Effusion"] and r.query.include == []
+        assert r.query.semantic_query == "no pleural effusion"
+        assert r.warnings == ("no positive finding; vector leg encodes the raw text",)
+
     def test_rule_vietnamese_without_a_concept_leaves_it_empty(self, rule):
         r = parser(rule).parse("vùng mờ gần rốn phổi")
         assert r.query.semantic_query == "" and r.query.language == "vi"
@@ -158,6 +164,20 @@ class TestCache:
         first, second = p.parse("edema"), p.parse("  edema ")
         assert not first.cached and second.cached and len(p.llm.calls) == 1
         assert second.query == first.query and second.parser == "llm"
+
+    def test_fallback_results_are_not_cached(self, rule):
+        # A transient LLM failure must not pin the rule parse for that text.
+        p = parser(rule, llm.LLMError("down"), output(include=[("Edema", "PRESENT")]))
+        first = p.parse("edema")
+        assert first.parser == "rule" and first.fallback_used
+        second = p.parse("edema")
+        assert second.parser == "llm" and not second.cached and len(p.llm.calls) == 2
+
+    def test_cache_hits_report_no_llm_time(self, rule):
+        p = parser(rule, output(include=[("Edema", "PRESENT")]))
+        first, second = p.parse("edema"), p.parse("edema")
+        assert first.llm_ms is not None
+        assert second.cached and second.llm_ms is None
 
     def test_mode_is_part_of_the_key(self, rule):
         p = parser(rule, output(include=[("Edema", "PRESENT")]))

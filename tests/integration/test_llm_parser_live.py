@@ -18,17 +18,27 @@ def parser():
     return parser
 
 
-@pytest.mark.xfail(strict=True, reason="WORKLOG T17: prompt c975e4ca returns include Edema-first "
-                                       "and language 'en'")
-def test_use_case_six_through_the_llm(parser):
-    text = "Tìm ảnh X-quang thẳng có tim to và phù phổi nhưng không có tràn dịch màng phổi."
-    result = parser.parse(text, mode="llm")
-    assert [c.concept for c in result.query.include] == ["Cardiomegaly", "Edema"]
+USE_CASE_SIX = "Tìm ảnh X-quang thẳng có tim to và phù phổi nhưng không có tràn dịch màng phổi."
+
+
+def test_use_case_six_constraints_through_the_llm(parser):
+    # Runs first, so this parse is not a cache hit and carries llm_ms.
+    result = parser.parse(USE_CASE_SIX, mode="llm")
+    assert result.parser == "llm"
+    assert {c.concept for c in result.query.include} == {"Cardiomegaly", "Edema"}
     assert all(c.status == "PRESENT" for c in result.query.include)
     assert result.query.exclude == ["Pleural Effusion"]
-    assert result.query.views == [] and result.query.language == "vi"
-    assert result.query.semantic_query == "chest x-ray showing cardiomegaly and pulmonary edema"
+    assert result.query.views == []
     assert result.llm_ms is not None and result.llm_ms < 20_000
+
+
+@pytest.mark.xfail(strict=False, reason="WORKLOG T17/P7: prompt c975e4ca returns include "
+                                        "Edema-first and language 'en'")
+def test_use_case_six_order_and_language_through_the_llm(parser):
+    result = parser.parse(USE_CASE_SIX, mode="llm")
+    assert [c.concept for c in result.query.include] == ["Cardiomegaly", "Edema"]
+    assert result.query.language == "vi"
+    assert result.query.semantic_query == "chest x-ray showing cardiomegaly and pulmonary edema"
 
 
 def test_uncertainty_and_view_through_the_llm(parser):

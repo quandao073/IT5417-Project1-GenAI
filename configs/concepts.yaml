@@ -89,7 +89,7 @@ views:
 negation_cues:
   # A cue within a 5-token window before a concept turns it into an exclusion.
   # "no" is quoted: bare `no` is the boolean False in YAML 1.1 (PyYAML).
-  en: ["no", without, absent, free of, negative for, rules out, ruled out,
+  en: ["no", without, absent, free of, negative for, rule out, rules out, ruled out,
        denies, not, no evidence of, resolution of]
   vi: [không, không có, chưa thấy, không thấy, loại trừ, không kèm, đã hết]
 
