@@ -15,7 +15,7 @@ version: 1.0.0
 
 concepts:
   No Finding:
-    en: [no finding, normal study, unremarkable, no acute abnormality]
+    en: [no finding, normal study, unremarkable, no acute abnormality, normal chest]
     vi: [bình thường, không bất thường, không có bất thường cấp]
 
   Enlarged Cardiomediastinum:
@@ -24,7 +24,8 @@ concepts:
     vi: [trung thất giãn rộng, bóng tim trung thất to, giãn trung thất]
 
   Cardiomegaly:
-    en: [cardiomegaly, enlarged heart, cardiac enlargement, enlarged cardiac silhouette]
+    en: [cardiomegaly, enlarged heart, cardiac enlargement, enlarged cardiac silhouette,
+         big heart]
     vi: [tim to, bóng tim to, tim lớn, bóng tim lớn]
 
   Lung Opacity:

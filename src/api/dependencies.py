@@ -81,8 +81,9 @@ def build_query_parser(settings: Settings, *, llm_factory=None,
                          system_prompt=llm.load_prompt(llm_cfg["prompt_file"], concepts),
                          max_retries=llm_cfg["max_retries"], cache_size=llm_cfg["cache_size"])
     if warm_up:
-        # The first Ollama call after a server start took 72 s (CUDA init, WORKLOG T16).
-        # Pay it off the request path so the first user query does not fall back.
+        # The first Ollama call after install took 72 s; after a fresh server start on
+        # 2026-10-14 it took 5.3 s (WORKLOG T16). Either can exceed the 20 s timeout or
+        # delay the first user query, so pay it off the request path.
         threading.Thread(target=parser.parse, args=("cardiomegaly",), daemon=True).start()
     return parser, status
 

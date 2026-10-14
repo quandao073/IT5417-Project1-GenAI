@@ -78,7 +78,8 @@ services:
   # --- profile: local-llm (only when Ollama is not running natively on host) ---
   ollama:
     profiles: ["local-llm"]
-    image: ollama/ollama:0.3.12
+    # matches the native install; >=0.5 is needed for format=<json schema>. Profile unverified (WORKLOG).
+    image: ollama/ollama:0.40.3
     restart: unless-stopped
     ports:
       - "11434:11434"
