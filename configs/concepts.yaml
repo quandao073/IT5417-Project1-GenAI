@@ -28,7 +28,8 @@ concepts:
     vi: [tim to, bóng tim to, tim lớn, bóng tim lớn]
 
   Lung Opacity:
-    en: [lung opacity, pulmonary opacity, opacification, airspace opacity, haziness]
+    en: [lung opacity, pulmonary opacity, opacification, airspace opacity, haziness,
+         airspace disease]
     vi: [mờ phổi, đám mờ phổi, tăng đậm độ phổi, mờ nhu mô]
 
   Lung Lesion:
@@ -40,7 +41,7 @@ concepts:
     vi: [phù phổi, phù, sung huyết mạch máu, phù mô kẽ]
 
   Consolidation:
-    en: [consolidation, airspace consolidation, airspace disease]
+    en: [consolidation, airspace consolidation]
     vi: [đông đặc phổi, đông đặc]
 
   Pneumonia:
@@ -48,11 +49,11 @@ concepts:
     vi: [viêm phổi, nhiễm trùng phổi]
 
   Atelectasis:
-    en: [atelectasis, atelectatic change, volume loss, lung collapse]
+    en: [atelectasis, atelectatic change, volume loss, lung collapse, collapsed lung]
     vi: [xẹp phổi, xẹp thùy phổi, giảm thể tích phổi]
 
   Pneumothorax:
-    en: [pneumothorax, collapsed lung]
+    en: [pneumothorax]
     vi: [tràn khí màng phổi, tràn khí]
 
   Pleural Effusion:

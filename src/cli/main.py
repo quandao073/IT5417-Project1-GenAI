@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import subprocess
 import sys
@@ -16,7 +17,10 @@ from src.common.config import Settings, load_config
 from src.data import canonical
 from src.data.audit import CorpusMode, run_audit
 from src.embeddings import embed, index, spike, validate
+from src.evaluation import parser_benchmark as pb
+from src.evaluation import parser_eval as pe
 from src.evaluation import vector_baseline as vb
+from src.retrieval import label_filter as lf
 
 
 def _cmd_audit(args: argparse.Namespace) -> int:
@@ -375,6 +379,83 @@ def _cmd_score_corpus(args: argparse.Namespace) -> int:
     return 0
 
 
+def _build_parser_or_exit(need_llm: bool):
+    from src.api.dependencies import build_query_parser
+
+    parser, status = build_query_parser(Settings())
+    if need_llm and status != "ok":
+        print(f"LLM is {status} (model {Settings().llm_model} at {Settings().llm_base_url}); "
+              f"start Ollama and pull the model, or drop llm/auto from --parsers",
+              file=sys.stderr)
+        raise SystemExit(1)
+    return parser, status
+
+
+def _cmd_parse(args: argparse.Namespace) -> int:
+    parser, status = _build_parser_or_exit(args.parser == "llm")
+    result = parser.parse(args.text, mode=args.parser)
+    payload = {**result.query.model_dump(), "parser": result.parser,
+               "fallback_used": result.fallback_used, "warnings": list(result.warnings),
+               "llm_ms": result.llm_ms, "cached": result.cached, "llm_status": status}
+    print(json.dumps(payload, indent=2, ensure_ascii=True))
+    return 0
+
+
+def _cmd_eval_parser(args: argparse.Namespace) -> int:
+    if _report_is_corrupt(Path(args.out)):
+        return 1
+    rows = pb.load_benchmark(Path(args.benchmark))
+    if args.split != "all":
+        rows = [r for r in rows if r.split == args.split]
+    if not rows:
+        print(f"no rows for split {args.split!r}", file=sys.stderr)
+        return 1
+    need_llm = any(m in ("llm", "auto") for m in args.parsers)
+    parser, status = _build_parser_or_exit(need_llm)
+    thresholds = load_config("evaluation")["thresholds"]
+    report = pe.evaluate_benchmark(rows, parser, args.parsers, thresholds)
+    report["benchmark"] = {"file": args.benchmark, "split": args.split,
+                           "sha256": hashlib.sha256(Path(args.benchmark).read_bytes()).hexdigest()}
+    report["llm"] = {"status": status, "model": Settings().llm_model,
+                     "ollama_version": parser.llm.version() if parser.llm else None,
+                     "prompt_sha256": parser.prompt_sha256}
+    _merge_json(Path(args.out), "eval", report)
+
+    for mode, entry in report["parsers"].items():
+        m = entry["metrics"]
+        print(f"{mode:<5} n={m['n']:<4} valid={m['schema_valid_rate']:.3f} "
+              f"concept={_f(m['concept_macro_f1'])} status={_f(m['status_macro_f1'])} "
+              f"view={_f(m['view_macro_f1'])} exact={m['exact_match_rate']:.3f} "
+              f"p50={entry['latency_ms']['p50']:.0f}ms p95={entry['latency_ms']['p95']:.0f}ms "
+              f"fallback={entry['fallback_rate']:.3f}")
+        if args.verbose:
+            for miss in entry["mismatches"]:
+                print("  " + json.dumps(miss, ensure_ascii=True))
+    v = report["verdict"]
+    print(f"verdict ({report['judged_parser']}, split {args.split}): "
+          f"{'PASS' if v['passed'] else 'FAIL'} {json.dumps(v)}")
+
+    if args.label_filter:
+        canonical = Path(args.canonical_dir)
+        studies = pl.read_parquet(canonical / "studies.parquet")
+        cfg = load_config("retrieval")
+        matrix = lf.build_label_matrix(
+            pl.read_parquet(canonical / "labels.parquet"), studies["study_id"].to_list(),
+            cfg["label_resolution"]["source_priority"], seed=cfg["results"]["label_order_seed"])
+        counts = pe.label_filter_counts(rows, matrix)
+        _merge_json(Path(args.out), "label_filter", counts)
+        for group, pairs in counts["summary"].items():
+            cells = "  ".join(f"{pair}: med {s['median']:.0f} zero {s['zero']}"
+                              for pair, s in pairs.items())
+            print(f"label {group:<11} {cells}")
+    print(f"report     : {args.out}")
+    return 0 if v["passed"] else 1
+
+
+def _f(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.3f}"
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cxr", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -451,6 +532,23 @@ def build_parser() -> argparse.ArgumentParser:
     score.add_argument("--n-boot", type=int, default=1000)
     score.add_argument("--out", default="artifacts/metrics/vector_baseline.json")
     score.set_defaults(func=_cmd_score_corpus)
+
+    prs = sub.add_parser("parse", help="Phase 4: parse one request, print the SearchQuery")
+    prs.add_argument("text")
+    prs.add_argument("--parser", choices=["auto", "rule", "llm"], default="auto")
+    prs.set_defaults(func=_cmd_parse)
+
+    ev = sub.add_parser("eval-parser", help="Phase 4: score the parsers on the benchmark")
+    ev.add_argument("--benchmark", default="benchmarks/parser_queries_v1.jsonl")
+    ev.add_argument("--split", choices=["heldout", "dev", "all"], default="heldout")
+    ev.add_argument("--parsers", nargs="+", choices=["rule", "llm", "auto"],
+                    default=["rule", "llm", "auto"])
+    ev.add_argument("--out", default="artifacts/metrics/parser_eval.json")
+    ev.add_argument("--label-filter", action="store_true",
+                    help="also count matching studies per gold parse under every policy pair")
+    ev.add_argument("--canonical-dir", default="data/canonical")
+    ev.add_argument("--verbose", action="store_true", help="print every mismatch (ASCII)")
+    ev.set_defaults(func=_cmd_eval_parser)
 
     return parser
 
