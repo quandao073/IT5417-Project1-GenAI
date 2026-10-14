@@ -15,7 +15,7 @@ version: 1.0.0
 
 concepts:
   No Finding:
-    en: [no finding, normal study, unremarkable, no acute abnormality]
+    en: [no finding, normal study, unremarkable, no acute abnormality, normal chest]
     vi: [bình thường, không bất thường, không có bất thường cấp]
 
   Enlarged Cardiomediastinum:
@@ -24,11 +24,13 @@ concepts:
     vi: [trung thất giãn rộng, bóng tim trung thất to, giãn trung thất]
 
   Cardiomegaly:
-    en: [cardiomegaly, enlarged heart, cardiac enlargement, enlarged cardiac silhouette]
+    en: [cardiomegaly, enlarged heart, cardiac enlargement, enlarged cardiac silhouette,
+         big heart]
     vi: [tim to, bóng tim to, tim lớn, bóng tim lớn]
 
   Lung Opacity:
-    en: [lung opacity, pulmonary opacity, opacification, airspace opacity, haziness]
+    en: [lung opacity, pulmonary opacity, opacification, airspace opacity, haziness,
+         airspace disease]
     vi: [mờ phổi, đám mờ phổi, tăng đậm độ phổi, mờ nhu mô]
 
   Lung Lesion:
@@ -40,7 +42,7 @@ concepts:
     vi: [phù phổi, phù, sung huyết mạch máu, phù mô kẽ]
 
   Consolidation:
-    en: [consolidation, airspace consolidation, airspace disease]
+    en: [consolidation, airspace consolidation]
     vi: [đông đặc phổi, đông đặc]
 
   Pneumonia:
@@ -48,11 +50,11 @@ concepts:
     vi: [viêm phổi, nhiễm trùng phổi]
 
   Atelectasis:
-    en: [atelectasis, atelectatic change, volume loss, lung collapse]
+    en: [atelectasis, atelectatic change, volume loss, lung collapse, collapsed lung]
     vi: [xẹp phổi, xẹp thùy phổi, giảm thể tích phổi]
 
   Pneumothorax:
-    en: [pneumothorax, collapsed lung]
+    en: [pneumothorax]
     vi: [tràn khí màng phổi, tràn khí]
 
   Pleural Effusion:
@@ -86,11 +88,21 @@ views:
 
 negation_cues:
   # A cue within a 5-token window before a concept turns it into an exclusion.
-  en: [no, without, absent, free of, negative for, rules out, ruled out,
+  # "no" is quoted: bare `no` is the boolean False in YAML 1.1 (PyYAML).
+  en: ["no", without, absent, free of, negative for, rule out, rules out, ruled out,
        denies, not, no evidence of, resolution of]
   vi: [không, không có, chưa thấy, không thấy, loại trừ, không kèm, đã hết]
 
+negation_cues_post:
+  # A cue starting within 3 tokens AFTER a concept ("effusion is absent",
+  # "pneumothorax ruled out", "tràn dịch đã hết"). Kept apart from the
+  # pre-position cues: "cardiomegaly without effusion" must not negate
+  # cardiomegaly, so "without" is never looked for after a concept.
+  en: [absent, is absent, are absent, ruled out, is ruled out, excluded, is excluded,
+       not seen, not present, not identified, resolved, has resolved]
+  vi: [đã hết, không còn]
+
 uncertainty_cues:
-  en: [possible, probable, suspected, suspicious for, cannot exclude,
-       questionable, may represent, uncertain, equivocal, likely]
+  en: [possible, probable, suspected, suspicious for, cannot exclude, cannot be excluded,
+       can not be excluded, questionable, may represent, uncertain, equivocal, likely]
   vi: [nghi ngờ, có thể, không loại trừ, chưa rõ, khả năng, nghi]

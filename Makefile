@@ -9,7 +9,7 @@ PY := uv run
 .DEFAULT_GOAL := help
 .PHONY: help setup up down logs ps seed smoke test lint typecheck \
         audit-data build-corpus embed index build-report-index validate-indexes \
-        evaluate benchmark clean
+        evaluate benchmark eval-parser clean
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-20s\033[0m %s\n",$$1,$$2}'
@@ -59,6 +59,8 @@ smoke: ## Smoke test against the running stack
 evaluate: ## Run the three-axis benchmark
 	$(PY) cxr evaluate
 benchmark: evaluate ## Alias for evaluate
+eval-parser: ## Score rule / llm / auto parsers on the held-out benchmark (needs Ollama)
+	$(PY) cxr eval-parser
 lint: ## ruff
 	$(PY) ruff check src tests
 typecheck: ## mypy

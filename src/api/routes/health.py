@@ -23,6 +23,7 @@ def health(state: Annotated[AppState, Depends(get_state)]):
     return HealthResponse(
         status="ready", build_id=state.manifest["build_id"], model_id=model["model_id"],
         revision=model["revision"], dimension=model["dimension"],
-        vectors=state.manifest["counts"]["vectors"], qdrant="ok",
-        report_index="disabled", llm="disabled",
+        vectors=state.manifest["counts"]["vectors"],
+        studies=state.manifest["counts"]["studies"], qdrant="ok",
+        report_index="disabled", llm=state.llm_status, llm_model=state.settings.llm_model,
     )

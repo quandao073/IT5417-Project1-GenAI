@@ -45,6 +45,8 @@ Cả hai dataset đều yêu cầu đăng ký và chấp nhận điều khoản.
 - `uv` (Python) và `pnpm` (Node) nếu chạy ngoài Docker
 - ~25 GB trống ngoài raw data (raw data chiếm 12,1 GB)
 - GPU NVIDIA — không bắt buộc; embedding chạy được trên CPU, GPU chỉ để nhanh hơn
+- Ollama 0.40+ (native) với model qwen2.5:3b-instruct-q4_K_M — chỉ cần cho LLM parser; không có thì API dùng rule parser.
+  Cài: `winget install Ollama.Ollama` rồi `ollama pull qwen2.5:3b-instruct-q4_K_M`
 - `make` (Git Bash hoặc WSL)
 
 ## Chạy nhanh
@@ -67,6 +69,7 @@ make embed                # embed 25k ảnh ra shard file, chạy trực tiếp 
 make index                # upsert shard vào Qdrant + build_manifest.json (cần `docker compose up -d qdrant`)
 make build-report-index   # SQLite FTS5
 make validate-indexes     # kiểm tra build_id khớp nhau trước khi phục vụ
+make eval-parser          # chấm parser trên benchmark held-out (cần Ollama)
 make up                   # web + api + qdrant
 make evaluate             # benchmark ba trục
 ```
@@ -74,13 +77,29 @@ make evaluate             # benchmark ba trục
 `make embed` không cần Docker hay GPU, mất ≈34 phút (đo từ mtime shard của lần chạy CPU dở,
 chưa tính nạp model); đường GPU qua Docker worker nằm trong comment của `Makefile`. Số đo của vector baseline: [docs/vector-baseline.md](docs/vector-baseline.md).
 
+`make eval-parser` (tức `cxr eval-parser`) **ghi đè** `artifacts/metrics/parser_eval.json`. Lần chạy
+heldout ngày 2026-10-14 được đóng băng ở `artifacts/metrics/parser_eval_heldout_20261014.json`. Số dev
+lấy từ `uv run cxr eval-parser --split dev --out artifacts/metrics/parser_eval_dev.json`.
+
 Chạy native (không qua Docker): `make setup` chép `.env.example` thành `.env` với
-`QDRANT_URL=http://qdrant:6333` và đường dẫn `/app/...`, chỉ đúng trong container. Các lệnh
-native (`cxr index`, `validate-indexes`, `bench-vector`, uvicorn) cần hoặc không có `.env`, hoặc
-ghi đè: `QDRANT_URL=http://localhost:6333`, `IMAGE_ROOT=data/raw/CheXpert-v1.0-small`,
-`CANONICAL_DIR=data/canonical`, `INDEXES_DIR=data/indexes`.
+`QDRANT_URL=http://qdrant:6333`, `LLM_BASE_URL=http://host.docker.internal:11434` và đường dẫn
+`/app/...`, chỉ đúng trong container. Các lệnh native (`cxr index`, `validate-indexes`,
+`bench-vector`, `cxr parse`, `cxr eval-parser`, uvicorn) cần hoặc không có `.env`, hoặc ghi đè:
+`QDRANT_URL=http://localhost:6333`, `LLM_BASE_URL=http://localhost:11434`,
+`IMAGE_ROOT=data/raw/CheXpert-v1.0-small`, `CANONICAL_DIR=data/canonical`, `INDEXES_DIR=data/indexes`.
+Không ghi đè `LLM_BASE_URL` thì `cxr parse` và API chỉ chạy rule parser (chỉ có warning báo), còn
+`cxr eval-parser` với `llm`/`auto` thoát mã 1.
 
 `make help` liệt kê toàn bộ target.
+
+## Truy vấn
+
+`POST /api/v1/query/parse` trả `SearchQuery` đã validate kèm `parser` (llm | rule), `fallback_used`
+và `warnings`. `POST /api/v1/search` nhận `mode` `label` hoặc `vector` (hybrid: Phase 5),
+`absence_policy` (`exclude_present` mặc định — `NOT_MENTIONED` không bị coi là có bệnh — hoặc
+`explicit_absence_required`) và `uncertainty_policy` (`EXCLUDE` | `INCLUDE`). Kết quả mode `label`
+không xếp hạng: trả theo thứ tự giả ngẫu nhiên cố định kèm `total_matches`. Số đo parser:
+[docs/parser-evaluation.md](docs/parser-evaluation.md). Thử nhanh: `uv run cxr parse "tim to nhưng không có tràn dịch"`.
 
 ## Cấu trúc
 

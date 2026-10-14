@@ -86,7 +86,7 @@ pythonpath = ["."]
 # Model tests load real weights (seconds each, hundreds of MB). Run them with
 # `uv run pytest -m model`; a later -m overrides this one. Integration tests need
 # a running Qdrant: `uv run pytest -m integration`.
-addopts = '-m "not model and not integration"'
+addopts = '-m "not model and not integration and not llm"'
 # starlette's TestClient warns once about httpx vs httpx2; third-party, not ours.
 filterwarnings = [
     "ignore:Using `httpx` with `starlette.testclient` is deprecated",
@@ -97,6 +97,7 @@ markers = [
   "integration: needs an external service (qdrant) running",
   "e2e: runs against the whole stack once it is up",
   "model: loads real VLM weights; skipped unless already downloaded",
+  "llm: needs Ollama serving the configured model (uv run pytest -m llm)",
 ]
 
 [tool.mypy]
