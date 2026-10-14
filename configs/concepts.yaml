@@ -86,11 +86,21 @@ views:
 
 negation_cues:
   # A cue within a 5-token window before a concept turns it into an exclusion.
-  en: [no, without, absent, free of, negative for, rules out, ruled out,
+  # "no" is quoted: bare `no` is the boolean False in YAML 1.1 (PyYAML).
+  en: ["no", without, absent, free of, negative for, rules out, ruled out,
        denies, not, no evidence of, resolution of]
   vi: [không, không có, chưa thấy, không thấy, loại trừ, không kèm, đã hết]
 
+negation_cues_post:
+  # A cue starting within 3 tokens AFTER a concept ("effusion is absent",
+  # "pneumothorax ruled out", "tràn dịch đã hết"). Kept apart from the
+  # pre-position cues: "cardiomegaly without effusion" must not negate
+  # cardiomegaly, so "without" is never looked for after a concept.
+  en: [absent, is absent, are absent, ruled out, is ruled out, excluded, is excluded,
+       not seen, not present, not identified, resolved, has resolved]
+  vi: [đã hết, không còn]
+
 uncertainty_cues:
-  en: [possible, probable, suspected, suspicious for, cannot exclude,
-       questionable, may represent, uncertain, equivocal, likely]
+  en: [possible, probable, suspected, suspicious for, cannot exclude, cannot be excluded,
+       can not be excluded, questionable, may represent, uncertain, equivocal, likely]
   vi: [nghi ngờ, có thể, không loại trừ, chưa rõ, khả năng, nghi]

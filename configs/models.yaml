@@ -70,3 +70,11 @@ llm:
   cache_parsed_queries: true
   # On LLM failure or invalid JSON, fall back to the rule parser. See plan 10.3.
   fallback: rule_based
+  # Relative to configs/. The rendered prompt's sha256 is part of the parse-cache
+  # key and of parser_eval.json, so a prompt edit never reuses a stale parse.
+  prompt_file: prompts/query_parser_v1.txt
+  num_predict: 300
+  seed: 20260101
+  # Ollama unloads after 5 min by default; a pause in a demo must not pay the reload.
+  keep_alive: 30m
+  cache_size: 1024

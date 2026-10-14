@@ -61,6 +61,10 @@ explanation:
 results:
   default_top_k: 10
   max_top_k: 50
+  # label mode has no ranking signal: matches come back in one fixed pseudo-random
+  # order so top-k is an unbiased sample of the matching set (WORKLOG D18).
+  # rank_in_manifest would put the 200 radiologist-labelled valid/ studies first.
+  label_order_seed: 20260101
 
 degradation:
   # No single dependency may take search down. See plan section 5.1.
