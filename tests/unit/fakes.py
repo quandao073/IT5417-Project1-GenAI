@@ -45,3 +45,30 @@ class FakeEncoder:
 
     def encode_texts(self, texts: Sequence[str]) -> np.ndarray:
         return np.stack([_vector(t, self._dim) for t in texts])
+
+
+class FakeOllama:
+    """Scripted Ollama. `probe()` returns `status`; `chat()` returns the next reply
+    (a str) or raises it (an exception). No network, no model."""
+
+    model = "fake-model"
+
+    def __init__(self, status: str = "ok", replies=()):
+        self.status = status
+        self.replies = list(replies)
+        self.calls: list[list[dict]] = []
+
+    def probe(self) -> str:
+        return self.status
+
+    def version(self) -> str:
+        return "fake"
+
+    def chat(self, messages, schema):
+        self.calls.append(messages)
+        if not self.replies:
+            raise RuntimeError("FakeOllama: no scripted reply left")
+        reply = self.replies.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        return reply, 1.0
