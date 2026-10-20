@@ -11,7 +11,7 @@ signal, so matches come back in one permutation fixed by a seed.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 import numpy as np
@@ -102,6 +102,23 @@ def filter_studies_by_labels(
                 ok &= col != _UNCERTAIN
         mask &= ok
     return mask
+
+
+def satisfies(
+    matrix: LabelMatrix,
+    study_id: str,
+    include: Sequence[Constraint],
+    exclude: Sequence[str],
+    *,
+    absence_policy: AbsencePolicy,
+    uncertainty_policy: UncertaintyPolicy,
+) -> bool:
+    """Whether one study passes the same truth table as `filter_studies_by_labels`."""
+    row = matrix.row_of[study_id]
+    one = replace(matrix, study_ids=matrix.study_ids[row:row + 1],
+                  status=matrix.status[row:row + 1])
+    return bool(filter_studies_by_labels(one, include, exclude, absence_policy=absence_policy,
+                                         uncertainty_policy=uncertainty_policy)[0])
 
 
 def ordered_matches(matrix: LabelMatrix, mask: np.ndarray) -> list[str]:

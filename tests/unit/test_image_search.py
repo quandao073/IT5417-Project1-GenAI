@@ -7,8 +7,9 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from qdrant_client import QdrantClient
+from qdrant_client import QdrantClient, models
 
+from src.common.ids import qdrant_point_id
 from src.embeddings import embed, index
 from src.retrieval import image_search
 from tests.unit.fakes import FakeEncoder
@@ -92,3 +93,68 @@ def test_lock_is_held_while_encoding(indexed):
     encoder.encode_texts = spy
     _search(indexed, lock=lock)
     assert seen == [True] and not lock.locked()
+
+
+class _RecordingClient:
+    """Records the kwargs of query_points and returns no hits."""
+
+    def __init__(self):
+        self.calls = []
+
+    def query_points(self, collection, **kwargs):
+        self.calls.append(kwargs)
+        return type("Response", (), {"points": []})()
+
+
+@pytest.fixture
+def fake_client():
+    return _RecordingClient()
+
+
+def _filter_sent(client, views, point_ids):
+    image_search.search_image_embeddings(
+        "x", views, 5, encoder=FakeEncoder(), client=client, collection="c",
+        point_ids=point_ids)
+    return client.calls[0]["query_filter"]
+
+
+def test_point_ids_become_a_has_id_condition_combined_with_views(fake_client):
+    flt = _filter_sent(fake_client, ["PA"], ["id1", "id2"])
+    assert isinstance(flt.must[0], models.FieldCondition)
+    assert isinstance(flt.must[1], models.HasIdCondition) and flt.must[1].has_id == ["id1", "id2"]
+
+
+def test_point_ids_alone_make_a_single_has_id_condition(fake_client):
+    flt = _filter_sent(fake_client, None, ["id1"])
+    assert len(flt.must) == 1 and isinstance(flt.must[0], models.HasIdCondition)
+
+
+def test_no_point_ids_keeps_the_old_filter(fake_client):
+    flt = _filter_sent(fake_client, ["PA"], None)
+    assert len(flt.must) == 1 and isinstance(flt.must[0], models.FieldCondition)
+    assert _filter_sent(_RecordingClient(), None, None) is None
+    assert image_search.points_filter([], None) is None
+
+
+def test_empty_point_ids_is_an_allow_list_of_nothing():
+    flt = image_search.points_filter([], [])
+    assert len(flt.must) == 1 and flt.must[0].has_id == []
+
+
+def test_empty_point_ids_returns_nothing_without_touching_qdrant():
+    class ExplodingEncoder:
+        def encode_texts(self, texts):
+            raise AssertionError("encoder must not be called")
+
+    client = _RecordingClient()
+    hits = image_search.search_image_embeddings(
+        "x", ["PA"], 5, encoder=ExplodingEncoder(), client=client, collection="c", point_ids=[])
+    assert hits == [] and client.calls == []
+
+
+def test_point_ids_restrict_a_real_search(indexed):
+    encoder, client, collection, images = indexed
+    wanted = [str(qdrant_point_id(p)) for p in images["path_to_image"][:3]]
+    hits = image_search.search_image_embeddings(
+        "x", None, 12, encoder=encoder, client=client, collection=collection, point_ids=wanted)
+    assert {h.image_id for h in hits} == set(images["image_id"][:3])

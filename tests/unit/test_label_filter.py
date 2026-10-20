@@ -143,6 +143,33 @@ class TestTruthTable:
             assert ("s_NOT_MENTIONED" in got) == (absence == "exclude_present")
 
 
+class TestSatisfies:
+    @pytest.mark.parametrize("absence, uncertainty, kind, status", list(product(
+        ("exclude_present", "explicit_absence_required"), ("EXCLUDE", "INCLUDE"),
+        ("include_present", "include_uncertain", "exclude"), STATUSES)))
+    def test_agrees_with_the_full_matrix_mask(self, one_concept_per_status, absence,
+                                              uncertainty, kind, status):
+        m = one_concept_per_status
+        include = [] if kind == "exclude" else [
+            Constraint(concept="Edema",
+                       status="PRESENT" if kind == "include_present" else "UNCERTAIN")]
+        exclude = ["Edema"] if kind == "exclude" else []
+        mask = lf.filter_studies_by_labels(m, include, exclude, absence_policy=absence,
+                                           uncertainty_policy=uncertainty)
+        study = f"s_{status}"
+        assert lf.satisfies(m, study, include, exclude, absence_policy=absence,
+                            uncertainty_policy=uncertainty) is bool(mask[m.row_of[study]])
+
+    def test_constraints_are_anded(self):
+        m = lf.build_label_matrix(labels_frame([
+            ("s", "Edema", "PRESENT", "CHEXBERT_IMPRESSION"),
+            ("s", "Pneumothorax", "PRESENT", "CHEXBERT_IMPRESSION")]), ["s"], PRIORITY, seed=1)
+        kw = {"absence_policy": "exclude_present", "uncertainty_policy": "EXCLUDE"}
+        edema = [Constraint(concept="Edema", status="PRESENT")]
+        assert lf.satisfies(m, "s", edema, [], **kw)
+        assert not lf.satisfies(m, "s", edema, ["Pneumothorax"], **kw)
+
+
 class TestCombinations:
     def test_constraints_are_anded(self):
         rows = [("a", "Edema", "PRESENT", "CHEXPERT_V1"),

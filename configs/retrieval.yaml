@@ -16,11 +16,10 @@ candidates:
 
 fusion:
   method: rrf
-  rrf_k: 60
-  weights:
-    concept_match_bonus: 0.15
-    uncertain_penalty: 0.05
-    constraint_violation_penalty: 1.00
+  rrf_k: 60                         # chosen on the dev split (spec section 11.5); 60 = plan default
+  leg_weights: {vector: 1.0, report: 1.0}
+  # `weights` (concept_match_bonus, uncertain_penalty, constraint_violation_penalty) removed:
+  # hybrid filters on labels first, so there is nothing left to reward or penalise (D23).
 
 constraints:
   # See plan sections 10.4 and 11.4. NOT_MENTIONED is never evidence of absence.
@@ -51,6 +50,8 @@ report_search:
   # This also makes FTS5 syntax injection impossible by construction.
   match_from: parsed_concepts
   fallback_to_semantic_query: true
+  tokenizer: porter unicode61
+  min_token_chars: 3
 
 explanation:
   # Evidence is assembled from real report spans, structured labels and the
