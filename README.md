@@ -70,6 +70,7 @@ make index                # upsert shard vào Qdrant + build_manifest.json (cầ
 make build-report-index   # SQLite FTS5
 make validate-indexes     # kiểm tra build_id khớp nhau trước khi phục vụ
 make eval-parser          # chấm parser trên benchmark held-out (cần Ollama)
+make eval-retrieval       # chấm label / vector / hybrid trên benchmark held-out (cần Qdrant + report index; key OpenAI cho `auto`)
 make up                   # web + api + qdrant
 make evaluate             # benchmark ba trục
 ```
@@ -81,12 +82,26 @@ chưa tính nạp model); đường GPU qua Docker worker nằm trong comment c�
 heldout ngày 2026-10-14 được đóng băng ở `artifacts/metrics/parser_eval_heldout_20261014.json`. Số dev
 lấy từ `uv run cxr eval-parser --split dev --out artifacts/metrics/parser_eval_dev.json`.
 
+Thứ tự dựng lại chỉ mục: `cxr embed` → `cxr index` → `cxr build-report-index` → `cxr validate-indexes`
+(7 check; check thứ 7 so report index với `reports.parquet`: số dòng, tập `study_id`, `corpus_sha256`). Report index gắn với
+corpus canonical chứ không với `build_id`, nên đổi encoder không phải dựng lại nó.
+
+`make eval-retrieval` (tức `cxr eval-retrieval`; mặc định heldout, ba cấu hình parser `gold`/`rule`/`auto`
+× ba mode, nhóm negation dưới hai policy) cũng **ghi đè** `artifacts/metrics/retrieval_eval.json`. Hai lần
+chạy heldout ngày 2026-10-21 được đóng băng ở `artifacts/metrics/retrieval_eval_heldout_20261021.json` và
+`artifacts/metrics/retrieval_eval_heldout_20261021_run2.json` (lần được trích dẫn). Lưới fusion chỉ chạy
+trên dev: `uv run cxr eval-retrieval --split dev --parsers gold --modes hybrid --grid --out
+artifacts/metrics/retrieval_dev.json`. `auto` cần key OpenAI trong `.env` (WORKLOG D22). Report index tắt,
+hoặc có `auto` mà LLM không `ok`, thì lệnh thoát mã 1. Số đo: [docs/retrieval-evaluation.md](docs/retrieval-evaluation.md).
+
 Chạy native (không qua Docker): `make setup` chép `.env.example` thành `.env` với
 `QDRANT_URL=http://qdrant:6333`, `LLM_BASE_URL=http://host.docker.internal:11434` và đường dẫn
 `/app/...`, chỉ đúng trong container. Các lệnh native (`cxr index`, `validate-indexes`,
-`bench-vector`, `cxr parse`, `cxr eval-parser`, uvicorn) cần hoặc không có `.env`, hoặc ghi đè:
-`QDRANT_URL=http://localhost:6333`, `LLM_BASE_URL=http://localhost:11434`,
-`IMAGE_ROOT=data/raw/CheXpert-v1.0-small`, `CANONICAL_DIR=data/canonical`, `INDEXES_DIR=data/indexes`.
+`bench-vector`, `cxr parse`, `cxr eval-parser`, `cxr eval-retrieval`, uvicorn) cần hoặc không có `.env`,
+hoặc ghi đè: `QDRANT_URL=http://localhost:6333`, `LLM_BASE_URL=http://localhost:11434`,
+`IMAGE_ROOT=data/raw/CheXpert-v1.0-small`, `CANONICAL_DIR=data/canonical`, `INDEXES_DIR=data/indexes`,
+`FTS_DB_PATH=data/indexes/report_search.sqlite` (thiếu dòng này thì API và `eval-retrieval` không thấy
+report index).
 Không ghi đè `LLM_BASE_URL` thì `cxr parse` và API chỉ chạy rule parser (chỉ có warning báo), còn
 `cxr eval-parser` với `llm`/`auto` thoát mã 1.
 
@@ -95,11 +110,17 @@ Không ghi đè `LLM_BASE_URL` thì `cxr parse` và API chỉ chạy rule parser
 ## Truy vấn
 
 `POST /api/v1/query/parse` trả `SearchQuery` đã validate kèm `parser` (llm | rule), `fallback_used`
-và `warnings`. `POST /api/v1/search` nhận `mode` `label` hoặc `vector` (hybrid: Phase 5),
+và `warnings`. `POST /api/v1/search` nhận `mode` `vector` (mặc định), `label` hoặc `hybrid`,
 `absence_policy` (`exclude_present` mặc định — `NOT_MENTIONED` không bị coi là có bệnh — hoặc
 `explicit_absence_required`) và `uncertainty_policy` (`EXCLUDE` | `INCLUDE`). Kết quả mode `label`
-không xếp hạng: trả theo thứ tự giả ngẫu nhiên cố định kèm `total_matches`. Số đo parser:
-[docs/parser-evaluation.md](docs/parser-evaluation.md). Thử nhanh: `uv run cxr parse "tim to nhưng không có tràn dịch"`.
+không xếp hạng: trả theo thứ tự giả ngẫu nhiên cố định kèm `total_matches`. Mode `hybrid` lọc nhãn như
+`label` (cùng `total_matches`) rồi xếp hạng trong tập đó bằng RRF của nhánh vector và nhánh report
+(SQLite FTS5, bm25); `score_breakdown` ghi `vector_rank`, `report_rank`, `rrf_score`. Mọi mode trả
+`report_evidence`: câu nguyên văn của report (offset vào `search_text`) cho mỗi concept bị ràng buộc, kèm
+polarity (`affirmed`, `negated`, `uncertain`). Thiếu hoặc lệch report index thì API vẫn chạy: `/health`
+báo `report_index: "disabled"`, hybrid chạy không có nhánh report và trả warning. Số đo parser:
+[docs/parser-evaluation.md](docs/parser-evaluation.md), số đo retrieval:
+[docs/retrieval-evaluation.md](docs/retrieval-evaluation.md). Thử nhanh: `uv run cxr parse "tim to nhưng không có tràn dịch"`.
 
 ## Cấu trúc
 
