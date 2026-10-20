@@ -10,7 +10,7 @@ from src.common.config import load_config
 from src.query import llm_parser as llm
 from src.query.parser import QueryParser, clean
 from src.query.rule_parser import RuleParser
-from src.query.schema import ParseError
+from src.query.schema import Constraint, ParseError, SearchQuery
 from tests.unit.fakes import FakeOllama
 
 TEMPLATE = "chest x-ray showing {}"
@@ -137,9 +137,36 @@ class TestSemanticQuery:
         r = parser(rule, output(findings="whatever", include=[("Edema", "PRESENT")])).parse("x")
         assert r.query.semantic_query == "chest x-ray showing pulmonary edema"
 
-    def test_llm_with_no_findings_and_no_include_warns(self, rule):
-        r = parser(rule, output(findings="", exclude=["Pleural Effusion"])).parse("no effusion")
-        assert r.query.semantic_query == "" and "vector leg skipped" in r.warnings[0]
+    def test_llm_with_nothing_at_all_in_english_encodes_the_raw_text(self, rule):
+        r = parser(rule, output()).parse("dense white area")
+        assert r.query.semantic_query == "dense white area"
+        assert r.warnings == ("no known concept; vector leg encodes the raw text",)
+
+    def test_llm_exclude_only_english_encodes_the_raw_text(self, rule):
+        r = parser(rule, output(exclude=["Pleural Effusion"])).parse("no pleural effusion")
+        assert r.parser == "llm" and r.query.semantic_query == "no pleural effusion"
+        assert "no positive finding; vector leg encodes the raw text" in r.warnings
+
+    def test_llm_exclude_only_vietnamese_stays_empty(self, rule):
+        r = parser(rule, output(exclude=["Pleural Effusion"], language="vi")).parse(
+            "không có tràn dịch")
+        assert r.parser == "llm" and r.query.semantic_query == ""
+        assert r.warnings == ("no positive finding; vector leg skipped",)
+
+    def test_rule_vietnamese_exclude_only_gets_the_same_warning(self, rule):
+        r = parser(rule).parse("không có tràn dịch")
+        assert r.query.exclude == ["Pleural Effusion"] and r.query.semantic_query == ""
+        assert r.warnings == ("no positive finding; vector leg skipped",)
+
+    def test_finalize_builds_the_gold_semantic_query(self, rule):
+        p = parser(rule)
+        gold = SearchQuery(include=[Constraint(concept="Edema", status="PRESENT")],
+                           exclude=[], views=[], language="en")
+        assert p.finalize(gold, "find edema").semantic_query == (
+            "chest x-ray showing pulmonary edema")
+        assert p.finalize(SearchQuery(language="en"), "hiatal hernia").semantic_query == (
+            "hiatal hernia")
+        assert p.finalize(SearchQuery(language="vi"), "thoát vị").semantic_query == ""
 
     def test_rule_english_without_a_concept_falls_back_to_the_raw_text(self, rule):
         r = parser(rule).parse("  dense  white area near the hilum ")

@@ -67,14 +67,25 @@ def _cue_forms(section: dict) -> list[Form]:
     return sorted(forms, key=lambda f: -len(f[0]))
 
 
-def match(tokens: Sequence[str], forms: Sequence[Form]) -> list[Hit]:
-    """Greedy left-to-right, longest form first, no overlaps."""
+def match(tokens: Sequence[str], forms: Sequence[Form],
+          blocked: Sequence[tuple[str, ...]] = ()) -> list[Hit]:
+    """Greedy left-to-right, longest form first, no overlaps.
+
+    `blocked` token sequences mask the positions they cover: a form whose span touches
+    a masked position is skipped, so "phù" does not fire inside "phù hợp" (spec 5.2).
+    """
+    masked: set[int] = set()
+    for seq in blocked:
+        n = len(seq)
+        for i in range(len(tokens) - n + 1):
+            if n and tuple(tokens[i:i + n]) == seq:
+                masked.update(range(i, i + n))
     hits: list[Hit] = []
     i = 0
     while i < len(tokens):
         for form, key, lang in forms:
             n = len(form)
-            if n and tuple(tokens[i:i + n]) == form:
+            if n and tuple(tokens[i:i + n]) == form and masked.isdisjoint(range(i, i + n)):
                 hits.append(Hit(i, i + n, key, lang))
                 i += n
                 break
@@ -90,11 +101,13 @@ class RuleParser:
         self.negation = _cue_forms(concepts_cfg["negation_cues"])
         self.negation_post = _cue_forms(concepts_cfg["negation_cues_post"])
         self.uncertainty = _cue_forms(concepts_cfg["uncertainty_cues"])
+        phrases = concepts_cfg.get("blocked_phrases", {})
+        self.blocked = [tuple(tokenize(p)) for lang in ("en", "vi") for p in phrases.get(lang, [])]
         self.en_first = {c: v["en"][0] for c, v in concepts_cfg["concepts"].items()}
 
     def parse(self, text: str) -> SearchQuery:
         tokens = tokenize(text)
-        concepts = match(tokens, self.concepts)
+        concepts = match(tokens, self.concepts, self.blocked)
         views = match(tokens, self.views)
         taken = [(h.start, h.end) for h in concepts + views]
 

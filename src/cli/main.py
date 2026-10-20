@@ -14,7 +14,7 @@ from pathlib import Path
 
 import polars as pl
 
-from src.common.config import Settings, load_config
+from src.common.config import Settings, default_config_dir, load_config
 from src.data import canonical
 from src.data.audit import CorpusMode, run_audit
 from src.embeddings import embed, index, spike, validate
@@ -23,6 +23,7 @@ from src.evaluation import parser_eval as pe
 from src.evaluation import vector_baseline as vb
 from src.query.schema import ParseError
 from src.retrieval import label_filter as lf
+from src.retrieval import report_index
 
 
 def _cmd_audit(args: argparse.Namespace) -> int:
@@ -297,9 +298,25 @@ def _cmd_validate_indexes(args: argparse.Namespace) -> int:
         expected_config_hash=validate.expected_config_hash(manifest),
         expected_revision=expected_revision,
     )
+    index_path = (Path(args.report_index) if args.report_index
+                  else Path(args.indexes_dir) / "report_search.sqlite")
+    checks.append(report_index.validate_report_index(
+        index_path, pl.read_parquet(Path(args.canonical_dir) / "reports.parquet")))
     for c in checks:
         print(f"{'PASS' if c.ok else 'FAIL'} {c.name:<12}: {c.detail}")
     return 0 if all(c.ok for c in checks) else 1
+
+
+def _cmd_build_report_index(args: argparse.Namespace) -> int:
+    reports = pl.read_parquet(Path(args.canonical_dir) / "reports.parquet")
+    concepts_bytes = (default_config_dir() / "concepts.yaml").read_bytes()
+    out = Path(args.out)
+    meta = report_index.build_report_index(
+        reports, out, concepts_sha256=hashlib.sha256(concepts_bytes).hexdigest(),
+        git_commit=_git_commit())
+    print(f"rows={reports.height} sha={meta['corpus_sha256'][:12]} out={out}")
+    print(json.dumps(meta, ensure_ascii=True))
+    return 0
 
 
 def _merge_json(path: Path, section: str, payload: dict) -> None:
@@ -523,7 +540,14 @@ def build_parser() -> argparse.ArgumentParser:
     val.add_argument("--embeddings", default="data/indexes/embeddings")
     val.add_argument("--canonical-dir", default="data/canonical")
     val.add_argument("--qdrant-url", default=None)
+    val.add_argument("--report-index", default=None,
+                     help="default: <indexes-dir>/report_search.sqlite")
     val.set_defaults(func=_cmd_validate_indexes)
+
+    rep = sub.add_parser("build-report-index", help="Phase 5: build the SQLite FTS5 report index")
+    rep.add_argument("--canonical-dir", default="data/canonical")
+    rep.add_argument("--out", default="data/indexes/report_search.sqlite")
+    rep.set_defaults(func=_cmd_build_report_index)
 
     bench = sub.add_parser("bench-vector", help="Phase 3: cold/warm latency of vector search")
     bench.add_argument("--queries", type=int, default=30)
