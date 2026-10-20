@@ -1,4 +1,5 @@
-"""One real parse through Ollama. `uv run pytest -m llm`; skipped by default."""
+"""Real parses through the configured LLM (OpenAI by default, D22; Ollama with
+LLM_PROVIDER=ollama). Reads .env for the key. `uv run pytest -m llm`; skipped by default."""
 
 from __future__ import annotations
 
@@ -12,9 +13,9 @@ pytestmark = pytest.mark.llm
 
 @pytest.fixture(scope="module")
 def parser():
-    parser, status = build_query_parser(Settings(_env_file=None))
+    parser, status = build_query_parser(Settings())
     if status != "ok":
-        pytest.skip(f"ollama {status}")
+        pytest.skip(f"llm {status}")
     return parser
 
 

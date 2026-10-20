@@ -84,12 +84,15 @@ class Settings(BaseSettings):
     # Blank in .env.example: the API then reads it from build_manifest.json.
     build_id: str | None = None
 
-    # `ollama` is the local default (D5). `openai` is any OpenAI-compatible API, which
-    # also reaches Gemini through its OpenAI endpoint; it needs an API key and an
-    # LLM_BASE_URL such as https://api.openai.com/v1.
-    llm_provider: Literal["ollama", "openai"] = "ollama"
-    llm_base_url: str = "http://localhost:11434"
-    llm_model: str = "qwen2.5:3b-instruct-q4_K_M"
+    # OpenAI by default (WORKLOG D22, replacing the local qwen 3B of D5). `openai` is
+    # any OpenAI-compatible API, so Gemini works too through its OpenAI endpoint.
+    # `ollama` is still available: LLM_PROVIDER=ollama, LLM_BASE_URL=http://localhost:11434,
+    # LLM_MODEL=qwen2.5:3b-instruct-q4_K_M. Without a key the parser runs rule-only.
+    llm_provider: Literal["ollama", "openai"] = "openai"
+    llm_base_url: str = "https://api.openai.com/v1"
+    # A dated snapshot, never an alias, so a parse is reproducible; options per model
+    # live in models.yaml:llm.hosted_request.
+    llm_model: str = "gpt-5-mini-2025-08-07"
     # SecretStr keeps the key out of repr() and therefore out of logs and tracebacks.
     # Read from LLM_API_KEY, else the conventional OPENAI_API_KEY.
     llm_api_key: SecretStr | None = Field(

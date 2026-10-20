@@ -111,9 +111,12 @@ class TestSettings:
         monkeypatch.setenv("BUILD_ID", "")
         assert config.Settings(_env_file=None).build_id is None
 
-    def test_the_local_ollama_provider_is_the_default(self):
+    def test_openai_is_the_default_provider(self):
+        """WORKLOG D22: gpt-5-mini, picked on dev by a pre-set rule and PASS on heldout."""
         settings = config.Settings(_env_file=None)
-        assert settings.llm_provider == "ollama" and settings.llm_api_key is None
+        assert settings.llm_provider == "openai"
+        assert settings.llm_base_url == "https://api.openai.com/v1"
+        assert settings.llm_model == "gpt-5-mini-2025-08-07"
 
     def test_reads_the_key_from_openai_api_key_too(self, monkeypatch):
         """The conventional name works, so a key in .env is picked up as-is."""
