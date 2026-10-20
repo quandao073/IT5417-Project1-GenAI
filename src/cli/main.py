@@ -530,7 +530,8 @@ def _cmd_eval_retrieval(args: argparse.Namespace) -> int:
     if need_llm and status == "ok":
         with contextlib.suppress(ParseError):      # pay the cold start outside the scored rows
             parser.parse("chest x-ray", mode="llm")
-    state = build_state(Settings())
+    # The flag wins over CANONICAL_DIR in .env, so the state and the agreement matrix agree.
+    state = build_state(Settings(canonical_dir=Path(args.canonical_dir)))
     if not state.ready:
         print(f"API state not ready: {state.not_ready_reason}", file=sys.stderr)
         return 1
@@ -549,7 +550,9 @@ def _cmd_eval_retrieval(args: argparse.Namespace) -> int:
     fusion = dataclasses.asdict(state.fusion)
     if args.grid:
         grid = rev.grid_search(rows, **shared)
-        _merge_json(out, "grid", {**grid, **extras, "fusion_default": fusion})
+        _merge_json(out, "grid", {**grid, **extras,
+                                  "fusion_default": dataclasses.asdict(rev.DEFAULT_FUSION),
+                                  "fusion_current": fusion})
         _print_grid(grid)
         print(f"report     : {args.out}")
         return 0

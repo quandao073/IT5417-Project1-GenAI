@@ -37,10 +37,6 @@ def points_filter(views: Sequence[str] | None, point_ids: Sequence[str] | None):
     return models.Filter(must=must) if must else None
 
 
-def views_filter(views: Sequence[str] | None):
-    return points_filter(views, None)
-
-
 def search_image_embeddings(
     semantic_query: str,
     views: Sequence[str] | None,

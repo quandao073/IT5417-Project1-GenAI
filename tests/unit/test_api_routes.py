@@ -75,7 +75,7 @@ class TestSearch:
         assert c.post("/api/v1/search", json={"query": "x", "top_k": 0}).status_code == 422
         assert len(c.post("/api/v1/search", json={"query": "x"}).json()["results"]) == 8
 
-    def test_views_filter_and_empty_views(self, client):
+    def test_view_filter_and_empty_views(self, client):
         c, state, _ = client
         images = pl.read_parquet(state.settings.canonical_dir / "images.parquet")
         pa = set(images.filter(pl.col("projection") == "PA")["image_id"])
@@ -200,7 +200,7 @@ class TestLabelMode:
         assert body["results"] == [] and body["total_matches"] == 0
         assert "label mode needs at least one concept" in body["warnings"]
 
-    def test_views_filter_applies_to_label_mode(self, client):
+    def test_view_filter_applies_to_label_mode(self, client):
         c, _, _ = client
         # studies 0 and 1 have Edema PRESENT; their selected images are i=0 (PA) and i=2 (AP)
         assert self.studies(self.post(c, "edema")) == {"patient00000/study1",
@@ -288,7 +288,7 @@ class TestHybrid:
         breakdowns = [r["score_breakdown"] for r in body["results"]]
         assert [b["vector_rank"] for b in breakdowns] == [1, 2, 3, 4]
         assert all(b["report_rank"] is None and b["constraints_satisfied"] is None
-                   for b in breakdowns)
+                   and b["label_match"] is None for b in breakdowns)   # no label filter ran
         assert all(r["report_evidence"] == [] for r in body["results"])  # no report says it
 
     def test_hybrid_free_text_quotes_the_matching_sentence(self, client):

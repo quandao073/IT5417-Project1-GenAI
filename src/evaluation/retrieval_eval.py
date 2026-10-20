@@ -188,6 +188,7 @@ def evaluate_retrieval(rows: Sequence[BenchmarkQuery], *, state, parser: QueryPa
         outcome = search(state, query, mode, top_k=TOP_K, views=query.views,
                          absence_policy=absence, uncertainty_policy=uncertainty, fusion=fusion)
         ms = (time.perf_counter() - started) * 1000
+        # Not deduplicated: the corpus holds one image per study (WORKLOG Phase 1).
         ranked = [h.study_id for h in outcome.hits]
         return {**query_metrics(ranked, rel, row.gold, matrix),
                 **evidence_metrics(outcome.hits, query)}, ms

@@ -117,8 +117,10 @@ không xếp hạng: trả theo thứ tự giả ngẫu nhiên cố định kèm
 `label` (cùng `total_matches`) rồi xếp hạng trong tập đó bằng RRF của nhánh vector và nhánh report
 (SQLite FTS5, bm25); `score_breakdown` ghi `vector_rank`, `report_rank`, `rrf_score`. Mọi mode trả
 `report_evidence`: câu nguyên văn của report (offset vào `search_text`) cho mỗi concept bị ràng buộc, kèm
-polarity (`affirmed`, `negated`, `uncertain`). Thiếu hoặc lệch report index thì API vẫn chạy: `/health`
-báo `report_index: "disabled"`, hybrid chạy không có nhánh report và trả warning. Số đo parser:
+polarity (`affirmed`, `negated`, `uncertain`). Thiếu report index, hoặc `meta.studies` của nó lệch số
+study của manifest, thì API vẫn chạy: `/health` báo `report_index: "disabled"`, hybrid chạy không có nhánh
+report và trả warning. Lúc khởi động API chỉ so số study; nội dung lệch corpus (cùng số study) thì không bị
+phát hiện, chỉ `uv run cxr validate-indexes` bắt được (so `corpus_sha256`). Số đo parser:
 [docs/parser-evaluation.md](docs/parser-evaluation.md), số đo retrieval:
 [docs/retrieval-evaluation.md](docs/retrieval-evaluation.md). Thử nhanh: `uv run cxr parse "tim to nhưng không có tràn dịch"`.
 

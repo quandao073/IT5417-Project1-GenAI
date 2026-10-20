@@ -172,7 +172,8 @@ def _hybrid_hits(state: AppState, query: SearchQuery, views: Sequence[str], top_
     warnings.extend(out.warnings)
     hits = [Hit(r.rank, r.study_id, state.study_image[r.study_id], r.score,
                 vector_rank=r.vector_rank, report_rank=r.report_rank, rrf_score=r.score,
-                label_match=True, constraints_satisfied=True if constrained else None)
+                label_match=True if constrained else None,   # None: no label filter ran
+                constraints_satisfied=True if constrained else None)
             for r in out.results]
     return hits, out.total_matches
 

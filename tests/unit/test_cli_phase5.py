@@ -200,7 +200,24 @@ def test_eval_retrieval_exit_code_follows_a_failing_verdict(world, monkeypatch):
     assert run(world, "--split", "dev", "--parsers", "gold") == 1
 
 
+def test_eval_retrieval_builds_the_state_from_the_canonical_dir_flag(world, monkeypatch):
+    seen = {}
+
+    def fake_build_state(settings):
+        seen["settings"] = settings
+        return world.state
+
+    monkeypatch.setattr("src.api.dependencies.build_state", fake_build_state)
+    monkeypatch.setattr("src.evaluation.retrieval_eval.evaluate_retrieval",
+                        lambda rows, **kw: canned(kw["parsers"], kw["modes"]))
+    monkeypatch.setattr("src.evaluation.retrieval_eval.verdict", lambda report, t: PASSING)
+    assert run(world, "--split", "dev", "--parsers", "gold") == 0
+    assert seen["settings"].canonical_dir == world.canonical
+
+
 def test_eval_retrieval_grid_writes_the_grid_section(world, monkeypatch, capsys):
+    # the state runs the chosen fusion; the grid section records it next to the plan default
+    world.state.fusion = FusionParams(10, {"vector": 0.5, "report": 1.0}, 100, 100)
     config = {"rrf_k": 60, "leg_weights": {"vector": 1.0, "report": 1.0},
               "ndcg@10": 0.5, "p@10": 0.4}
     grid = {"configs": [config] * 9, "chosen": config, "default_ndcg": 0.5}
@@ -210,6 +227,8 @@ def test_eval_retrieval_grid_writes_the_grid_section(world, monkeypatch, capsys)
     assert "eval" not in data and data["grid"]["chosen"] == config
     assert data["grid"]["build_id"] == "b1" and data["grid"]["benchmark"]["split"] == "dev"
     assert data["grid"]["fusion_default"] == FUSION
+    assert data["grid"]["fusion_current"] == {**FUSION, "rrf_k": 10,
+                                              "leg_weights": {"vector": 0.5, "report": 1.0}}
     out = capsys.readouterr().out
     out.encode("ascii")
     assert out.count("rrf_k=60 ") == 9 and "chosen: " in out

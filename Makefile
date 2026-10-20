@@ -61,7 +61,7 @@ evaluate: ## Run the three-axis benchmark
 benchmark: evaluate ## Alias for evaluate
 eval-parser: ## Score rule / llm / auto parsers on the held-out benchmark (needs Ollama)
 	$(PY) cxr eval-parser
-eval-retrieval: ## Score label / vector / hybrid on the held-out benchmark (needs Qdrant, report index; Ollama for auto)
+eval-retrieval: ## Score label / vector / hybrid on the held-out benchmark (needs Qdrant, report index; OpenAI key in .env for auto)
 	$(PY) cxr eval-retrieval
 lint: ## ruff
 	$(PY) ruff check src tests

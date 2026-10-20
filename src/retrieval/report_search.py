@@ -53,10 +53,16 @@ def _quoted(terms: Sequence[str]) -> str | None:
 
 def build_match(query: SearchQuery, report_terms: Mapping[str, Sequence[str]], *,
                 min_token_chars: int = 3) -> str | None:
-    """OR of quoted phrases; `exclude` concepts never enter (the label filter owns them).
+    """OR of quoted phrases. None means there is nothing English to match.
 
-    Include concepts win over free text: their curated terms are written the way reports
-    phrase findings. None means there is nothing English to match.
+    With an include, only the include concepts' curated report terms enter (they are written
+    the way reports phrase findings); the `exclude` concepts' terms do not, because the label
+    filter owns them. Without an include, the free-text branch quotes every token of
+    `semantic_query` (`free_text_tokens`), the words of an excluded finding too: for an English
+    exclude-only query that is the raw text (WORKLOG D26), so "show me films with no evidence
+    of pneumothorax" becomes `"show" OR "films" OR "with" OR "evidence" OR "pneumothorax"` and
+    ranks first, inside the label-allowed set, the reports that mention the excluded finding,
+    often to deny it. Kept on purpose for now (WORKLOG P11).
     """
     if query.include:
         terms = [term.replace('"', "") for c in query.include for term in report_terms[c.concept]]

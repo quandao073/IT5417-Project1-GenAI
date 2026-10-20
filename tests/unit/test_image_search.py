@@ -64,7 +64,7 @@ def test_candidates_carry_study_id_from_payload(indexed):
     assert all(h.study_id == by_id[h.image_id] for h in _search(indexed))
 
 
-def test_views_filter_restricts_to_projection(indexed):
+def test_view_facet_restricts_to_projection(indexed):
     _, _, _, images = indexed
     pa = set(images.filter(images["projection"] == "PA")["image_id"])
     hits = _search(indexed, views=["PA"], k=12)
@@ -73,7 +73,8 @@ def test_views_filter_restricts_to_projection(indexed):
 
 def test_empty_views_means_no_filter(indexed):
     assert len(_search(indexed, views=[], k=12)) == 12
-    assert image_search.views_filter([]) is None and image_search.views_filter(None) is None
+    assert image_search.points_filter([], None) is None
+    assert image_search.points_filter(None, None) is None
 
 
 def test_k_larger_than_corpus_returns_everything(indexed):

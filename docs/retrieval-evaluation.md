@@ -171,15 +171,19 @@ ngôn ngữ, nên bảng chỉ ghi nDCG của chúng.
 - **Polarity yếu ở hedge:** nhóm `uncertainty` của hybrid chỉ khớp 0,292 (vector 0,142, label 0,450).
   Polarity do rule parser gán trên từng câu, nên câu kiểu `"QUESTION\nPULMONARY EDEMA VERSUS
   INFECTION."` (smoke, use case 4, mode vector) bị gắn Pneumonia `affirmed`.
-- **Faithfulness.** `evidence_faithful` của spec Phase 5 §11.4 không có trong JSON. Hai phép kiểm thay
-  thế:
-  1. Pipeline gọi `EvidenceMatcher.build` với `verify=True`: một span không phải lát cắt thật của
-     `search_text` thì raise, và lỗi này không bị nuốt. Cả hai lần heldout chạy xong với exit 0, nên
-     không span nào mà lần đánh giá sinh ra bị lệch (đọc từ code cộng exit code).
-  2. `uv run pytest -m integration`: `test_evidence_is_faithful_on_a_thousand_real_reports` lấy 1.000
-     report đầu, mỗi study một `SearchQuery` include mọi concept PRESENT (nhãn resolve), và assert
-     `text[start:end] == e.text` cho mọi câu trích. `test_hybrid_fifty_images_round_trip` assert điều
-     tương tự cho mọi hit hybrid trên 50 ảnh thật. Cả hai pass.
+- **Faithfulness.** `evidence_faithful` của spec Phase 5 §11.4 không có trong JSON. Faithfulness đúng
+  **theo cấu trúc**: `sentences()` cắt mỗi câu thành lát của chính `search_text` (offset, không strip hay
+  ghép), và pipeline gọi `EvidenceMatcher.build` với `verify=True`, kiểm lại đúng lát đó (raise, không bị
+  nuốt; cả hai lần heldout chạy xong với exit 0). Đi kèm là việc sqlite lưu `search_text` nguyên văn
+  (`test_search_text_is_stored_verbatim`). Hai phép kiểm trên dữ liệu thật (`uv run pytest -m
+  integration`, cả hai pass):
+  1. **Độc lập:** `test_hybrid_fifty_images_round_trip` chạy hybrid trên 50 ảnh thật, lấy evidence từ
+     sqlite qua pipeline và assert `text[start:end] == e.text` với `search_text` đọc từ parquet, cho mọi
+     hit.
+  2. **Regression check:** `test_evidence_is_faithful_on_a_thousand_real_reports` lấy 1.000 report đầu,
+     mỗi study một `SearchQuery` include mọi concept PRESENT (nhãn resolve), và assert cùng đẳng thức,
+     nhưng trên chính text vừa cắt. Theo cấu trúc trên thì nó không thể sai, nên nó chỉ khóa cách tách
+     câu trên report thật (WORKLOG T26), không phải bằng chứng độc lập.
 - **Độ phủ không chọn mẫu** (1.000 report đầu, mọi concept PRESENT; "có evidence" = ít nhất một câu
   nhắc concept theo `en + report`, polarity bất kỳ): **2.375 / 3.803 cặp = 62,5%**.
 
@@ -310,6 +314,20 @@ Không request nào có warning. Câu 6 parse ra Cardiomegaly + Edema, `vi`, nê
   hybrid (policy mặc định) có `report_rank` 1 và không có `vector_rank`, `rrf` = 1/11 = 0,0909. Một
   study chỉ được vector xếp hạng 1 chỉ được 0,5/11 = 0,045. Hybrid ở đây gần với "bm25 trong tập cho
   phép, vector làm tín hiệu phụ" hơn là hai leg ngang nhau.
+- **Câu EN chỉ có exclude vẫn có report leg, và report leg xếp theo chính finding bị loại.** D26 cho
+  `semantic_query` = nguyên văn câu, `include` rỗng nên `build_match` quote mọi token: "show me films with
+  no evidence of pneumothorax" → `"show" OR "films" OR "with" OR "evidence" OR "pneumothorax"`. Trong tập
+  cho phép, report leg vì thế đưa lên trước report nhắc finding bị loại, thường để phủ định nó: ở top 10
+  bm25 của 14 câu heldout EN loại này, 44/140 hit trích một câu phủ định concept bị loại (en-023 8/10), và
+  37/140 hit trích cùng một câu hai lần, một lần cho concept (`negated`) và một lần `mention` free-text (vd
+  `"1. EXPIRATORY FILM SHOWING NO EVIDENCE OF PNEUMOTHORAX."`). Trên 14 câu đó (gold), nDCG@10 hybrid /
+  label / vector là 0,409 / 0,328 / 0,210. 14 câu VI tương ứng không có leg nào nên hybrid bằng label
+  (0,328), và 62 câu còn lại của mỗi ngôn ngữ có hybrid 0,661 ở cả hai: khoảng cách hybrid EN–VI (0,615 /
+  0,599) nằm ở 14 cặp câu này. Bậc relevance của một exclude đếm số nguồn ghi ABSENT, và nguồn thường chỉ
+  ghi ABSENT khi report có câu phủ định, nên phần hơn label ở đây là bm25 tìm đúng loại câu đó (cùng văn
+  bản với bậc, xem *Proxy graded có thiên lệch*), không phải hybrid hiểu phủ định. Hành vi giữ nguyên;
+  câu hỏi mở là WORKLOG P11. Lệnh (chỉ đọc): `uv run python artifacts/metrics/exclude_only_probe.py
+  artifacts/metrics/retrieval_eval_heldout_20261021_run2.json`.
 - **`auto` không tái lập.** Giữa hai lần heldout, ít nhất 4 parse khác nhau. Đây là cận dưới đọc từ
   `per_query`, vì parse không được lưu: `en-044` và `vi-060` đổi ràng buộc (lần 1 trượt, lần 2 đúng),
   `en-078` và `en-080` chỉ đổi `semantic_query`. Mỗi số `auto` là một lần chạy. `auto` hybrid nDCG
