@@ -25,5 +25,8 @@ def health(state: Annotated[AppState, Depends(get_state)]):
         revision=model["revision"], dimension=model["dimension"],
         vectors=state.manifest["counts"]["vectors"],
         studies=state.manifest["counts"]["studies"], qdrant="ok",
-        report_index="disabled", llm=state.llm_status, llm_model=state.settings.llm_model,
+        report_index=state.report_status,
+        report_studies=(int(state.report_meta["studies"]) if state.report_status == "ok"
+                        else None),
+        llm=state.llm_status, llm_model=state.settings.llm_model,
     )

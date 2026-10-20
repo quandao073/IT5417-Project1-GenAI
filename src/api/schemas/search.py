@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 from src.query.schema import ParseResult, SearchQuery
+from src.retrieval.evidence import Evidence
 
 View = Literal["AP", "PA"]
 
@@ -72,7 +73,12 @@ class LabelAssertion(BaseModel):
 
 class ScoreBreakdown(BaseModel):
     vector_rank: int | None = None
+    report_rank: int | None = None
+    rrf_score: float | None = None
     label_match: bool | None = None
+    constraints_satisfied: bool | None = Field(None, description=(
+        "hybrid/label: always true by construction; vector: whether every constrained "
+        "concept's resolved status satisfies the request's policies; null without constraints"))
 
 
 class SearchResult(BaseModel):
@@ -82,10 +88,14 @@ class SearchResult(BaseModel):
     image_url: str
     score: float | None = Field(description=(
         "vector mode: cosine similarity between the query and the image embedding, a ranking "
-        "signal, NOT a probability (roughly 0.2-0.5 on this corpus). label mode: null."))
+        "signal, NOT a probability (roughly 0.2-0.5 on this corpus). hybrid mode: the RRF "
+        "score, also a ranking signal (0.0 when no leg ranked anything). label mode: null."))
     score_breakdown: ScoreBreakdown
     labels: list[LabelAssertion] = Field(
-        description="resolved status of every constrained concept, in both modes")
+        description="resolved status of every constrained concept, in every mode")
+    report_evidence: list[Evidence] = Field(default_factory=list, description=(
+        "exact sentences of the study's report: one per constrained concept it mentions, or "
+        "the best free-text match when nothing is included; empty without the report index"))
 
 
 class SearchResponse(BaseModel):
@@ -94,7 +104,8 @@ class SearchResponse(BaseModel):
     parsed_query: ParsedQuery
     results: list[SearchResult]
     total_matches: int | None = Field(
-        description="label mode: studies matching after the view filter; vector mode: null")
+        description=("label and hybrid modes: studies matching after the view filter; "
+                     "null in vector mode and in hybrid mode without a constraint"))
     warnings: list[str]
     latency_ms: int
 
@@ -108,6 +119,7 @@ class HealthResponse(BaseModel):
     vectors: int
     studies: int
     qdrant: Literal["ok"]
-    report_index: Literal["disabled"]
+    report_index: Literal["ok", "disabled"]
+    report_studies: int | None
     llm: Literal["ok", "disabled", "unreachable", "missing_model"]
     llm_model: str
