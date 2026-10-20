@@ -56,16 +56,18 @@ def bench_warm(encoder, client, collection: str, queries: Sequence[str], repeats
             "total_ms": percentiles(total)}
 
 
-def bench_http(api_url: str, queries: Sequence[str], repeats: int, *, top_k: int = 10) -> dict:
+def bench_http(api_url: str, queries: Sequence[str], repeats: int, *, top_k: int = 10,
+               mode: str = "vector", transport=None) -> dict:
     import httpx
 
     times = []
-    with httpx.Client(base_url=api_url, timeout=30) as http:
+    with httpx.Client(base_url=api_url, timeout=30, transport=transport) as http:
         for query in queries:
             for r in range(repeats):
                 t0 = time.perf_counter()
                 http.post("/api/v1/search",
-                          json={"query": query, "top_k": top_k}).raise_for_status()
+                          json={"query": query, "top_k": top_k,
+                                "mode": mode}).raise_for_status()
                 if r:
                     times.append((time.perf_counter() - t0) * 1000)
     return {"http_ms": percentiles(times)}

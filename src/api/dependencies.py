@@ -3,23 +3,35 @@
 If the manifest, the Qdrant collection and the encoder do not agree, the app
 still starts but refuses to serve (plan section 16): /health answers 503 with
 the reason, which is how the Docker healthcheck notices a stale index.
+The report index is the exception: without it the API stays ready and serves
+search without the report leg and without evidence (spec 9.3).
 """
 
 from __future__ import annotations
 
 import json
+import logging
+import sqlite3
 import threading
 from dataclasses import dataclass, field
+from typing import Literal
 
 import polars as pl
 from fastapi import HTTPException, Request
 
 from src.common.config import Settings, load_config
+from src.common.ids import qdrant_point_id
 from src.embeddings import index
 from src.query import llm_parser as llm
 from src.query.parser import QueryParser
 from src.query.rule_parser import RuleParser
+from src.retrieval.evidence import EvidenceMatcher
+from src.retrieval.hybrid import FusionParams
 from src.retrieval.label_filter import LabelMatrix, build_label_matrix
+from src.retrieval.report_index import ReportIndexError, open_report_index, read_meta
+from src.retrieval.report_search import report_terms_from_config
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -44,6 +56,34 @@ class AppState:
     ready: bool = False
     not_ready_reason: str | None = None
     encode_lock: threading.Lock = field(default_factory=threading.Lock)
+    # One read-only connection shared by the threadpool, serialised by report_lock.
+    report_db: sqlite3.Connection | None = None
+    report_lock: threading.Lock = field(default_factory=threading.Lock)
+    report_status: Literal["ok", "disabled"] = "disabled"
+    report_reason: str | None = None
+    report_meta: dict = field(default_factory=dict)
+    report_terms: dict[str, list[str]] = field(default_factory=dict)
+    report_min_token_chars: int = 3
+    point_of_study: dict[str, str] = field(default_factory=dict)   # -> selected image's point
+    evidence: EvidenceMatcher | None = None
+    fusion: FusionParams | None = None
+
+
+def _open_report_index(state: AppState, studies: int) -> None:
+    """Attach the FTS5 index; any problem disables the report leg, never readiness."""
+    try:
+        con = open_report_index(state.settings.fts_db_path)
+    except ReportIndexError as exc:
+        state.report_reason = str(exc)
+    else:
+        meta = read_meta(con)
+        if meta.get("studies") == str(studies):
+            state.report_db, state.report_meta, state.report_status = con, meta, "ok"
+            return
+        con.close()
+        state.report_reason = (f"report index has {meta.get('studies')} studies, "
+                               f"manifest says {studies}; run cxr build-report-index")
+    logger.warning("report index disabled: %s", state.report_reason)
 
 
 def _default_client(url: str):
@@ -142,6 +182,10 @@ def build_state(settings: Settings, *, encoder_loader=None, client_factory=None,
             studies["study_id"].to_list(),
             retrieval_cfg["label_resolution"]["source_priority"],
             seed=retrieval_cfg["results"]["label_order_seed"])
+        point_of_study = {s: str(qdrant_point_id(records[image_id].path_to_image))
+                          for s, image_id in study_image.items()}
+        _open_report_index(state, manifest["counts"]["studies"])
+        concepts_cfg = load_config("concepts")
         parser, llm_status = build_query_parser(settings, llm_factory=llm_factory,
                                                 warm_up=warm_up)
 
@@ -156,6 +200,10 @@ def build_state(settings: Settings, *, encoder_loader=None, client_factory=None,
         state.images, state.encoder, state.ready = records, encoder, True
         state.labels, state.study_image = labels, study_image
         state.parser, state.llm_status = parser, llm_status
+        state.point_of_study, state.fusion = point_of_study, FusionParams.from_config(retrieval_cfg)
+        state.report_terms = report_terms_from_config(concepts_cfg)
+        state.report_min_token_chars = retrieval_cfg["report_search"]["min_token_chars"]
+        state.evidence = EvidenceMatcher(concepts_cfg)
     except Exception as exc:  # noqa: BLE001 - every failure is a readiness reason
         state.ready = False
         state.not_ready_reason = str(exc)

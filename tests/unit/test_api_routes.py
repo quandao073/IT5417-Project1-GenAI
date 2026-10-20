@@ -1,6 +1,8 @@
-"""/search in vector mode and /images, against a fake state."""
+"""/search in its three modes, /health and /images, against a fake state."""
 
 from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor
 
 import polars as pl
 import pytest
@@ -31,6 +33,12 @@ def client(world):
     return TestClient(create_app(state)), state, some_id
 
 
+@pytest.fixture
+def client_without_index(world, tmp_path):
+    settings = world[0].model_copy(update={"fts_db_path": tmp_path / "missing.sqlite"})
+    return TestClient(create_app(_state(world, settings=settings)))
+
+
 class TestSearch:
     def test_vector_search_returns_ranked_results_with_urls(self, client):
         c, state, _ = client
@@ -43,7 +51,12 @@ class TestSearch:
         assert [r["rank"] for r in body["results"]] == [1, 2, 3]
         first = body["results"][0]
         assert first["image_url"] == f"/api/v1/images/{first['image_id']}"
-        assert first["score_breakdown"] == {"vector_rank": 1, "label_match": None}
+        # the fake encoder ranks study 3 first, whose effusion is NOT_MENTIONED: a violation
+        assert first["score_breakdown"] == {"vector_rank": 1, "report_rank": None,
+                                            "rrf_score": None, "label_match": None,
+                                            "constraints_satisfied": False}
+        assert first["labels"][0]["status"] == "NOT_MENTIONED"
+        assert isinstance(first["report_evidence"], list)
         assert first["study_id"] == state.images[first["image_id"]].study_id
         assert isinstance(first["score"], float)
         assert [a["concept"] for a in first["labels"]] == ["Pleural Effusion"]
@@ -62,7 +75,7 @@ class TestSearch:
         assert c.post("/api/v1/search", json={"query": "x", "top_k": 0}).status_code == 422
         assert len(c.post("/api/v1/search", json={"query": "x"}).json()["results"]) == 8
 
-    def test_views_filter_and_empty_views(self, client):
+    def test_view_filter_and_empty_views(self, client):
         c, state, _ = client
         images = pl.read_parquet(state.settings.canonical_dir / "images.parquet")
         pa = set(images.filter(pl.col("projection") == "PA")["image_id"])
@@ -73,11 +86,6 @@ class TestSearch:
         assert len(all_hits["results"]) == 8
         lateral = c.post("/api/v1/search", json={"query": "x", "views": ["LATERAL"]})
         assert lateral.status_code == 422
-
-    def test_other_modes_are_400_in_this_build(self, client):
-        c, _, _ = client
-        r = c.post("/api/v1/search", json={"query": "x", "mode": "hybrid"})
-        assert r.status_code == 400 and "hybrid" in r.json()["detail"]
 
     def test_search_is_503_when_not_ready(self, world, tmp_path):
         settings, _, _ = world
@@ -159,7 +167,9 @@ class TestLabelMode:
         assert self.studies(body) == {"patient00000/study1"} and body["total_matches"] == 1
         r = body["results"][0]
         assert r["rank"] == 1 and r["score"] is None
-        assert r["score_breakdown"] == {"vector_rank": None, "label_match": True}
+        assert r["score_breakdown"] == {"vector_rank": None, "report_rank": None,
+                                        "rrf_score": None, "label_match": True,
+                                        "constraints_satisfied": True}
         assert r["image_id"] == state.study_image["patient00000/study1"]
         assert r["image_url"] == f"/api/v1/images/{r['image_id']}"
         assert r["labels"] == [
@@ -190,7 +200,7 @@ class TestLabelMode:
         assert body["results"] == [] and body["total_matches"] == 0
         assert "label mode needs at least one concept" in body["warnings"]
 
-    def test_views_filter_applies_to_label_mode(self, client):
+    def test_view_filter_applies_to_label_mode(self, client):
         c, _, _ = client
         # studies 0 and 1 have Edema PRESENT; their selected images are i=0 (PA) and i=2 (AP)
         assert self.studies(self.post(c, "edema")) == {"patient00000/study1",
@@ -228,6 +238,173 @@ class TestLabelMode:
                                               "absence_policy": "strict"}).status_code == 422
         assert c.post("/api/v1/search", json={"query": "edema", "mode": "label",
                                               "uncertainty_policy": "MAYBE"}).status_code == 422
+
+
+def _search(c, query, mode, **extra):
+    return c.post("/api/v1/search", json={"query": query, "mode": mode, **extra}).json()
+
+
+def _concepts_and_polarities(result):
+    return [(e["concept"], e["polarity"]) for e in result["report_evidence"]]
+
+
+class TestHybrid:
+    def test_hybrid_returns_only_constraint_satisfying_studies(self, client):
+        c, state, _ = client
+        body = _search(c, "edema with no pleural effusion", "hybrid")
+        ids = [r["study_id"] for r in body["results"]]
+        # only study 0 has Edema PRESENT and Pleural Effusion not PRESENT
+        assert ids == ["patient00000/study1"] and body["total_matches"] == 1
+        r = body["results"][0]
+        breakdown = r["score_breakdown"]
+        assert breakdown["constraints_satisfied"] is True and breakdown["label_match"] is True
+        assert breakdown["vector_rank"] == 1 and breakdown["report_rank"] == 1
+        # both legs rank it first: 0.5/11 + 1/11 with rrf_k 10 and weights (0.5, 1)
+        assert r["score"] == pytest.approx(1.5 / 11) and breakdown["rrf_score"] == r["score"]
+        assert r["image_id"] == state.study_image["patient00000/study1"]
+        assert _concepts_and_polarities(r) == [("Edema", "affirmed"),
+                                               ("Pleural Effusion", "negated")]
+        assert r["report_evidence"][1]["text"] == "No \npleural effusion."
+        assert body["warnings"] == []
+
+    def test_hybrid_small_allowed_set(self, client):
+        c, _, _ = client
+        body = _search(c, "cardiomegaly", "hybrid", top_k=10)
+        assert [r["study_id"] for r in body["results"]] == ["patient00003/study1"]
+        assert body["total_matches"] == 1
+
+    def test_hybrid_with_an_empty_allowed_set_returns_nothing(self, client):
+        c, _, _ = client
+        body = _search(c, "pneumothorax", "hybrid")
+        assert body["results"] == [] and body["total_matches"] == 0
+        assert "no ranking signal; results in label order" not in body["warnings"]
+
+    def test_hybrid_without_constraints_ranks_the_corpus(self, client):
+        c, _, _ = client
+        body = _search(c, "hiatal hernia", "hybrid")
+        assert body["total_matches"] is None and len(body["results"]) == 4
+        assert {r["study_id"] for r in body["results"]} == {
+            f"patient{i:05d}/study1" for i in range(4)}
+        breakdowns = [r["score_breakdown"] for r in body["results"]]
+        assert [b["vector_rank"] for b in breakdowns] == [1, 2, 3, 4]
+        assert all(b["report_rank"] is None and b["constraints_satisfied"] is None
+                   and b["label_match"] is None for b in breakdowns)   # no label filter ran
+        assert all(r["report_evidence"] == [] for r in body["results"])  # no report says it
+
+    def test_hybrid_free_text_quotes_the_matching_sentence(self, client):
+        c, _, _ = client
+        body = _search(c, "unchanged", "hybrid")
+        by_study = {r["study_id"]: r for r in body["results"]}
+        r = by_study["patient00002/study1"]
+        assert r["score_breakdown"]["report_rank"] == 1
+        assert r["report_evidence"] == [{"concept": None, "text": "1. Lines and tubes unchanged.",
+                                         "start": 22, "end": 51, "polarity": "mention"}]
+        assert by_study["patient00000/study1"]["report_evidence"] == []
+
+    def test_hybrid_vietnamese_exclude_only_uses_label_order(self, client):
+        c, _, _ = client
+        query = "không có tràn dịch màng phổi"
+        body = _search(c, query, "hybrid")
+        assert "no ranking signal; results in label order" in body["warnings"]
+        assert "report leg skipped: no English term to match" in body["warnings"]
+        assert "semantic query is empty; vector leg skipped" in body["warnings"]
+        assert body["results"][0]["score"] == 0.0 and body["total_matches"] == 3
+        label = _search(c, query, "label")
+        assert ([r["study_id"] for r in body["results"]]
+                == [r["study_id"] for r in label["results"]])
+
+    def test_qdrant_failure_is_503_in_hybrid_too(self, client):
+        c, state, _ = client
+
+        class Dying:
+            def query_points(self, *a, **k):
+                raise ConnectionError("qdrant went away")
+
+        state.client = Dying()
+        r = c.post("/api/v1/search", json={"query": "edema", "mode": "hybrid"})
+        assert r.status_code == 503 and "qdrant" in r.json()["detail"]["reason"]
+
+    def test_parallel_hybrid_requests_share_the_connection(self, client):
+        c, _, _ = client
+        with ThreadPoolExecutor(8) as ex:
+            responses = list(ex.map(
+                lambda _: c.post("/api/v1/search", json={"query": "edema", "mode": "hybrid"}),
+                range(40)))
+        assert [r.status_code for r in responses] == [200] * 40
+        # A sqlite error degrades to a warning with a 200, so the status alone proves nothing:
+        # every response must have used the shared connection successfully.
+        for body in (r.json() for r in responses):
+            assert not any(w.startswith("report leg failed") for w in body["warnings"])
+            assert "report index unavailable; no evidence" not in body["warnings"]
+            assert body["results"] and all(
+                r["score_breakdown"]["report_rank"] is not None and r["report_evidence"]
+                for r in body["results"])
+
+
+class TestEvidence:
+    def test_vector_mode_flags_violations_and_shows_negated_evidence(self, client):
+        c, _, _ = client
+        body = _search(c, "edema with no pleural effusion", "vector", top_k=8)
+        flags = {r["study_id"]: r["score_breakdown"]["constraints_satisfied"]
+                 for r in body["results"]}
+        assert flags["patient00001/study1"] is False and flags["patient00000/study1"] is True
+        by_study = {r["study_id"]: r for r in body["results"]}
+        assert _concepts_and_polarities(by_study["patient00000/study1"]) == [
+            ("Edema", "affirmed"), ("Pleural Effusion", "negated")]
+        # the violation shows in the quote: study 1's report affirms the effusion
+        assert _concepts_and_polarities(by_study["patient00001/study1"]) == [
+            ("Edema", "affirmed"), ("Pleural Effusion", "affirmed")]
+        assert all(r["score_breakdown"]["rrf_score"] is None for r in body["results"])
+
+    def test_vector_mode_without_constraints_has_no_flag(self, client):
+        c, _, _ = client
+        body = _search(c, "hiatal hernia", "vector")
+        assert all(r["score_breakdown"]["constraints_satisfied"] is None
+                   for r in body["results"])
+
+    def test_label_mode_now_carries_evidence(self, client):
+        c, _, _ = client
+        body = _search(c, "edema", "label")
+        by_study = {r["study_id"]: r["report_evidence"] for r in body["results"]}
+        assert by_study == {
+            "patient00000/study1": [{"concept": "Edema", "text": "Mild pulmonary edema.",
+                                     "start": 0, "end": 21, "polarity": "affirmed"}],
+            "patient00001/study1": [{"concept": "Edema", "polarity": "affirmed", "start": 0,
+                                     "end": 60, "text": "Moderate pulmonary edema and a small "
+                                                        "right pleural effusion."}]}
+
+    def test_report_index_disabled_degrades_hybrid(self, client_without_index):
+        c = client_without_index
+        assert c.get("/api/v1/health").json()["report_index"] == "disabled"
+        body = _search(c, "edema", "hybrid")
+        assert body["results"]
+        assert body["warnings"].count(
+            "report index unavailable; hybrid ran without the report leg") == 1
+        assert all(r["report_evidence"] == [] for r in body["results"])
+        assert body["warnings"].count("report index unavailable; no evidence") == 1
+        assert all(r["score_breakdown"]["report_rank"] is None for r in body["results"])
+        label = _search(c, "edema", "label")
+        assert label["total_matches"] == 2
+        assert label["warnings"] == ["report index unavailable; no evidence"]
+
+    def test_a_failing_report_index_never_fails_search(self, client):
+        c, state, _ = client
+        state.report_db.close()
+        body = _search(c, "edema", "hybrid")
+        assert len(body["results"]) == 2
+        assert any(w.startswith("report leg failed: ") for w in body["warnings"])
+        assert "report index unavailable; no evidence" in body["warnings"]
+
+
+class TestHealth:
+    def test_health_reports_the_report_index(self, client):
+        c, _, _ = client
+        h = c.get("/api/v1/health").json()
+        assert h["report_index"] == "ok" and h["report_studies"] == 4
+
+    def test_health_without_the_report_index_is_still_ready(self, client_without_index):
+        r = client_without_index.get("/api/v1/health")
+        assert r.status_code == 200 and r.json()["report_studies"] is None
 
 
 class TestImages:

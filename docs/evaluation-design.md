@@ -35,6 +35,19 @@ nhãn. Nó **có** áp bộ lọc view AP/PA, vì view là một metadata facet 
 kỳ vọng hoạt động ở mọi mode, không phải ràng buộc đang được đo. Tính công bằng
 của con số nDCG chủ đạo phụ thuộc vào phân biệt này.
 
+## Relevance graded và tập câu của Phase 5
+
+Với relevance nhị phân (study thỏa ràng buộc của gold), label-only và hybrid cùng có p@10 = 1,0,
+nên nó không trả lời được câu hỏi thứ hạng có ích hay không. Phase 5 thêm bậc cho nDCG@10:
+`grade = 1 + trung bình theo concept bị ràng buộc của số nguồn nhãn khẳng định đúng trạng thái yêu
+cầu`, trong đó exclude đếm `ABSENT` để "không có" nói rõ xếp trên im lặng. Đây là **proxy suy từ
+report**, cùng nguồn với trục 1 và 2, và thiên về study có findings (tối đa 4 nguồn so với 3); nó
+không thay trục 3.
+
+Phase 5 đo trên 200 câu của benchmark parser (`benchmarks/parser_queries_v1.jsonl`: dev 40 câu để
+tune fusion, heldout 160 câu), không phải tập 150/250 ở trên, vì tập đó chưa có. Phase 7 mở rộng
+lên tập 400 câu và thêm human review. Số đo: [retrieval-evaluation.md](retrieval-evaluation.md).
+
 ## Khi hybrid không thắng
 
 Báo cáo error analysis trung thực theo từng nhóm query, thay vì đổi test set

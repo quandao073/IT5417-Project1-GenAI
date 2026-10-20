@@ -11,11 +11,15 @@ from qdrant_client import QdrantClient, models
 
 from src.api import dependencies as deps
 from src.api.main import create_app
-from src.common.config import Settings
+from src.common.config import Settings, load_config
+from src.common.ids import qdrant_point_id
 from src.embeddings import embed, index
+from src.retrieval.hybrid import FusionParams
+from src.retrieval.report_index import build_report_index
 from tests.unit.fakes import FakeEncoder, FakeOllama
 from tests.unit.test_embed import images_frame
 from tests.unit.test_label_filter import labels_frame
+from tests.unit.test_report_index import ROWS, reports_frame
 
 BUILD = "20261011_chexpert25k_fake_v1"
 
@@ -41,13 +45,15 @@ def studies_frame(images: pl.DataFrame) -> pl.DataFrame:
 
 @pytest.fixture
 def world(tmp_path):
-    """Canonical dir, shards, an in-memory Qdrant with the collection, a manifest."""
+    """Canonical dir, shards, an in-memory Qdrant with the collection, a manifest and the
+    report index (ROWS are keyed by the same four studies)."""
     images = images_frame(8)
     canonical = tmp_path / "canonical"
     canonical.mkdir()
     images.write_parquet(canonical / "images.parquet")
     studies_frame(images).write_parquet(canonical / "studies.parquet")
     labels_frame(WORLD_LABELS).write_parquet(canonical / "labels.parquet")
+    reports_frame(ROWS).write_parquet(canonical / "reports.parquet")
     out = tmp_path / "embeddings" / BUILD
     embed.run_embed(images, FakeEncoder(), Path("root"), out, BUILD, shard_size=4,
                     batch_size=4, library_versions={}, git_commit=None)
@@ -59,6 +65,8 @@ def world(tmp_path):
     settings = Settings(_env_file=None, canonical_dir=canonical, image_root=tmp_path / "root",
                         fts_db_path=indexes / "x.sqlite", indexes_dir=indexes,
                         llm_disabled=True)
+    build_report_index(reports_frame(ROWS), settings.fts_db_path, concepts_sha256="x",
+                       git_commit=None)
     return settings, client, manifest
 
 
@@ -154,13 +162,45 @@ class TestBuildState:
         assert r.parser == "rule" and "LLM_API_KEY" in r.warnings[0]
 
 
+class TestReportIndex:
+    def test_ready_state_opens_the_report_index(self, world):
+        state = _state(world)
+        assert state.report_status == "ok" and state.report_reason is None
+        assert state.report_meta["studies"] == "4" and len(state.point_of_study) == 4
+        selected = state.images[state.study_image["patient00001/study1"]]
+        assert state.point_of_study["patient00001/study1"] == str(
+            qdrant_point_id(selected.path_to_image))
+        assert state.report_terms["Edema"][0] == "pulmonary edema"
+        assert state.evidence is not None
+
+    def test_missing_report_index_degrades_but_stays_ready(self, world):
+        world[0].fts_db_path.unlink()
+        state = _state(world)
+        assert state.ready and state.report_status == "disabled" and state.report_db is None
+        assert "not found" in state.report_reason
+
+    def test_meta_studies_mismatch_disables_report_index(self, world):
+        build_report_index(reports_frame(ROWS[:3]), world[0].fts_db_path, concepts_sha256="x",
+                           git_commit=None)
+        state = _state(world)
+        assert state.ready and state.report_status == "disabled" and state.report_db is None
+        assert "studies" in state.report_reason
+
+    def test_state_carries_fusion_params_from_config(self, world):
+        state = _state(world)
+        assert state.fusion == FusionParams.from_config(load_config("retrieval"))
+        assert state.fusion.rrf_k == 10 and state.fusion.vector_top_k == 100
+        assert state.report_min_token_chars == 3
+
+
 class TestHealth:
     def test_ready_health_reports_the_build(self, world):
         client = TestClient(create_app(_state(world)))
         body = client.get("/api/v1/health").json()
         assert body["status"] == "ready" and body["build_id"] == BUILD
         assert body["dimension"] == 4 and body["vectors"] == 8
-        assert body["report_index"] == "disabled" and body["llm"] == "disabled"
+        assert body["report_index"] == "ok" and body["report_studies"] == 4
+        assert body["llm"] == "disabled"
         assert body["studies"] == 4 and body["llm_model"] == "gpt-5-mini-2025-08-07"
 
     def test_not_ready_health_is_503_with_reason(self, world, tmp_path):

@@ -136,23 +136,28 @@ class QueryParser:
                 warnings.append(f"llm retried {attempts}x")
             return query, _ms(started), ""
 
+    def finalize(self, query: SearchQuery, text: str) -> SearchQuery:
+        """The rule parser's semantic_query for a query built elsewhere (the gold of the
+        evaluation): template when it includes a concept, else the raw text or ""."""
+        return self._finalize(query, "rule", clean(text), [])
+
     def _finalize(self, query: SearchQuery, parser: str, text: str,
                   warnings: list[str]) -> SearchQuery:
         """The semantic_query rule of spec 4.2, identical for both parsers."""
         if query.include:
             phrase = " and ".join(self.rule.en_first[c.concept] for c in query.include)
             semantic = self.template.format(phrase)
-        elif parser == "llm":
+        elif parser == "llm" and query.semantic_query:
             semantic = query.semantic_query          # the LLM's `findings` phrase
-            if not semantic:
-                warnings.append("no positive finding; vector leg skipped")
         elif query.language == "en":
             semantic = text[:SEMANTIC_MAX]
             what = "no positive finding" if query.exclude else "no known concept"
             warnings.append(f"{what}; vector leg encodes the raw text")
         else:
             semantic = ""
-            warnings.append("no concept recognised in a Vietnamese query; vector leg skipped")
+            what = ("no positive finding" if query.exclude
+                    else "no concept recognised in a Vietnamese query")
+            warnings.append(f"{what}; vector leg skipped")
         return query.model_copy(update={"semantic_query": semantic})
 
 

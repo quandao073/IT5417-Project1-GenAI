@@ -1,0 +1,281 @@
+"""Retrieval evaluation (spec 11): the label, vector and hybrid modes scored against the gold.
+
+Relevance always comes from the benchmark gold, never from the parse. A study is relevant when
+it passes the gold's label filter under one policy and its selected image is in the gold's
+views; its grade adds how many label sources assert what the gold asks (spec 11.3), so an
+explicit "no effusion" ranks above silence. Metrics are macro means over queries, None-aware
+(a query without exclude has no violation rate). Pure: `search` is injected (the pipeline in
+production, a fake in tests), so nothing here touches Qdrant or SQLite.
+"""
+
+from __future__ import annotations
+
+import heapq
+import time
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+
+import numpy as np
+import polars as pl
+
+from src.data.labels import CHEXPERT_LABELS
+from src.evaluation.parser_benchmark import GROUPS, BenchmarkQuery
+from src.evaluation.vector_baseline import percentiles
+from src.query.parser import QueryParser
+from src.query.schema import SearchQuery
+from src.retrieval import label_filter as lf
+from src.retrieval import pipeline
+from src.retrieval.evidence import wanted_polarity
+from src.retrieval.hybrid import FusionParams
+
+DEFAULT_POLICY = ("exclude_present", "EXCLUDE")
+NEGATION_POLICY = ("explicit_absence_required", "EXCLUDE")
+AGREEMENT_STATUSES = ("PRESENT", "UNCERTAIN", "ABSENT")   # axis 2 of AgreementMatrix.counts
+TOP_K = 10
+DEFAULT_FUSION = FusionParams(60, {"vector": 1.0, "report": 1.0}, 100, 100)
+GRID = [FusionParams(rrf_k, {"vector": vector, "report": report}, 100, 100)
+        for rrf_k in (10, 60, 200) for vector, report in ((1.0, 1.0), (1.0, 0.5), (0.5, 1.0))]
+
+
+@dataclass(frozen=True)
+class AgreementMatrix:
+    row_of: dict[str, int]
+    col_of: dict[str, int]
+    counts: np.ndarray        # int8 [n, 14, 3]: sources asserting PRESENT / UNCERTAIN / ABSENT
+
+
+@dataclass(frozen=True)
+class Relevance:
+    relevant: frozenset[str]
+    grade: dict[str, float]   # relevant studies only, each >= 1
+
+
+def build_agreement_matrix(labels_long: pl.DataFrame,
+                           study_ids: Sequence[str]) -> AgreementMatrix:
+    row_of = {s: i for i, s in enumerate(study_ids)}
+    col_of = {c: j for j, c in enumerate(CHEXPERT_LABELS)}
+    axis_of = {s: k for k, s in enumerate(AGREEMENT_STATUSES)}
+    # labels.parquet keys on (study, concept, source), so a row count is a source count.
+    tally = (labels_long
+             .filter(pl.col("study_id").is_in(list(row_of))
+                     & pl.col("status").is_in(AGREEMENT_STATUSES))
+             .group_by("study_id", "concept", "status").len())
+    counts = np.zeros((len(row_of), len(col_of), len(axis_of)), dtype=np.int8)
+    # Scattered by study id: polars guarantees no group order (the Phase 4 join lesson).
+    counts[[row_of[s] for s in tally["study_id"].to_list()],
+           [col_of[c] for c in tally["concept"].to_list()],
+           [axis_of[s] for s in tally["status"].to_list()]] = tally["len"].to_numpy()
+    return AgreementMatrix(row_of, col_of, counts)
+
+
+def relevance_for(gold: SearchQuery, matrix: lf.LabelMatrix, agreement: AgreementMatrix, *,
+                  views: Sequence[str], projection_of: Mapping[str, str], absence_policy: str,
+                  uncertainty_policy: str) -> Relevance:
+    mask = lf.filter_studies_by_labels(matrix, gold.include, gold.exclude,
+                                       absence_policy=absence_policy,
+                                       uncertainty_policy=uncertainty_policy)
+    studies = matrix.study_ids[mask].tolist()
+    if views:
+        wanted = set(views)
+        studies = [s for s in studies if projection_of[s] in wanted]
+    # What a source must assert to agree: include PRESENT/UNCERTAIN as asked, exclude ABSENT.
+    asked = ([(c.concept, 0 if c.status == "PRESENT" else 1) for c in gold.include]
+             + [(concept, 2) for concept in gold.exclude])
+    rows = np.array([agreement.row_of[s] for s in studies], dtype=np.intp)
+    cols = np.array([agreement.col_of[c] for c, _ in asked], dtype=np.intp)
+    axes = np.array([axis for _, axis in asked], dtype=np.intp)
+    grades = 1.0 + agreement.counts[rows[:, None], cols, axes].mean(axis=1)
+    return Relevance(frozenset(studies), dict(zip(studies, grades.tolist(), strict=True)))
+
+
+def _dcg(gains: Sequence[float]) -> float:
+    return float(sum(g / np.log2(i + 2) for i, g in enumerate(gains)))
+
+
+def ndcg_at(ranked: Sequence[str], grade: Mapping[str, float], k: int) -> float:
+    """DCG of the top k over the DCG of the k best grades of the whole relevant set."""
+    ideal = _dcg(heapq.nlargest(k, grade.values()))
+    return _dcg([grade.get(s, 0.0) for s in ranked[:k]]) / ideal if ideal else 0.0
+
+
+def query_metrics(ranked: Sequence[str], rel: Relevance, gold: SearchQuery,
+                  matrix: lf.LabelMatrix, *, k: int = TOP_K) -> dict:
+    """Precision divides by k even when fewer come back; the violation rate divides by what
+    came back and is None when nothing did or the gold excludes nothing."""
+    top = list(ranked[:k])
+    hit = [s in rel.relevant for s in top]
+    first = next((rank for rank, h in enumerate(hit, start=1) if h), None)
+    violation = None
+    if gold.exclude and top:
+        status = matrix.status[np.ix_([matrix.row_of[s] for s in top],
+                                      [matrix.col_of[c] for c in gold.exclude])]
+        violation = float((status == lf.STATUS_CODE["PRESENT"]).any(axis=1).mean())
+    return {"p@5": sum(hit[:5]) / 5, f"p@{k}": sum(hit) / k,
+            f"ndcg@{k}": ndcg_at(top, rel.grade, k),
+            f"ndcg_binary@{k}": ndcg_at(top, dict.fromkeys(rel.relevant, 1.0), k),
+            "mrr": 1 / first if first else 0.0,
+            f"exclude_violation@{k}": violation, f"returned@{k}": len(top) / k}
+
+
+def evidence_metrics(hits: Sequence[pipeline.Hit], query: SearchQuery) -> dict:
+    """Coverage over (hit, include concept) pairs; polarity match over the quotes found."""
+    wanted = wanted_polarity(query)
+    pairs = covered = 0
+    matched: list[bool] = []
+    for hit in hits:
+        for c in query.include:
+            quotes = [e.polarity for e in hit.evidence if e.concept == c.concept]
+            pairs += 1
+            covered += bool(quotes)
+            matched += [p == wanted[c.concept] for p in quotes]
+    return {"evidence_coverage": covered / pairs if pairs else None,
+            "evidence_polarity_match": sum(matched) / len(matched) if matched else None}
+
+
+def aggregate(rows: Sequence[dict]) -> dict:
+    """Macro mean of every key over the rows where it is not None, plus the row count."""
+    out: dict = {}
+    for key in dict.fromkeys(key for row in rows for key in row):
+        values = [row[key] for row in rows if row.get(key) is not None]
+        out[key] = sum(values) / len(values) if values else None
+    return {**out, "n": len(rows)}
+
+
+def _policy_name(policy: tuple[str, str]) -> str:
+    return "/".join(policy)
+
+
+def _query(parser: QueryParser, config: str,
+           row: BenchmarkQuery) -> tuple[SearchQuery, bool | None]:
+    """The query to run and whether its parse fell back (None for the gold, which is not parsed)."""
+    if config == "gold":
+        return parser.finalize(row.gold, row.query), None
+    result = parser.parse(row.query, mode=config)           # "rule" or "auto"
+    return result.query, result.fallback_used
+
+
+def _breakdowns(rows: Sequence[BenchmarkQuery], per_query: Mapping[str, dict]) -> dict:
+    languages = sorted({r.language for r in rows})
+    groups = [g for g in GROUPS if any(g in r.groups for r in rows)]
+    return {
+        "by_group": {g: aggregate([per_query[r.id] for r in rows if g in r.groups])
+                     for g in groups},
+        "by_language": {lang: aggregate([per_query[r.id] for r in rows if r.language == lang])
+                        for lang in languages},
+    }
+
+
+def evaluate_retrieval(rows: Sequence[BenchmarkQuery], *, state, parser: QueryParser,
+                       matrix: lf.LabelMatrix, agreement: AgreementMatrix,
+                       projection_of: Mapping[str, str], parsers: Sequence[str],
+                       modes: Sequence[str], policies: Sequence[tuple[str, str]],
+                       fusion: FusionParams | None = None,
+                       search=pipeline.run_search) -> dict:
+    """`policies[0]` runs on every row and fills `metrics`, the breakdowns and `per_query`;
+    later policies run on the negation rows only. `by_policy` reports every policy over the
+    negation rows. Latency is search wall time only (no parse), first row dropped."""
+    kept = [r for r in rows if r.gold.include or r.gold.exclude]
+    negation = [r for r in kept if "negation" in r.groups]
+
+    def scored(row: BenchmarkQuery, query: SearchQuery, mode: str,
+               policy: tuple[str, str]) -> tuple[dict, float]:
+        absence, uncertainty = policy
+        # Relevance is the gold's (spec 11.3); only the search runs the parse's views.
+        rel = relevance_for(row.gold, matrix, agreement, views=row.gold.views,
+                            projection_of=projection_of, absence_policy=absence,
+                            uncertainty_policy=uncertainty)
+        started = time.perf_counter()
+        outcome = search(state, query, mode, top_k=TOP_K, views=query.views,
+                         absence_policy=absence, uncertainty_policy=uncertainty, fusion=fusion)
+        ms = (time.perf_counter() - started) * 1000
+        # Not deduplicated: the corpus holds one image per study (WORKLOG Phase 1).
+        ranked = [h.study_id for h in outcome.hits]
+        return {**query_metrics(ranked, rel, row.gold, matrix),
+                **evidence_metrics(outcome.hits, query)}, ms
+
+    main, *others = policies
+    report: dict = {"n": len(kept), "skipped_no_gold": len(rows) - len(kept),
+                    "policies": [_policy_name(p) for p in policies], "parsers": {}}
+    for config in parsers:
+        parsed = {r.id: _query(parser, config, r) for r in kept}
+        queries = {i: query for i, (query, _) in parsed.items()}
+        fallbacks = [used for _, used in parsed.values() if used is not None]
+        entries: dict = {}
+        for mode in modes:
+            per_query: dict[str, dict] = {}
+            times: list[float] = []
+            for row in kept:
+                per_query[row.id], ms = scored(row, queries[row.id], mode, main)
+                times.append(ms)
+            by_policy = {_policy_name(main): aggregate([per_query[r.id] for r in negation])}
+            for policy in others:
+                by_policy[_policy_name(policy)] = aggregate(
+                    [scored(r, queries[r.id], mode, policy)[0] for r in negation])
+            entries[mode] = {"metrics": aggregate(list(per_query.values())),
+                             **_breakdowns(kept, per_query), "by_policy": by_policy,
+                             "latency_ms": percentiles(times[1:]) if len(times) > 1 else None,
+                             "per_query": per_query}
+        report["parsers"][config] = {
+            "fallback_rate": sum(fallbacks) / len(fallbacks) if fallbacks else None,
+            "modes": entries}
+    return report
+
+
+def _is(config: Mapping, params: FusionParams) -> bool:
+    return (config["rrf_k"] == params.rrf_k
+            and dict(config["leg_weights"]) == dict(params.leg_weights))
+
+
+def choose(configs: Sequence[dict], default: FusionParams, *,
+           min_gain: float = 0.005) -> FusionParams:
+    """The best mean ndcg@10 (first on ties), unless it beats the default by less than
+    `min_gain`: 40 dev queries are too few to trust a smaller gain (spec 11.5)."""
+    baseline = next(c["ndcg@10"] for c in configs if _is(c, default))
+    best = max(configs, key=lambda c: c["ndcg@10"])
+    if best["ndcg@10"] - baseline < min_gain:
+        return default
+    return FusionParams(best["rrf_k"], dict(best["leg_weights"]), default.vector_top_k,
+                        default.report_top_k)
+
+
+def grid_search(rows: Sequence[BenchmarkQuery], *, state, parser: QueryParser,
+                matrix: lf.LabelMatrix, agreement: AgreementMatrix,
+                projection_of: Mapping[str, str], search=pipeline.run_search) -> dict:
+    """Hybrid on gold queries at the default policy, once per GRID entry. Dev only: the
+    heldout split never runs a grid (spec 11.5)."""
+    configs = []
+    for params in GRID:
+        report = evaluate_retrieval(rows, state=state, parser=parser, matrix=matrix,
+                                    agreement=agreement, projection_of=projection_of,
+                                    parsers=["gold"], modes=["hybrid"],
+                                    policies=[DEFAULT_POLICY], fusion=params, search=search)
+        metrics = report["parsers"]["gold"]["modes"]["hybrid"]["metrics"]
+        configs.append({"rrf_k": params.rrf_k, "leg_weights": dict(params.leg_weights),
+                        "ndcg@10": metrics["ndcg@10"], "p@10": metrics["p@10"]})
+    chosen = choose(configs, DEFAULT_FUSION)
+    return {"configs": configs, "chosen": next(c for c in configs if _is(c, chosen)),
+            "default_ndcg": next(c["ndcg@10"] for c in configs if _is(c, DEFAULT_FUSION))}
+
+
+def _check(value: float | None, threshold: float) -> dict:
+    return {"value": value, "threshold": threshold,
+            "passed": None if value is None else value >= threshold}
+
+
+def verdict(report: dict, thresholds: dict) -> dict:
+    """Spec 11.4, from the `gold` parser at the main policy. A check without a value (vector
+    ndcg 0, no single-concept query) is None, and the verdict passes only when all three do."""
+    modes = report["parsers"]["gold"]["modes"]
+    hybrid = modes["hybrid"]
+    vector_ndcg = modes["vector"]["metrics"]["ndcg@10"]
+    gain = ((hybrid["metrics"]["ndcg@10"] - vector_ndcg) / vector_ndcg
+            if vector_ndcg else None)
+    out = {
+        "single_p10": _check(hybrid["by_group"].get("single", {}).get("p@10"),
+                             thresholds["simple_label_precision10_min"]),
+        "constraint_satisfaction": _check(hybrid["metrics"]["p@10"],
+                                          thresholds["constraint_satisfaction_min"]),
+        "hybrid_gain_over_vector": _check(gain, thresholds["hybrid_ndcg10_relative_gain_min"]),
+    }
+    out["passed"] = all(check["passed"] is True for check in out.values())
+    return out

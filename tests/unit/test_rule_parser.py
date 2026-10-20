@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+
 import pytest
 
 from src.common.config import load_config
@@ -164,3 +166,24 @@ class TestViewsAndLanguage:
 
     def test_semantic_query_is_left_empty_for_the_parser_layer(self, rp):
         assert rp.parse("cardiomegaly").semantic_query == ""
+
+
+class TestBlockedPhrases:
+    def test_phu_inside_phu_hop_is_not_edema(self, rp):
+        q = rp.parse("tìm ca phù hợp viêm phổi")
+        assert [c.concept for c in q.include] == ["Pneumonia"] and q.exclude == []
+
+    def test_phu_phoi_before_phu_hop_still_matches(self, rp):
+        q = rp.parse("phù phổi phù hợp với suy tim")
+        assert [c.concept for c in q.include] == ["Edema"]
+
+    def test_blocked_mask_leaves_a_form_that_only_touches_it_alone(self):
+        forms = [(("phù",), "Edema", "vi")]
+        tokens = tokenize("phù hợp phù")
+        assert [h.start for h in match(tokens, forms, blocked=[("phù", "hợp")])] == [2]
+        assert [h.start for h in match(tokens, forms)] == [0, 2]
+
+    def test_config_without_blocked_phrases_still_parses(self):
+        cfg = copy.deepcopy(load_config("concepts"))
+        del cfg["blocked_phrases"]
+        assert RuleParser(cfg).parse("phù").include[0].concept == "Edema"

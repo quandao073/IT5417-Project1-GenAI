@@ -276,7 +276,8 @@ văn lấy làm điểm xuất phát.
   Phép kiểm có thông tin là schema-valid của `llm` hoặc `1 − fallback_rate`; Phase 7 dùng chúng.
 - **Rule parser không tách từ tiếng Việt** (spec §12, WORKLOG T20). Dạng trần "phù" (Edema) khớp
   trong "phù hợp": "tìm ca phù hợp viêm phổi" parse thành Edema + Pneumonia PRESENT. Không câu
-  benchmark nào chứa "phù hợp"; Phase 5 chặn hoặc bỏ dạng trần này.
+  benchmark nào chứa "phù hợp". Phase 5 đã chặn cụm này bằng `concepts.yaml:blocked_phrases`
+  (`vi: [phù hợp]`); rule parser vẫn ra cùng 200/200 `SearchQuery` trên benchmark (WORKLOG T20).
 
 ## Tái lập
 

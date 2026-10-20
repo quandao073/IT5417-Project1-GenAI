@@ -52,3 +52,27 @@ def test_the_parser_config_keys_exist():
     for key in ("prompt_file", "num_predict", "seed", "keep_alive", "cache_size", "max_retries"):
         assert key in llm, key
     assert isinstance(load_config("retrieval")["results"]["label_order_seed"], int)
+
+
+FTS_SYNTAX = set('"*():^')
+
+
+def test_every_concept_has_lowercase_report_terms_without_fts_syntax(cfg):
+    for concept, forms in cfg["concepts"].items():
+        assert forms["report"], concept
+        for term in forms["report"]:
+            assert term == term.lower() == " ".join(term.split()), (concept, term)
+            assert not set(term) & FTS_SYNTAX, (concept, term)
+
+
+def test_report_terms_are_unique_across_concepts(cfg):
+    # A term may repeat the `en` list of its own concept; two concepts may not share one.
+    owner: dict[str, str] = {}
+    for concept, forms in cfg["concepts"].items():
+        for term in forms["report"]:
+            assert owner.setdefault(term, concept) == concept, (term, owner[term], concept)
+
+
+def test_blocked_phrases_have_both_languages(cfg):
+    assert cfg["blocked_phrases"]["vi"] == ["phù hợp"]
+    assert cfg["blocked_phrases"]["en"] == []
