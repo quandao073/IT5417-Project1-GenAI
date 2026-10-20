@@ -423,7 +423,8 @@ def _cmd_eval_parser(args: argparse.Namespace) -> int:
     report = pe.evaluate_benchmark(rows, parser, args.parsers, thresholds)
     report["benchmark"] = {"file": args.benchmark, "split": args.split,
                            "sha256": hashlib.sha256(Path(args.benchmark).read_bytes()).hexdigest()}
-    report["llm"] = {"status": status, "model": Settings().llm_model,
+    report["llm"] = {"status": status, "provider": Settings().llm_provider,
+                     "model": Settings().llm_model,
                      "ollama_version": parser.llm.version() if parser.llm else None,
                      "prompt_sha256": parser.prompt_sha256}
     _merge_json(Path(args.out), "eval", report)

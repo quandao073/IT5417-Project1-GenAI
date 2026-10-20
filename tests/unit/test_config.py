@@ -111,6 +111,42 @@ class TestSettings:
         monkeypatch.setenv("BUILD_ID", "")
         assert config.Settings(_env_file=None).build_id is None
 
+    def test_openai_is_the_default_provider(self):
+        """WORKLOG D22: gpt-5-mini, picked on dev by a pre-set rule and PASS on heldout."""
+        settings = config.Settings(_env_file=None)
+        assert settings.llm_provider == "openai"
+        assert settings.llm_base_url == "https://api.openai.com/v1"
+        assert settings.llm_model == "gpt-5-mini-2025-08-07"
+
+    def test_reads_the_key_from_openai_api_key_too(self, monkeypatch):
+        """The conventional name works, so a key in .env is picked up as-is."""
+        monkeypatch.delenv("LLM_API_KEY", raising=False)
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-from-openai-name")
+        key = config.Settings(_env_file=None).llm_api_key
+        assert key is not None and key.get_secret_value() == "sk-from-openai-name"
+
+    def test_llm_api_key_wins_over_openai_api_key(self, monkeypatch):
+        monkeypatch.setenv("LLM_API_KEY", "sk-explicit")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-conventional")
+        assert config.Settings(_env_file=None).llm_api_key.get_secret_value() == "sk-explicit"
+
+    def test_reads_a_hosted_provider_and_hides_its_key(self, monkeypatch):
+        monkeypatch.setenv("LLM_PROVIDER", "openai")
+        monkeypatch.setenv("LLM_API_KEY", "sk-secret-value")
+        settings = config.Settings(_env_file=None)
+        assert settings.llm_provider == "openai"
+        assert settings.llm_api_key.get_secret_value() == "sk-secret-value"
+        assert "sk-secret-value" not in repr(settings)
+
+    def test_treats_a_blank_api_key_as_unset(self, monkeypatch):
+        monkeypatch.setenv("LLM_API_KEY", "")
+        assert config.Settings(_env_file=None).llm_api_key is None
+
+    def test_rejects_an_unknown_provider(self, monkeypatch):
+        monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+        with pytest.raises(ValueError):
+            config.Settings(_env_file=None)
+
 
 def test_every_setting_is_documented_in_the_env_example():
     with open(".env.example", encoding="utf-8") as handle:

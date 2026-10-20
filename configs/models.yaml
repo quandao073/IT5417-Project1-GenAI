@@ -57,11 +57,16 @@ text_encoder:
   device: cpu
 
 llm:
-  provider: ollama
-  # A 7B q4 model needs roughly 8-20 s on CPU for a ~150-token JSON completion,
-  # which alone exhausts the 12 s end-to-end budget. 3B is the default; 7B stays
-  # available as a quality arm in the parser ablation.
-  model: qwen2.5:3b-instruct-q4_K_M
+  # Documentary: the running values come from Settings / .env (LLM_PROVIDER, LLM_MODEL).
+  # OpenAI gpt-5-mini since 2026-10-20 (WORKLOG D22): the cheapest model within 0.02 F1
+  # of the best in a dev bake-off of seven OpenAI models, then PASS on heldout with the
+  # fewest errors. It rejects temperature 0, yet parsed 40/40 dev queries identically
+  # twice; gpt-4.1-mini (39/40) and gpt-4o-mini take temperature 0 and repeated less,
+  # so temperature 0 buys no reproducibility here. Nothing is guaranteed deterministic.
+  # qwen2.5:3b-instruct-q4_K_M via Ollama remains the offline option; it failed every
+  # heldout threshold (D5, P10).
+  provider: openai
+  model: gpt-5-mini-2025-08-07
   base_url_env: LLM_BASE_URL
   temperature: 0.0
   timeout_seconds: 20
@@ -78,3 +83,14 @@ llm:
   # Ollama unloads after 5 min by default; a pause in a demo must not pay the reload.
   keep_alive: 30m
   cache_size: 1024
+  # Extra fields for an OpenAI-compatible request, by exact model id; anything not
+  # listed gets `default`. Model families disagree (measured 2026-10-20): gpt-5-nano
+  # and gpt-5-mini reject temperature 0 and need reasoning_effort=minimal to stop
+  # spending up to 1,536 reasoning tokens per parse; gpt-5.4-* take temperature 0
+  # and reasoning_effort=none but reject minimal.
+  hosted_request:
+    default: {temperature: 0}
+    gpt-5-nano-2025-08-07: {reasoning_effort: minimal}
+    gpt-5-mini-2025-08-07: {reasoning_effort: minimal}
+    gpt-5.4-nano-2026-03-17: {temperature: 0, reasoning_effort: none}
+    gpt-5.4-mini-2026-03-17: {temperature: 0, reasoning_effort: none}

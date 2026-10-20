@@ -69,10 +69,21 @@ def build_query_parser(settings: Settings, *, llm_factory=None,
     rule = RuleParser(concepts)
     if settings.llm_disabled:
         return QueryParser(rule, template=template), "disabled"
-    client = (llm_factory or llm.OllamaClient)(
-        settings.llm_base_url, settings.llm_model, settings.llm_timeout_seconds,
-        num_predict=llm_cfg["num_predict"], seed=llm_cfg["seed"],
-        keep_alive=llm_cfg["keep_alive"])
+    common = {"num_predict": llm_cfg["num_predict"], "seed": llm_cfg["seed"],
+              "keep_alive": llm_cfg["keep_alive"]}
+    if llm_factory is not None:
+        client = llm_factory(settings.llm_base_url, settings.llm_model,
+                             settings.llm_timeout_seconds, **common)
+    else:
+        key = settings.llm_api_key.get_secret_value() if settings.llm_api_key else None
+        try:
+            client = llm.make_client(settings.llm_provider, settings.llm_base_url,
+                                     settings.llm_model, settings.llm_timeout_seconds,
+                                     api_key=key, **common,
+                                     options=llm.request_options(llm_cfg, settings.llm_model))
+        except ValueError as exc:   # a missing key is a slip, not a reason to refuse search
+            warning = f"llm misconfigured: {exc}; rule parser only"
+            return QueryParser(rule, template=template, startup_warning=warning), "unreachable"
     status = client.probe()
     if status != "ok":
         return QueryParser(rule, template=template,

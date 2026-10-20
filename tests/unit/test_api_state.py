@@ -144,6 +144,15 @@ class TestBuildState:
         assert state.ready and state.llm_status == "ok" and state.parser.llm is fake
         assert "Request:" in state.parser.system_prompt
 
+    def test_a_hosted_provider_without_a_key_degrades_to_the_rule_parser(self, world):
+        """A missing LLM_API_KEY is a configuration slip, not a reason to refuse search."""
+        settings = world[0].model_copy(update={"llm_disabled": False, "llm_provider": "openai",
+                                               "llm_api_key": None})
+        state = _state(world, settings=settings)
+        assert state.ready and state.llm_status == "unreachable"
+        r = state.parser.parse("cardiomegaly")
+        assert r.parser == "rule" and "LLM_API_KEY" in r.warnings[0]
+
 
 class TestHealth:
     def test_ready_health_reports_the_build(self, world):
@@ -152,7 +161,7 @@ class TestHealth:
         assert body["status"] == "ready" and body["build_id"] == BUILD
         assert body["dimension"] == 4 and body["vectors"] == 8
         assert body["report_index"] == "disabled" and body["llm"] == "disabled"
-        assert body["studies"] == 4 and body["llm_model"] == "qwen2.5:3b-instruct-q4_K_M"
+        assert body["studies"] == 4 and body["llm_model"] == "gpt-5-mini-2025-08-07"
 
     def test_not_ready_health_is_503_with_reason(self, world, tmp_path):
         settings, _, _ = world
