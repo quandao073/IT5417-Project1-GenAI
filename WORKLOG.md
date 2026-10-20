@@ -21,14 +21,14 @@ Ba mục đó đủ để không phá vỡ thứ gì. Các mục còn lại tra 
 
 > Cập nhật lại mục này mỗi lần ghi log. Mục này mà cũ thì tệ hơn là không có.
 
-**Cập nhật lần cuối:** 2026-10-15 (sau đợt sửa review cuối Phase 4)
+**Cập nhật lần cuối:** 2026-10-20 (chuyển parser mặc định sang OpenAI gpt-5-mini, D22)
 
 | | |
 |---|---|
-| Đã xong | Part A · Phase 0a · Phase 1 (canonical corpus 25.000 study) · Phase 2 (model gate: BiomedCLIP) · Phase 3 (vector baseline) · **Phase 4 (parser + label mode)** — heldout parser **FAIL** (xem Phase 4 trong *Sự thật đã đo*) |
+| Đã xong | Part A · Phase 0a · Phase 1 (canonical corpus 25.000 study) · Phase 2 (model gate: BiomedCLIP) · Phase 3 (vector baseline) · **Phase 4 (parser + label mode)** — parser mặc định OpenAI gpt-5-mini **PASS** heldout (D22, Phase 4c); qwen 3B cũ FAIL (Phase 4) |
 | Đang làm | — |
 | Tiếp theo | **Phase 5 (report FTS + hybrid)**, hoặc Phase 0b song song |
-| Chặn Phase 5 | không có. P4–P9 đang mở nhưng không chặn |
+| Chặn Phase 5 | không có. P10 đã chốt thành D22 (OpenAI gpt-5-mini); P4–P6, P8–P9 còn mở nhưng không chặn |
 | Chặn Phase 0b | `pnpm` chưa cài trên máy — xem T5 |
 
 Mã thật hiện có: `src/common/{ids,config}.py`,
@@ -63,8 +63,8 @@ Số đo: `docs/parser-evaluation.md`.
 Lệnh kiểm tra sau mỗi thay đổi:
 
 ```bash
-uv run pytest -q                 # 629 tests (4 `model` + 1 `integration` + 3 `llm` bị bỏ chọn mặc định)
-uv run pytest -m llm             # 3 test parse thật qua Ollama: 2 passed, 1 xfailed (thứ tự include và language của use case 6, T17, P7)
+uv run pytest -q                 # 662 tests (4 `model` + 1 `integration` + 3 `llm` bị bỏ chọn mặc định)
+uv run pytest -m llm             # 3 test parse thật qua LLM đang cấu hình (mặc định OpenAI, đọc .env): 2 passed, 1 xpassed
 uv run pytest -m model           # 4 smoke test adapter thật, cần weights đã tải
 uv run pytest -m integration     # đầu-cuối 50 ảnh, cần Qdrant Docker (`docker compose up -d qdrant`)
 uv run cxr validate-indexes      # 6 x PASS, cần Qdrant Docker
@@ -275,6 +275,86 @@ của 25.000 study. Nhãn resolve theo G1, trong ngoặc là `CHEXPERT_V1` riên
 mọi mention "sternotomy wire", "pleural plaque/calcification" và "pulmonary congestion": n lệch tối
 đa 2 study (vd pulmonary congestion 13 so với 11), và chiều của nhãn giữ nguyên.
 
+### Phase 4b — parser với LLM hosted (đo 2026-10-20)
+
+**Cách đo:** `OpenAICompatClient` qua endpoint OpenAI-compatible của Gemini, model
+`gemini-2.5-flash` (bản ổn định, không dùng alias `-latest`), **cùng prompt `c975e4ca…`, cùng
+benchmark `8d19c619…`**, không chỉnh gì cho Gemini. Lệnh: `LLM_PROVIDER=openai
+LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai LLM_MODEL=gemini-2.5-flash
+LLM_API_KEY=… uv run cxr eval-parser --split heldout --parsers rule llm --out
+artifacts/metrics/parser_eval_heldout_gemini-2.5-flash.json`. Chạy một lần.
+
+| Parser, heldout 160 câu | Concept F1 | Status F1 | View F1 | Exact | p50 / p95 |
+|---|---:|---:|---:|---:|---:|
+| `gemini-2.5-flash` | **0,994** | **0,980** | **0,947** | **0,975** | 1.879 / 2.938 ms |
+| `qwen2.5:3b` (2026-10-14) | 0,880 | 0,718 | 0,890 | 0,650 | 756 / 1.366 ms |
+| rule | 0,793 | 0,862 | 0,945 | 0,606 | 0,1 / 0,2 ms |
+
+Gemini qua cả ba ngưỡng macro-F1 0,90. Verdict vẫn ghi FAIL vì `schema_valid` 0,988 < 0,99, nhưng
+2 câu "invalid" (vi-035, vi-058) đều là `ReadTimeout` 20 s của API, **0 output sai định dạng**; ở mode
+`auto` chúng rơi về rule parser. Hai lỗi thật: en-045 gắn Lung Opacity `UNCERTAIN` thay vì `PRESENT`
+("opacity that may represent pneumonia", phạm vi của hedge), vi-079 "tư thế trước-sau" (AP) ra PA.
+Theo ngôn ngữ: EN exact 0,988, VI 0,963; view F1 VI 0,89.
+
+**18 câu chỉ có điều kiện dương** (script thử, không phải benchmark; mode vector top 10/50, đúng =
+nhãn resolve PRESENT, nền = `total_matches` mode label / 25.000): qwen 3B parse sai **8/18**, trong đó
+"pneumothorax", "Show pleural effusion", "atelectasis" bị đưa vào **exclude** (đảo nghĩa) và "tràn khí
+màng phổi" thành Pleural Effusion; rule parser đúng 18/18; Gemini đúng cả 5 câu đã thử lại. Với parse
+đúng (rule), vector P@10 trung bình **46%** so với nền 26% (≈1,8×); tốt nhất "tim to + phù phổi" 60%
+so với 13,7%; tràn khí 20% so với 14,4%; "pleural thickening" 0% (dưới nền). Cosine của mọi top 10
+nằm trong 0,44–0,51, hạng 1 hơn hạng 10 trung bình 0,012.
+
+### Phase 4c — chọn model OpenAI cho parser (đo 2026-10-20)
+
+**Luật chọn viết trước khi có số** (`scratchpad/bakeoff.py`, kết quả ở
+`artifacts/metrics/llm_bakeoff_dev.json`): đo trên **dev** (40 câu), không đụng heldout; gate cứng 0
+output sai định dạng và cả ba macro-F1 ≥ 0,90; chi phí = token đo được × giá niêm yết
+(developers.openai.com/api/docs/pricing, đọc 2026-10-20); chọn model rẻ nhất qua gate, trừ khi F1 trung
+bình kém model tốt nhất > 0,02 thì chọn model rẻ nhất trong dải 0,02. Snapshot có ngày, không dùng alias.
+Cùng prompt `c975e4ca…`, cùng benchmark `8d19c619…`.
+
+| Model (dev, 40 câu) | Concept / Status / View | $ / 1.000 câu | Cache | p50 | Gate |
+|---|---|---:|---:|---:|---|
+| gpt-5-nano-2025-08-07 | 0,973 / **0,820** / 0,900 | 0,056 | 82% | 1,3 s | FAIL |
+| gpt-4.1-nano-2025-04-14 | 0,992 / 0,913 / 0,900 | 0,098 | 91% | 0,8 s | PASS, ngoài dải 0,02 |
+| **gpt-5-mini-2025-08-07** | 0,992 / 0,996 / 1,000 | **0,220** | 91% | 1,2 s | **PASS, chọn** |
+| gpt-4o-mini-2024-07-18 | 1,000 / 1,000 / 1,000 | 0,228 | 94% | 1,3 s | PASS |
+| gpt-5.4-nano-2026-03-17 | 1,000 / 1,000 / 1,000 | 0,267 | 66% | 1,2 s | PASS |
+| gpt-4.1-mini-2025-04-14 | 1,000 / 1,000 / 1,000 | 0,423 | 87% | 1,1 s | PASS |
+| gpt-5.4-mini-2026-03-17 | 1,000 / 1,000 / 1,000 | 0,503 | 94% | 1,4 s | PASS |
+
+Prompt ~2.590 token mỗi câu, nên giá **input có cache** quyết định chi phí; tỉ lệ cache dao động 66–94%
+giữa các lần nên hạng chi phí của những model sát nhau (gpt-5-mini 0,220 so với gpt-4o-mini 0,228) nằm
+trong nhiễu. Với tham số trong `models.yaml:llm.hosted_request` mọi model đều 0 token suy luận.
+
+**Heldout, chạy một lần** với model được chọn (`artifacts/metrics/parser_eval_heldout_gpt-5-mini.json`):
+concept **0,995**, status **0,988**, view **0,947**, exact **0,981**, schema-valid **1,000**, retry 0,
+fallback 0, p50 / p95 **1.305 / 1.814 ms** → **PASS cả verdict**, parser đầu tiên của dự án qua được.
+EN 1,000 trên mọi chỉ số; VI 0,990 / 0,976 / 0,890, exact 0,963. Ba lỗi đều VI: vi-044 "vôi hóa màng
+phổi" không ra concept nào, vi-052 "có thể thấy rõ gãy xương đòn" thành `UNCERTAIN` (câu bẫy cấu trúc
+của D21), vi-079 "tư thế trước-sau" thành PA (Gemini cũng sai đúng câu này). Đầu-cuối qua API: 18/18 câu
+dương parse đúng; use case 6 ra Cardiomegaly + Edema, exclude Pleural Effusion, `vi`, mode label 849 ca,
+0/10 vi phạm; `pytest -m llm` 2 passed, 1 xpassed.
+
+**Hai model khác được người dùng đề xuất sau đó, cũng chạy heldout một lần** (vì muốn `temperature: 0`
+để tái lập được), rồi đo lặp lại: parse 40 câu dev hai lần, gọi thẳng `QueryParser._parse` để bỏ qua
+cache, so toàn bộ output (`scratchpad/repeat.py`).
+
+| Heldout 160 câu | Concept / Status / View | Exact | Sai | Verdict | Lặp lại dev | $ / 1k | p50 |
+|---|---|---:|---:|---|---:|---:|---:|
+| **gpt-5-mini** (temp mặc định) | 0,995 / 0,988 / 0,947 | 0,981 | 3 | PASS | **40/40** | **0,220** | 1,31 s |
+| gpt-4.1-mini (temp 0) | 0,986 / 0,980 / 0,947 | 0,956 | 7 | PASS | 39/40 | 0,423 | 1,07 s |
+| gpt-4o-mini (temp 0) | 0,965 / 0,938 / **0,869** | 0,881 | 19 | **FAIL** | không đo đủ¹ | 0,228 | 1,32 s |
+
+¹ Ba lần parse cùng câu use case 6 ra `views` `[]`, `AP`, `AP`. gpt-4o-mini đọc "frontal"/"thẳng" thành
+AP (trượt cả 4 câu kiểu đó, "Show frontal chest x-rays" ra AP 3/3 lần); gpt-4.1-mini và gpt-5-mini thì
+không. File: `artifacts/metrics/parser_eval_heldout_gpt-4o-mini.json`, `..._gpt-4.1-mini.json`.
+
+**Lưu ý phương pháp:** heldout parser giờ đã được xem cho bốn model (Gemini, gpt-5-mini, gpt-4o-mini,
+gpt-4.1-mini). gpt-5-mini là lựa chọn của luật viết trước trên dev và người dùng giữ nó sau khi thấy cả ba
+số heldout, nên con số 0,995 / 0,988 / 0,947 nên coi là hơi lạc quan. Phase 7 đo lại parser trên bộ
+truy vấn chưa ai nhìn.
+
 ---
 
 ## Quyết định đang có hiệu lực
@@ -296,6 +376,7 @@ mọi mention "sternotomy wire", "pleural plaque/calcification" và "pulmonary c
 | D7 | **Qdrant point id = `uuid5(NAMESPACE_URL, normalized_path)`**, không phải `image_id`. | — | Qdrant chỉ nhận uint64 hoặc UUID; sha256 hex64 không phải cả hai. Cắt xuống 64 bit thì mời câu hỏi birthday-collision vô ích |
 | D9 | **`absence_policy` mặc định là `exclude_present`**, không phải `explicit_absence_required`. Cái sau vẫn phơi ra UI và báo cáo song song trong evaluation. | §11.3 | Đo trên corpus thật: median `ABSENT` chỉ 5,0%, bốn concept dưới 2% (Pleural Other 0,9%, Atelectasis 1,3%, Lung Lesion 1,9%, No Finding 0,7%). Bắt buộc `ABSENT` sẽ làm recall sụp với phần lớn concept |
 | D10 | **`CHEXBERT_FINDINGS` không phát assertion cho study thiếu findings section.** Nguồn không có đầu vào thì không có assertion, nên không đóng góp dòng nào vào `labels.parquet`. | — | Xem T11 |
+| D22 | **Parser mặc định là OpenAI `gpt-5-mini-2025-08-07`** qua `OpenAICompatClient` (`LLM_PROVIDER=openai`, key từ `OPENAI_API_KEY` hoặc `LLM_API_KEY` trong `.env`). Rule parser vẫn là dự phòng khi LLM lỗi/timeout/thiếu key; Ollama qwen 3B còn dùng được bằng `LLM_PROVIDER=ollama`. Tham số riêng theo model nằm ở `models.yaml:llm.hosted_request`. | D5 (qwen 3B local), §1 ("chạy local") | Người dùng chọn chuyển sang OpenAI (2026-10-20). Model do bake-off trên dev chọn theo luật viết trước (Phase 4c); heldout PASS cả verdict, còn qwen 3B trượt cả ba ngưỡng. Đổi lại: cần internet và key, ~0,22 USD / 1.000 câu, truy vấn người dùng đi ra máy chủ OpenAI (không có dữ liệu bệnh nhân trong truy vấn), và model chạy ở temperature mặc định (T23). Người dùng đã thử chuyển sang gpt-4o-mini rồi gpt-4.1-mini để có `temperature: 0`; cả hai được đo heldout và lặp lại, cả hai kém hơn và cũng không tất định hơn (Phase 4c), nên giữ gpt-5-mini |
 | D8 | **Không có disk guard.** §9.2, task "Viết disk guard" của Phase 1 và mục disk guard trong §19 đều **không thực hiện**. | §9.2, §17, §19 | 191 GB trống, V1 thêm <1 GB, `serve_originals` nghĩa là không stage nào ghi ảnh. §9.2 viết cho kịch bản materialize ảnh đã xử lý — kịch bản đó đã bị loại. → `docs/adr/0003` |
 | D11 | **Image encoder là BiomedCLIP** (`microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224` @ `9f341de`), pin trong `configs/models.yaml`. | `models.yaml` (`selected: null`) | Luật gate cố định trước khi chạy: hard gate rồi macro strict AUROC; hai model đầu cách < 0,02 thì chọn rẻ hơn. BiomedCLIP 0,636 vs XrayCLIP 0,616: hiệu 0,0198, dưới ngưỡng chỉ 0,0002 → hòa, BiomedCLIP nhanh hơn 6,9× nên thắng. MIT (thay vì CC-BY-NC) là lợi ích đi kèm; bước license không được xét. CheXzero trượt (0,461). → `docs/model-decision.md` |
 | D12 | **200 ca nhãn bác sĩ (`valid/`, rank 0–199) không bao giờ tham gia chọn model hay tune.** Spike lấy rank 200–1199; `select_sample` raise nếu chạm ca `valid/`. | cách hiểu mặc định của §17 | Đó là ground truth người duy nhất của test. Chọn model là tune; dùng chúng ở đây thì con số test cuối cùng không còn sạch |
@@ -378,6 +459,11 @@ Kế hoạch không quyết những điểm này, nhưng chúng âm thầm quy�
 | T17 | **3B với prompt thô thì hỏng; với few-shot thì chép mẫu.** Probe thiết kế (spec §1): điền `views` cả AP lẫn PA, gắn `UNCERTAIN` cho finding thường, câu VI sai gần hết. Prompt 5 ví dụ ban đầu: dev status F1 0,606. Khi thêm ví dụ, model gắn concept với list nó xuất hiện trong ví dụ ("không có xẹp phổi" → exclude làm "Which studies have atelectasis?" cũng thành exclude), chọn nhãn theo chữ cái đầu (pacemaker → Pneumothorax), và hai ví dụ có view làm 5/12 câu tự viết không nêu view bị đoán ra view (một lần chạy thăm dò, output không lưu; script ở `artifacts/metrics/views_probe.py`; theo T18, chạy lại sẽ không ra đúng số này). Prompt cuối làm hỏng câu use case 6, trong khi prompt gốc qua được: include ra Edema trước Cardiomegaly và `language` ra `en`, nên `test_use_case_six_through_the_llm` FAIL 4/4 lần. Tập concept vẫn đúng; chỉ `semantic_query` bị đảo thứ tự. | Few-shot trong `query_parser_v1.txt` là phần chịu lực, không phải trang trí. Sửa prompt thì đo lại trên `dev` **và** trên bộ câu tự viết trước khi tin. Không thêm ví dụ có view; cân để mỗi concept không chỉ xuất hiện ở một list. Không nới assertion của live test: từ 2026-10-15 test tách đôi, phần ràng buộc (tập concept, status, exclude, views) phải pass, phần thứ tự include, `language` và `semantic_query` mang `xfail(strict=False)`. Có sửa prompt hay không là P7 |
 | T18 | **LLM không tái lập giữa các lần chạy.** Cùng prompt (`c975e4ca…`), cùng 40 câu dev, temperature 0, seed 20260101, Ollama 0.40.3 trên GPU: vòng k=4 và lần chạy dev cuối khác nhau ở **5/40** dự đoán (en-020, vi-002, vi-008, vi-016, vi-020); view F1 0,900 → 0,833, status 0,841 → 0,827. Trong một tiến trình, `llm` và `auto` có lúc cũng lệch (k=1: view 0,800 so với 0,667). | Coi mỗi số LLM từ một lần chạy là có nhiễu cỡ 1–2 câu / 40. Phase 7 chạy LLM parser ≥ 3 lần và báo cáo dao động. So hai prompt bằng nhiều câu hơn một lần chạy dev |
 | T19 | **`cxr bench-vector --api-url` (`bench_http`) giờ đo cả parse lẫn search.** Từ Phase 4, `/search` chạy `QueryParser` trước khi tìm: lần gọi đầu của mỗi câu gồm cả LLM (≈0,8 s), các lần lặp sau trúng cache parse. HTTP p50/p95 150/158 ms của Phase 3 vì vậy không còn so được với lần đo mới. | Phase 5: đo lại con số vector-only với `LLM_DISABLED=true` |
+| T21 | **Gemini qua endpoint OpenAI-compatible trả 400 khi request có `seed`** ("Unknown name \"seed\""). | `OpenAICompatClient` không gửi `seed`; với API hosted seed vốn chỉ là best-effort, `temperature: 0` mới là phần dùng chung được. Có test khóa |
+| T22 | **Model có thinking tính token suy nghĩ vào `max_tokens`.** `gemini-2.5-flash` dùng 212–221 token thinking cho một câu (đo qua `usage.total_tokens − prompt − completion`); với trần 300 (bằng `num_predict` của Ollama), **2/6 lần** dừng `finish_reason=length`, JSON mất dấu `}` cuối, parser báo "not JSON". | Adapter hosted dùng `max_tokens` 2.048 riêng, không dùng `num_predict`. Đổi model hosted nào cũng phải xem `finish_reason` trước khi tin số đo |
+| T23 | **Mỗi họ model OpenAI nhận tham số khác nhau** (đo 2026-10-20). Họ GPT-5 từ chối `max_tokens` (phải dùng `max_completion_tokens`); `gpt-5-nano/mini` từ chối `temperature: 0` và `reasoning_effort: none`, còn mức suy luận mặc định của `gpt-5-nano` đốt **1.536 token** cho một câu parse; `gpt-5.4-*` nhận `temperature: 0` và `none` nhưng từ chối `minimal`. Hệ quả: `gpt-5-mini` (D22) chạy ở temperature mặc định với `reasoning_effort: minimal`; đo lặp lại vẫn 40/40 trên dev, nhưng không có gì bảo đảm tất định. | Adapter luôn gửi `max_completion_tokens`; tham số theo model ở `models.yaml:llm.hosted_request` (model không có trong bảng nhận `{temperature: 0}`). Đổi model thì thử một request và xem `usage.completion_tokens_details.reasoning_tokens` trước khi tin chi phí. Phase 7 chạy parser ≥ 3 lần (như T18). Đường Gemini chưa kiểm lại sau khi đổi sang `max_completion_tokens` |
+| T24 | **Lỗ từ vựng tiếng Việt mà cả LLM mạnh cũng vấp:** "tư thế trước-sau" (AP) ra PA ở cả Gemini lẫn gpt-5-mini; "vôi hóa màng phổi" (Pleural Other) không ra concept. `concepts.yaml` không có "trước-sau"/"sau-trước" cho view, cũng không có "vôi hóa" cho Pleural Other. | Thêm dạng vào `concepts.yaml` là chỉnh lexicon: theo D20 chỉ làm trên dev, rồi khai báo một lần chạy heldout mới |
+| T25 | **40 câu dev không tách được các model mạnh, và `temperature: 0` không mua được tính tái lập.** Trên dev, gpt-4o-mini đạt 1,000 / 1,000 / 1,000 nhưng heldout trượt view (0,869, 19 lỗi); trên dev hai model sát nhau, chỉ heldout 160 câu mới tách ra. gpt-4o-mini (temp 0) cho cùng câu ba kết quả khác nhau; gpt-4.1-mini (temp 0) 39/40; gpt-5-mini (không nhận temp 0) 40/40. | So model bằng dev chỉ để loại model hỏng, đừng để xếp hạng model tốt. Muốn chọn model chính xác hơn thì cần tập chọn lớn hơn 40 câu, tách khỏi heldout. Đừng chọn model vì nó nhận `temperature: 0`; đo lặp lại |
 | T20 | **Tiếng Việt không tách từ; dạng trần "phù" (Edema) khớp trong "phù hợp"** ("consistent with"). "tìm ca phù hợp viêm phổi" parse thành Edema + Pneumonia PRESENT (reviewer cuối thăm dò bằng `RuleParser.parse`, 2026-10-15). Spec §4.3 cho rằng khớp ở mức token tránh được chuyện này, nhưng "phù hợp" là hai token. Không câu benchmark nào chứa "phù hợp". | Phase 5: chặn hoặc bỏ dạng trần "phù". Đã ghi vào giới hạn trong `docs/parser-evaluation.md` |
 
 T4 (`make setup` thiếu Pillow) đã xử lý 2026-09-22 — `setup` giờ dùng
@@ -396,6 +482,8 @@ T4 (`make setup` thiếu Pillow) đã xử lý 2026-09-22 — `setup` giờ dùn
 | P6 | Có pull **`qwen2.5:7b-instruct-q4_K_M`** (4,7 GB) làm nhánh chất lượng cho parser ablation không? | Không pull; mặc định vẫn 3B (D5) | Heldout 3B **FAIL** (concept / status / view 0,880 / 0,718 / 0,890), và rule parser hơn 3B ở status (0,862) lẫn view (0,945). 7B là bước kế tiếp đã khai báo trước (spec §12) nếu luận văn cần nhánh so sánh hoặc muốn thử vượt ngưỡng. Latency và VRAM của 7B trên máy này chưa đo. → `docs/parser-evaluation.md` |
 | P7 | Có sửa prompt cho câu use case 6 không? Prompt `c975e4ca` trả include Edema trước Cardiomegaly và `language` `en`, nên live test của câu này đang `xfail` | Giữ prompt hiện tại; phần thứ tự/`language` của live test mang `xfail(strict=False)`, phần ràng buộc phải pass | Sửa thì phải đo lại dev và khai báo một lần chạy heldout thứ hai (số heldout hiện tại gắn với `c975e4ca`). Giữ thì `semantic_query` của câu nhiều concept có thể đảo thứ tự; tập ràng buộc không đổi, nên mode `label` không bị ảnh hưởng. Người dùng quyết. → T17 |
 | P8 | Người dùng duyệt `benchmarks/parser_queries_v1.jsonl` có đổi gold heldout không? | Benchmark giữ nguyên như lúc đo (sha256 `8d19c619…`); người dùng duyệt bây giờ | Spec §7/§12 yêu cầu người dùng duyệt file trước khi đo; kế hoạch bỏ cổng đó, và lần chạy heldout duy nhất (2026-10-14) diễn ra trước mọi lần duyệt. Đổi bất kỳ gold heldout nào thì phải khai báo một lần chạy heldout thứ hai (cùng quy tắc với P7). → `docs/parser-evaluation.md` |
+| ~~P10~~ | **Đã chốt 2026-10-20 → D22** (OpenAI gpt-5-mini). Kéo theo: P7 (prompt cho use case 6) tự hết vì gpt-5-mini trả đúng thứ tự và `vi` với prompt hiện tại (live test XPASS); P6 (pull 7B) chỉ còn là nhánh ablation tùy chọn | — | — |
+| ~~P10 cũ~~ | **Parser mặc định là gì?** qwen 3B local (D5) đứng cuối ở status (0,718) và đảo nghĩa câu dương đơn giản; Gemini 2.5 Flash qua cả ba ngưỡng nhưng cần mạng, API key, chịu chi phí, gửi truy vấn ra ngoài và chậm hơn (p50 1,9 s); rule parser không phụ thuộc gì, nhanh, hơn 3B ở status/view nhưng concept 0,793 | Ollama 3B vẫn là mặc định trong code. API đang chạy phiên này dùng `LLM_DISABLED=true` (rule) | Mục tiêu §1 của kế hoạch là chạy local, nên đổi sang LLM hosted làm mặc định là quyết định của người dùng, không phải của agent. P6 (pull 7B) giờ là một nhánh của câu hỏi này: thử 7B để xem local có tới gần Gemini không |
 | P9 | Câu chỉ có exclude ("no pleural effusion"): vector leg encode gì? | Hai parser đang khác nhau: rule parser encode nguyên câu tiếng Anh (warning `no positive finding; vector leg encodes the raw text`), LLM trả `findings` rỗng nên vector leg bị bỏ qua | 28/40 câu negation heldout chỉ có exclude, nên lựa chọn này quyết định baseline vector của nhóm phủ định. Phải chốt một hành vi trước khi hợp nhất ở Phase 5 và đánh giá ở Phase 7 |
 
 P1 (disk guard) và P3 (`docker/qdrant`) chốt 2026-09-22 → D8. P2 (`absence_policy`) chốt
@@ -407,6 +495,37 @@ P1 (disk guard) và P3 (`docker/qdrant`) chốt 2026-09-22 → D8. P2 (`absence_
 
 > Mới nhất lên đầu. Mỗi entry ≤ 10 dòng và trả lời **vì sao**, không kể lại **cái gì**
 > (`git log` đã kể rồi).
+
+### 2026-10-20 — Thử gpt-4o-mini và gpt-4.1-mini, giữ gpt-5-mini (D22, T25)
+
+Người dùng muốn đổi sang gpt-4o-mini, rồi gpt-4.1-mini, vì hai model này nhận `temperature: 0`. Mỗi lần
+đổi, tôi đo heldout một lần cùng một phép thử lặp lại trước khi commit; tiêu chí cho 4.1-mini được đặt ra
+trước khi có số (PASS, F1 trong dải 0,02, và tất định thật). 4o-mini trượt view (đọc "frontal" thành
+AP) và không tất định; 4.1-mini PASS nhưng sai 7 so với 3, đắt gần gấp đôi, và lặp lại 39/40 trong khi
+gpt-5-mini được 40/40. Người dùng chốt gpt-5-mini. Bài học thành T25: dev 40 câu không xếp hạng được
+model mạnh, và temperature 0 không phải bằng chứng của tính tái lập.
+
+### 2026-10-20 — Chuyển parser mặc định sang OpenAI gpt-5-mini (D22)
+
+Người dùng chuyển sang OpenAI và yêu cầu model "tối ưu chi phí nhưng hiệu năng vẫn tốt". Luật chọn viết
+trước, chọn trên dev, heldout chỉ chạy một lần cho model thắng, như gate của Phase 2. Bảy model nhỏ, giá
+lấy từ trang pricing chứ không nhớ. Hai model nano rẻ nhất thua: gpt-5-nano trượt status 0,820,
+gpt-4.1-nano qua gate nhưng kém 0,065. gpt-5-mini thắng với ~0,22 USD / 1.000 câu, rồi PASS heldout
+(0,995 / 0,988 / 0,947). Phần lớn công sức nằm ở T23: mỗi họ model từ chối một tham số khác nhau, nên
+tham số đưa vào config theo model thay vì đoán trong code. Mặc định trong code giờ là OpenAI, key đọc
+từ `OPENAI_API_KEY`; không có key thì vẫn chạy bằng rule parser. API phiên này chạy bằng OpenAI, Ollama
+đã tắt.
+
+### 2026-10-20 — Adapter LLM hosted; lỗi parser là do model 3B
+
+Người dùng hỏi lỗi parser có phải do LLM yếu không. Thêm `OpenAICompatClient` (một adapter cho cả
+OpenAI và Gemini, chọn bằng `LLM_PROVIDER`, mặc định vẫn Ollama) và giữ nguyên prompt `c975e4ca` để
+đổi model chỉ đo model. Kết quả trả lời dứt khoát: cùng prompt, Gemini 2.5 Flash 0,994 / 0,980 /
+0,947 trên heldout so với 0,880 / 0,718 / 0,890 của qwen 3B, nên prompt không phải nút thắt. Prompt
+được chỉnh trên dev cho 3B, Gemini không được chỉnh gì, nên phép so nếu có lệch thì lệch về phía 3B.
+Hai lỗi chỉ lộ ra khi gọi API thật (T21 `seed`, T22 thinking token) và đều đã có test. T17 nặng hơn
+ghi chép cũ: không chỉ đảo thứ tự include mà đảo cả include thành exclude. Key nằm trong `.env`
+(gitignored) và chỉ được nạp vào biến môi trường lúc chạy. Chưa đổi mặc định: P10.
 
 ### 2026-10-15 — Sửa sau review cuối Phase 4
 
