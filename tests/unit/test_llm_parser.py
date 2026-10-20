@@ -173,3 +173,202 @@ class TestPrompt:
         examples = llm.prompt_examples(prompt)
         assert len(examples) >= 4 and "{{CONCEPTS}}" not in prompt
         assert all(example.strip() for example in examples)
+
+
+# --- OpenAI-compatible adapter: OpenAI, and Gemini through its OpenAI endpoint ---
+
+
+def compat_with(handler, base_url="https://api.test/v1") -> llm.OpenAICompatClient:
+    return llm.OpenAICompatClient(base_url, "model-test", 5, api_key="sk-test",
+                                  transport=httpx.MockTransport(handler))
+
+
+def ok_completion(content: str | None) -> httpx.Response:
+    return httpx.Response(200, json={"choices": [
+        {"message": {"role": "assistant", "content": content}, "finish_reason": "stop"}]})
+
+
+def _objects(node):
+    """Every JSON-schema object node, depth first."""
+    if isinstance(node, dict):
+        if node.get("type") == "object":
+            yield node
+        for value in node.values():
+            yield from _objects(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _objects(value)
+
+
+class TestOpenAICompatChat:
+    def test_posts_chat_completions_under_the_base_path_with_a_bearer_key(self):
+        seen: dict = {}
+
+        def handler(request):
+            seen["url"] = str(request.url)
+            seen["auth"] = request.headers.get("authorization")
+            return ok_completion("{}")
+
+        compat_with(handler).chat([{"role": "user", "content": "q"}], llm.output_schema())
+        assert seen["url"] == "https://api.test/v1/chat/completions"
+        assert seen["auth"] == "Bearer sk-test"
+
+    def test_sends_the_same_schema_strictly_at_temperature_zero(self):
+        seen: dict = {}
+
+        def handler(request):
+            seen.update(json.loads(request.content))
+            return ok_completion("{}")
+
+        messages = [{"role": "system", "content": "s"}, {"role": "user", "content": "q"}]
+        compat_with(handler).chat(messages, llm.output_schema())
+        assert seen["model"] == "model-test" and seen["messages"] == messages
+        # Thinking models count reasoning against the cap: gemini-2.5-flash spent
+        # 212-221 thinking tokens on one parse and hit `length` 2/6 times under a 300 cap.
+        # The GPT-5 family rejects `max_tokens` outright, so the newer name is used.
+        assert seen["temperature"] == 0 and seen["max_completion_tokens"] == 2048
+        assert "max_tokens" not in seen
+        # Gemini's OpenAI endpoint rejects `seed` with a 400 (measured 2026-10-20), and on
+        # a hosted API it is best-effort anyway; temperature 0 is what is portable.
+        assert "seed" not in seen
+        fmt = seen["response_format"]
+        assert fmt["type"] == "json_schema" and fmt["json_schema"]["strict"] is True
+        sent = fmt["json_schema"]["schema"]
+        # Strict mode needs additionalProperties: false on every object; nothing else changes,
+        # so the enum of the 14 concepts still constrains decoding as it does for Ollama.
+        assert all(o.get("additionalProperties") is False for o in _objects(sent))
+        stripped = json.loads(json.dumps(sent).replace(', "additionalProperties": false', ""))
+        assert stripped == llm.output_schema()
+
+    def test_model_specific_options_replace_the_default_temperature(self):
+        """gpt-5-nano rejects temperature 0 and burns 1,536 reasoning tokens unless told
+        reasoning_effort=minimal (measured 2026-10-20); such knobs come from config."""
+        seen: dict = {}
+
+        def handler(request):
+            seen.update(json.loads(request.content))
+            return ok_completion("{}")
+
+        client = llm.OpenAICompatClient("https://api.test/v1", "m", 5, api_key="k",
+                                        options={"reasoning_effort": "minimal"},
+                                        transport=httpx.MockTransport(handler))
+        client.chat([], llm.output_schema())
+        assert seen["reasoning_effort"] == "minimal" and "temperature" not in seen
+
+    def test_does_not_mutate_the_callers_schema(self):
+        schema = llm.output_schema()
+        compat_with(lambda r: ok_completion("{}")).chat([], schema)
+        assert schema == llm.output_schema()
+
+    def test_returns_the_message_content(self):
+        content, ms = compat_with(lambda r: ok_completion('{"a": 1}')).chat([], {})
+        assert json.loads(content) == {"a": 1} and ms >= 0
+
+    @pytest.mark.parametrize("failure", [httpx.ReadTimeout("slow"), httpx.ConnectError("down")])
+    def test_transport_failures_become_llm_error(self, failure):
+        def handler(request):
+            raise failure
+
+        with pytest.raises(llm.LLMError, match=type(failure).__name__):
+            compat_with(handler).chat([], {})
+
+    @pytest.mark.parametrize("code", [400, 401, 429, 500])
+    def test_http_errors_become_llm_error_with_the_status(self, code):
+        def handler(request):
+            return httpx.Response(code, json={"error": {"message": "nope"}})
+
+        with pytest.raises(llm.LLMError, match=str(code)):
+            compat_with(handler).chat([], {})
+
+    def test_a_malformed_or_empty_reply_is_invalid_output(self):
+        def no_choices(request):
+            return httpx.Response(200, json={"id": "x"})
+
+        def refused(request):
+            return ok_completion(None)
+
+        with pytest.raises(llm.LLMInvalidOutput, match="malformed"):
+            compat_with(no_choices).chat([], {})
+        with pytest.raises(llm.LLMInvalidOutput, match="no content"):
+            compat_with(refused).chat([], {})
+
+
+class TestOpenAICompatProbe:
+    def test_ok_when_the_model_is_listed(self):
+        def handler(request):
+            assert str(request.url) == "https://api.test/v1/models"
+            return httpx.Response(200, json={"data": [{"id": "model-test"}]})
+
+        assert compat_with(handler).probe() == "ok"
+
+    def test_gemini_style_ids_with_a_models_prefix_also_match(self):
+        def handler(request):
+            return httpx.Response(200, json={"data": [{"id": "models/model-test"}]})
+
+        assert compat_with(handler).probe() == "ok"
+
+    def test_missing_model_when_it_is_not_listed(self):
+        def handler(request):
+            return httpx.Response(200, json={"data": [{"id": "other"}]})
+
+        assert compat_with(handler).probe() == "missing_model"
+
+    def test_unreachable_on_a_bad_key_or_any_failure(self):
+        def unauthorized(request):
+            return httpx.Response(401, json={"error": {"message": "bad key"}})
+
+        def refused(request):
+            raise httpx.ConnectError("refused")
+
+        assert compat_with(unauthorized).probe() == "unreachable"
+        assert compat_with(refused).probe() == "unreachable"
+
+    def test_has_no_server_version(self):
+        assert compat_with(lambda r: httpx.Response(200)).version() is None
+
+
+class TestMakeClient:
+    def test_ollama_is_the_default_provider(self):
+        client = llm.make_client("ollama", "http://ollama.test", "qwen", 5, api_key=None,
+                                 num_predict=300, seed=1, keep_alive="30m")
+        assert isinstance(client, llm.OllamaClient)
+
+    def test_openai_builds_the_compat_client(self):
+        client = llm.make_client("openai", "https://api.test/v1", "m", 5, api_key="k",
+                                 num_predict=300, seed=1, keep_alive="30m")
+        assert isinstance(client, llm.OpenAICompatClient) and client.model == "m"
+
+    def test_openai_without_a_key_is_refused(self):
+        with pytest.raises(ValueError, match="LLM_API_KEY"):
+            llm.make_client("openai", "https://api.test/v1", "m", 5, api_key=None,
+                            num_predict=300, seed=1, keep_alive="30m")
+
+    def test_an_unknown_provider_is_refused(self):
+        with pytest.raises(ValueError, match="provider"):
+            llm.make_client("claude", "x", "m", 5, api_key="k",
+                            num_predict=300, seed=1, keep_alive="30m")
+
+
+class TestRequestOptions:
+    CFG = {"hosted_request": {"default": {"temperature": 0},
+                              "gpt-x-nano-2026-01-01": {"reasoning_effort": "none"}}}
+
+    def test_a_listed_model_gets_its_own_options(self):
+        options = llm.request_options(self.CFG, "gpt-x-nano-2026-01-01")
+        assert options == {"reasoning_effort": "none"}
+
+    def test_an_unlisted_model_gets_the_default(self):
+        assert llm.request_options(self.CFG, "other") == {"temperature": 0}
+
+    def test_returns_a_copy_so_callers_cannot_edit_the_config(self):
+        llm.request_options(self.CFG, "other")["temperature"] = 1
+        assert self.CFG["hosted_request"]["default"] == {"temperature": 0}
+
+    def test_the_shipped_config_has_a_default_entry(self):
+        assert "default" in load_config("models")["llm"]["hosted_request"]
+
+    def test_make_client_forwards_the_options(self):
+        client = llm.make_client("openai", "https://api.test/v1", "m", 5, api_key="k",
+                                 num_predict=300, seed=1, keep_alive="30m",
+                                 options={"reasoning_effort": "none"})
+        assert client.options == {"reasoning_effort": "none"}

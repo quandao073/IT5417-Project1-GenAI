@@ -78,3 +78,14 @@ llm:
   # Ollama unloads after 5 min by default; a pause in a demo must not pay the reload.
   keep_alive: 30m
   cache_size: 1024
+  # Extra fields for an OpenAI-compatible request, by exact model id; anything not
+  # listed gets `default`. Model families disagree (measured 2026-10-20): gpt-5-nano
+  # and gpt-5-mini reject temperature 0 and need reasoning_effort=minimal to stop
+  # spending up to 1,536 reasoning tokens per parse; gpt-5.4-* take temperature 0
+  # and reasoning_effort=none but reject minimal.
+  hosted_request:
+    default: {temperature: 0}
+    gpt-5-nano-2025-08-07: {reasoning_effort: minimal}
+    gpt-5-mini-2025-08-07: {reasoning_effort: minimal}
+    gpt-5.4-nano-2026-03-17: {temperature: 0, reasoning_effort: none}
+    gpt-5.4-mini-2026-03-17: {temperature: 0, reasoning_effort: none}

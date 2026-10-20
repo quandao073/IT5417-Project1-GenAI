@@ -14,9 +14,10 @@ import json
 import os
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Literal
 
 import yaml
-from pydantic import field_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # What shapes the vectors in Qdrant: the corpus definition and the image encoder.
@@ -83,8 +84,16 @@ class Settings(BaseSettings):
     # Blank in .env.example: the API then reads it from build_manifest.json.
     build_id: str | None = None
 
+    # `ollama` is the local default (D5). `openai` is any OpenAI-compatible API, which
+    # also reaches Gemini through its OpenAI endpoint; it needs an API key and an
+    # LLM_BASE_URL such as https://api.openai.com/v1.
+    llm_provider: Literal["ollama", "openai"] = "ollama"
     llm_base_url: str = "http://localhost:11434"
     llm_model: str = "qwen2.5:3b-instruct-q4_K_M"
+    # SecretStr keeps the key out of repr() and therefore out of logs and tracebacks.
+    # Read from LLM_API_KEY, else the conventional OPENAI_API_KEY.
+    llm_api_key: SecretStr | None = Field(
+        default=None, validation_alias=AliasChoices("llm_api_key", "openai_api_key"))
     llm_timeout_seconds: int = 20
     llm_disabled: bool = False
 
@@ -101,3 +110,8 @@ class Settings(BaseSettings):
     @classmethod
     def _blank_is_unset(cls, value: str | None) -> str | None:
         return value or None
+
+    @field_validator("llm_api_key", mode="after")
+    @classmethod
+    def _blank_key_is_unset(cls, value: SecretStr | None) -> SecretStr | None:
+        return value if value and value.get_secret_value() else None
