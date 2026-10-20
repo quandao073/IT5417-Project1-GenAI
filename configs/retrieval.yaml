@@ -16,8 +16,10 @@ candidates:
 
 fusion:
   method: rrf
-  rrf_k: 60                         # chosen on the dev split (spec section 11.5); 60 = plan default
-  leg_weights: {vector: 1.0, report: 1.0}
+  # Chosen on the dev grid 2026-10-21 (spec section 11.5): gold hybrid ndcg@10 0.657 vs
+  # 0.644 for the plan default rrf_k 60, leg_weights (1, 1); gain 0.012 >= the 0.005 rule.
+  rrf_k: 10
+  leg_weights: {vector: 0.5, report: 1.0}
   # `weights` (concept_match_bonus, uncertain_penalty, constraint_violation_penalty) removed:
   # hybrid filters on labels first, so there is nothing left to reward or penalise (D23).
 

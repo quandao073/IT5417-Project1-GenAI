@@ -189,7 +189,7 @@ class TestReportIndex:
     def test_state_carries_fusion_params_from_config(self, world):
         state = _state(world)
         assert state.fusion == FusionParams.from_config(load_config("retrieval"))
-        assert state.fusion.rrf_k == 60 and state.fusion.vector_top_k == 100
+        assert state.fusion.rrf_k == 10 and state.fusion.vector_top_k == 100
         assert state.report_min_token_chars == 3
 
 

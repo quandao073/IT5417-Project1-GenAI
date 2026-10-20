@@ -156,4 +156,4 @@ def test_legs_are_called_with_their_top_k():
 
 def test_from_config_reads_retrieval_yaml():
     assert FusionParams.from_config(load_config("retrieval")) == FusionParams(
-        60, {"vector": 1.0, "report": 1.0}, 100, 100)
+        10, {"vector": 0.5, "report": 1.0}, 100, 100)

@@ -6,6 +6,7 @@ import json
 import re
 from pathlib import Path
 
+import httpx
 import numpy as np
 import polars as pl
 import pytest
@@ -32,6 +33,22 @@ def test_bench_queries_are_30_english_prompts():
 def test_percentiles():
     p = vb.percentiles([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
     assert p["p50"] == pytest.approx(5.5) and p["p95"] == pytest.approx(9.55) and p["n"] == 10
+
+
+def test_bench_http_posts_the_mode_and_keeps_the_result_key():
+    bodies = []
+
+    def handler(request):
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={})
+
+    out = vb.bench_http("http://api", ["a", "b"], 3, mode="hybrid",
+                        transport=httpx.MockTransport(handler))
+    assert len(bodies) == 6
+    assert all(b == {"query": b["query"], "top_k": 10, "mode": "hybrid"} for b in bodies)
+    assert set(out) == {"http_ms"} and out["http_ms"]["n"] == 4
+    vb.bench_http("http://api", ["a"], 2, transport=httpx.MockTransport(handler))
+    assert bodies[-1]["mode"] == "vector"
 
 
 @pytest.fixture

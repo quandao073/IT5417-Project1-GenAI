@@ -259,8 +259,8 @@ class TestHybrid:
         breakdown = r["score_breakdown"]
         assert breakdown["constraints_satisfied"] is True and breakdown["label_match"] is True
         assert breakdown["vector_rank"] == 1 and breakdown["report_rank"] == 1
-        # both legs rank it first: 1/61 + 1/61 with rrf_k 60 and unit weights
-        assert r["score"] == pytest.approx(2 / 61) and breakdown["rrf_score"] == r["score"]
+        # both legs rank it first: 0.5/11 + 1/11 with rrf_k 10 and weights (0.5, 1)
+        assert r["score"] == pytest.approx(1.5 / 11) and breakdown["rrf_score"] == r["score"]
         assert r["image_id"] == state.study_image["patient00000/study1"]
         assert _concepts_and_polarities(r) == [("Edema", "affirmed"),
                                                ("Pleural Effusion", "negated")]
