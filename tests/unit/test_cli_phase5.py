@@ -75,7 +75,7 @@ METRICS = {"p@10": 0.5, "ndcg@10": 0.6, "mrr": 0.7, "exclude_violation@10": None
 LATENCY = {"p50": 12.0, "p95": 30.0, "n": 1}
 PASSING = {"single_p10": {"passed": True}, "passed": True}
 FUSION = {"rrf_k": 60, "leg_weights": {"vector": 1.0, "report": 1.0},
-          "vector_top_k": 100, "report_top_k": 100}
+          "vector_top_k": 100, "report_top_k": 100, "image_top_k": 100}
 
 
 def canned(parsers, modes):

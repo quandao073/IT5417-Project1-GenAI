@@ -27,6 +27,7 @@ from src.query.parser import QueryParser
 from src.query.rule_parser import RuleParser
 from src.retrieval.evidence import EvidenceMatcher
 from src.retrieval.hybrid import FusionParams
+from src.retrieval.image_concepts import ImageScores
 from src.retrieval.label_filter import LabelMatrix, build_label_matrix
 from src.retrieval.report_index import ReportIndexError, open_report_index, read_meta
 from src.retrieval.report_search import report_terms_from_config
@@ -67,6 +68,10 @@ class AppState:
     point_of_study: dict[str, str] = field(default_factory=dict)   # -> selected image's point
     evidence: EvidenceMatcher | None = None
     fusion: FusionParams | None = None
+    image_scores: ImageScores | None = None
+    image_status: Literal["ok", "disabled"] = "disabled"
+    image_reason: str | None = None
+    image_meta: dict = field(default_factory=dict)
 
 
 def _open_report_index(state: AppState, studies: int) -> None:

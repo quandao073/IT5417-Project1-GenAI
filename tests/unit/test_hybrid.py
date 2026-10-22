@@ -39,7 +39,7 @@ def test_fusion_orders_ties_deterministically():
                         report_leg=lambda k: rcands(["b", "c"]), fusion=P)
     assert [r.study_id for r in out.results] == ["b", "a", "c"]
     assert out.results[0].vector_rank == 2 and out.results[0].report_rank == 1
-    assert out.total_matches == 3 and out.legs == {"vector": 2, "report": 2}
+    assert out.total_matches == 3 and out.legs == {"vector": 2, "report": 2, "image": 0}
     assert out.warnings == []
 
 
@@ -48,7 +48,7 @@ def test_single_leg_degenerates_to_its_order():
                         vector_leg=lambda k: cands(["c", "a", "b"]), report_leg=None, fusion=P)
     assert [r.study_id for r in out.results] == ["c", "a", "b"]
     assert [r.report_rank for r in out.results] == [None] * 3
-    assert out.warnings == [] and out.legs == {"vector": 3, "report": 0}
+    assert out.warnings == [] and out.legs == {"vector": 3, "report": 0, "image": 0}
 
 
 def test_top_k_truncates_and_ranks_are_contiguous():
@@ -113,7 +113,7 @@ def test_results_never_leave_the_allowed_set():
                         vector_leg=lambda k: cands(["stray", "a", "b"]),
                         report_leg=lambda k: rcands(["b", "stray2"]), fusion=P)
     assert {r.study_id for r in out.results} == {"a", "b"}
-    assert out.total_matches == 2 and out.legs == {"vector": 2, "report": 1}
+    assert out.total_matches == 2 and out.legs == {"vector": 2, "report": 1, "image": 0}
 
 
 def test_legs_that_only_return_strays_fall_back_to_label_order():
@@ -138,6 +138,12 @@ def test_order_key_tie_break_chain():
     assert [k[-1] for k in sorted(keys)] == ["q", "y", "z", "a", "b"]
 
 
+def test_order_key_ranks_image_after_vector_then_id():
+    keys = [_order_key("a", 0.5, None), _order_key("b", 0.5, None, 2),
+            _order_key("c", 0.5, None, 1), _order_key("d", 0.5, 3, 9)]
+    assert [k[-1] for k in sorted(keys)] == ["d", "c", "b", "a"]
+
+
 def test_legs_are_called_with_their_top_k():
     seen = {}
     fusion = FusionParams(60, {"vector": 1.0, "report": 1.0}, vector_top_k=7, report_top_k=9)
@@ -156,4 +162,110 @@ def test_legs_are_called_with_their_top_k():
 
 def test_from_config_reads_retrieval_yaml():
     assert FusionParams.from_config(load_config("retrieval")) == FusionParams(
-        10, {"vector": 0.5, "report": 1.0}, 100, 100)
+        10, {"vector": 0.5, "report": 1.0, "image": 0.0}, 100, 100, 100)
+
+
+def test_from_config_defaults_image_weight_to_zero_and_top_k_to_100():
+    cfg = {"fusion": {"rrf_k": 10, "leg_weights": {"vector": 0.5, "report": 1.0}},
+           "candidates": {"vector_top_k": 7, "report_top_k": 9}}
+    fusion = FusionParams.from_config(cfg)
+    assert fusion.image_top_k == 100 and fusion.weight("image") == 0.0
+    assert fusion.weight("vector") == 0.5
+    cfg["candidates"]["image_top_k"] = 25
+    assert FusionParams.from_config(cfg).image_top_k == 25
+
+
+def icands(study_ids):
+    return [(s, -float(i)) for i, s in enumerate(study_ids)]
+
+
+P3 = FusionParams(rrf_k=10, leg_weights={"vector": 1.0, "report": 1.0, "image": 1.0},
+                  vector_top_k=100, report_top_k=100, image_top_k=100)
+
+
+def test_three_leg_rrf_by_hand():
+    out = search_hybrid(top_k=10, label_order=["a", "b"],
+                        vector_leg=lambda k: cands(["a", "b"]),
+                        report_leg=lambda k: rcands(["a", "b"]),
+                        image_leg=lambda k: icands(["a", "b"]), fusion=P3)
+    first, second = out.results
+    assert first.study_id == "a" and first.score == pytest.approx(3 / 11)
+    assert second.score == pytest.approx(3 / 12)
+    assert (first.vector_rank, first.report_rank, first.image_rank) == (1, 1, 1)
+    assert out.legs == {"vector": 2, "report": 2, "image": 2}
+
+
+def test_image_leg_can_reorder_the_fusion():
+    out = search_hybrid(top_k=10, label_order=["a", "b", "c"],
+                        vector_leg=lambda k: cands(["a", "b"]), report_leg=None,
+                        image_leg=lambda k: icands(["b", "c", "a"]), fusion=P3)
+    assert [r.study_id for r in out.results] == ["b", "a", "c"]
+    assert [r.image_rank for r in out.results] == [1, 3, 2]
+
+
+def test_zero_weight_leg_is_never_called():
+    called = []
+
+    def spy(name, result):
+        def leg(k):
+            called.append(name)
+            return result
+        return leg
+
+    legs = {"vector_leg": spy("vector", cands(["a"])), "report_leg": spy("report", rcands(["a"])),
+            "image_leg": spy("image", icands(["a"]))}
+    weights = {"vector": 1.0, "report": 1.0, "image": 0.0}
+    search_hybrid(top_k=5, label_order=["a"], **legs,
+                  fusion=FusionParams(10, weights, 100, 100))
+    assert sorted(called) == ["report", "vector"]
+
+    called.clear()
+    out = search_hybrid(top_k=5, label_order=["a"], **legs,
+                        fusion=FusionParams(10, {**weights, "vector": 0.0, "image": 1.0}, 100, 100))
+    assert sorted(called) == ["image", "report"]
+    assert out.legs == {"vector": 0, "report": 1, "image": 1}
+    assert out.results[0].vector_rank is None
+
+
+def test_image_weight_zero_reproduces_two_leg_fusion():
+    kwargs = {"top_k": 10, "label_order": ["a", "b", "c"],
+              "vector_leg": lambda k: cands(["a", "b"]), "report_leg": lambda k: rcands(["b", "c"])}
+    base = search_hybrid(**kwargs, fusion=P)                     # no "image" key at all
+    zero = FusionParams(60, {"vector": 1.0, "report": 1.0, "image": 0.0}, 100, 100)
+    with_leg = search_hybrid(**kwargs, image_leg=lambda k: icands(["c", "a", "b"]), fusion=zero)
+    assert with_leg == base
+    absent = search_hybrid(**kwargs, image_leg=lambda k: icands(["c"]), fusion=P)
+    assert absent == base and base.legs == {"vector": 2, "report": 2, "image": 0}
+
+
+def test_image_leg_results_never_leave_the_allowed_set():
+    out = search_hybrid(top_k=10, label_order=["a", "b"], vector_leg=None, report_leg=None,
+                        image_leg=lambda k: icands(["stray", "b", "a", "stray2"]), fusion=P3)
+    assert [r.study_id for r in out.results] == ["b", "a"]
+    assert [r.image_rank for r in out.results] == [1, 2]
+    assert out.legs["image"] == 2 and out.total_matches == 2
+
+
+def test_image_leg_alone_is_a_signal():
+    out = search_hybrid(top_k=5, label_order=["x", "y"], vector_leg=None, report_leg=None,
+                        image_leg=lambda k: icands(["y", "x"]), fusion=P3)
+    assert [r.study_id for r in out.results] == ["y", "x"] and out.warnings == []
+
+
+def test_image_leg_is_called_with_its_top_k():
+    seen = []
+    fusion = FusionParams(10, {"image": 1.0}, 100, 100, image_top_k=13)
+    search_hybrid(top_k=3, label_order=["a"], vector_leg=None, report_leg=None,
+                  image_leg=lambda k: seen.append(k) or icands(["a"]), fusion=fusion)
+    assert seen == [13]
+
+
+def test_image_rank_breaks_ties_after_vector_rank():
+    # "b" (image only) and "z" (report only) tie at 1/11; neither has a vector rank, so the
+    # image rank decides, not the study id.
+    weights = {"vector": 1.0, "report": 1.0, "image": 1.0}
+    out = search_hybrid(top_k=5, label_order=None, vector_leg=None,
+                        report_leg=lambda k: rcands(["z"]),
+                        image_leg=lambda k: icands(["b"]), fusion=FusionParams(10, weights, 1, 1))
+    assert out.results[0].score == out.results[1].score
+    assert [r.study_id for r in out.results] == ["b", "z"]
