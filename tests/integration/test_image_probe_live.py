@@ -7,32 +7,34 @@ Run with `uv run pytest -m integration` while `docker compose up -d qdrant` is u
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from src.api.dependencies import build_state
 from src.common.config import Settings
+from src.embeddings import probe
 from src.retrieval.image_concepts import validate_image_probe
 from src.retrieval.pipeline import run_search
 from tests.integration.test_vector_index import qdrant  # noqa: F401 - pytest fixture
 
 pytestmark = pytest.mark.integration
-PROBE = Path("data/indexes/image_probe/probe.json")
 
 
 def test_image_mode_ranks_the_real_corpus_with_the_probe(qdrant):  # noqa: F811 - the fixture
-    if not PROBE.is_file():
-        pytest.skip(f"{PROBE} not found; run cxr train-probe")
     settings = Settings(llm_disabled=True)
+    meta = settings.image_probe_dir / probe.META_FILE
+    if not meta.is_file():
+        pytest.skip(f"{meta} not found; run cxr train-probe")
     state = build_state(settings)
     try:
         assert state.ready, state.not_ready_reason
         assert state.image_status == "ok", state.image_reason
 
         query = state.parser.parse("Find edema with no pleural effusion.").query
+        # A parse without constraints would pass below through the text-image cosine fallback.
+        assert query.include and query.exclude, query
         outcome = run_search(state, query, "image", top_k=10, views=[],
                              absence_policy="exclude_present", uncertainty_policy="EXCLUDE")
+        assert not any(w.startswith("no concept") for w in outcome.warnings), outcome.warnings
         assert len(outcome.hits) == 10
         assert [h.image_rank for h in outcome.hits] == list(range(1, 11))
         scores = [h.score for h in outcome.hits]
