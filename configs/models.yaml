@@ -94,3 +94,11 @@ llm:
     gpt-5-mini-2025-08-07: {reasoning_effort: minimal}
     gpt-5.4-nano-2026-03-17: {temperature: 0, reasoning_effort: none}
     gpt-5.4-mini-2026-03-17: {temperature: 0, reasoning_effort: none}
+
+image_probe:
+  # Linear probes on the frozen image encoder, trained on patients outside the corpus (spec 2026-10-23).
+  lambdas: [0.1, 1, 10, 100]
+  val_fraction: 0.1
+  seed: 20260101
+  max_iter: 50
+  tol: 1.0e-6
