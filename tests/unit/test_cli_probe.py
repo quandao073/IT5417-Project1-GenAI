@@ -114,7 +114,7 @@ def test_train_probe_defaults_use_new_paths_only():
 POOL_BUILD = "pool_fake_v1"
 
 
-def _train_world(tmp_path, *, shared_patient=False, revision="fakerev0"):
+def _train_world(tmp_path, *, shared_patient=False, valid_path=False, revision="fakerev0"):
     """A 20-study corpus, a 12-study pool and a manifest, all embedded with FakeEncoder."""
     canonical = tmp_path / "canonical"
     canonical.mkdir()
@@ -136,6 +136,11 @@ def _train_world(tmp_path, *, shared_patient=False, revision="fakerev0"):
         "path_to_image": [f"train/poolpatient{i:05d}/study1/view1_frontal.jpg" for i in range(n)],
         "projection": ["AP"] * n,
     })
+    if valid_path:
+        pool = pool.with_columns(
+            pl.when(pl.col("image_id") == pool["image_id"][0])
+            .then(pl.lit("valid/poolpatient00000/study1/view1_frontal.jpg"))
+            .otherwise(pl.col("path_to_image")).alias("path_to_image"))
     if shared_patient:
         pool = pool.with_columns(
             pl.when(pl.col("image_id") == pool["image_id"][0]).then(pl.lit("patient00000"))
@@ -174,6 +179,14 @@ def test_train_probe_refuses_a_pool_embedded_by_another_revision(tmp_path, capsy
     argv = _train_world(tmp_path, revision="otherrev")
     assert main(argv) == 1
     assert "POOL BUILD MISMATCH" in capsys.readouterr().err
+    assert not (tmp_path / "probe").exists() and not (tmp_path / "report.json").exists()
+
+
+def test_train_probe_refuses_a_pool_with_a_valid_study(tmp_path, capsys):
+    argv = _train_world(tmp_path, valid_path=True)
+    assert main(argv) == 1
+    assert "valid/" in capsys.readouterr().err
+    assert not (tmp_path / "probe").exists() and not (tmp_path / "report.json").exists()
 
 
 def test_train_probe_writes_the_artifact_and_merges_the_report(tmp_path, capsys, monkeypatch):
