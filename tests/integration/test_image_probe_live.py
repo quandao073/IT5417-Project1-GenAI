@@ -39,6 +39,7 @@ def test_image_mode_ranks_the_real_corpus_with_the_probe(qdrant):  # noqa: F811 
         assert [h.image_rank for h in outcome.hits] == list(range(1, 11))
         scores = [h.score for h in outcome.hits]
         assert scores == sorted(scores, reverse=True)
+        assert scores[0] > scores[-1]
 
         check = validate_image_probe(
             settings.image_probe_dir, build_id=state.manifest["build_id"],

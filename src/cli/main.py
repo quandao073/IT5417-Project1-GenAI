@@ -414,9 +414,9 @@ def _cmd_score_corpus(args: argparse.Namespace) -> int:
     if _report_is_corrupt(Path(args.out)):
         return 1
     shards_dir = _resolve_build_dir(Path(args.embeddings), args.build_id)
-    canonical = Path(args.canonical_dir)
-    images = pl.read_parquet(canonical / "images.parquet")
-    labels = pl.read_parquet(canonical / "labels.parquet")
+    canonical_dir = Path(args.canonical_dir)
+    images = pl.read_parquet(canonical_dir / "images.parquet")
+    labels = pl.read_parquet(canonical_dir / "labels.parquet")
     cfg = load_config("models")["image_encoder"]
     _, encoder = _selected_encoder("cpu")
     prompts = spike.build_prompts(load_config("concepts"), cfg["text_prompt_template"])
@@ -483,15 +483,15 @@ def _cmd_train_probe(args: argparse.Namespace) -> int:
         return 1
     manifest = json.loads(
         (Path(args.indexes_dir) / index.MANIFEST_FILE).read_text(encoding="utf-8"))
-    canonical = Path(args.canonical_dir)
-    error, pool = _load_pool(args, manifest, pl.read_parquet(canonical / "images.parquet"))
+    canonical_dir = Path(args.canonical_dir)
+    error, pool = _load_pool(args, manifest, pl.read_parquet(canonical_dir / "images.parquet"))
     if error:
         print(error, file=sys.stderr)
         return 1
     X, pool_statuses, pool_patients, pool_meta = pool
     probe, fit = train_probe(X, pool_statuses, pool_patients, load_config("models")["image_probe"])
 
-    studies = pl.read_parquet(canonical / "studies.parquet")
+    studies = pl.read_parquet(canonical_dir / "studies.parquet")
     corpus_vectors = _corpus_rows(args, manifest, studies)
     logits = probe.logits(corpus_vectors)
     corpus_scores = pl.DataFrame({
@@ -504,7 +504,7 @@ def _cmd_train_probe(args: argparse.Namespace) -> int:
     text = probe_eval.text_scores(corpus_vectors, encoder, load_config("concepts"), template)
     priority = load_config("retrieval")["label_resolution"]["source_priority"]
     statuses = spike.status_matrix(
-        pl.read_parquet(canonical / "labels.parquet"), studies["study_id"].to_list(), priority)
+        pl.read_parquet(canonical_dir / "labels.parquet"), studies["study_id"].to_list(), priority)
     comparison = probe_eval.compare({**text, "probe": logits}, statuses, n_boot=args.n_boot)
 
     model = manifest["embedding_model"]
@@ -596,11 +596,11 @@ def _cmd_eval_parser(args: argparse.Namespace) -> int:
           f"{'PASS' if v['passed'] else 'FAIL'} {json.dumps(v)}")
 
     if args.label_filter:
-        canonical = Path(args.canonical_dir)
-        studies = pl.read_parquet(canonical / "studies.parquet")
+        canonical_dir = Path(args.canonical_dir)
+        studies = pl.read_parquet(canonical_dir / "studies.parquet")
         cfg = load_config("retrieval")
         matrix = lf.build_label_matrix(
-            pl.read_parquet(canonical / "labels.parquet"), studies["study_id"].to_list(),
+            pl.read_parquet(canonical_dir / "labels.parquet"), studies["study_id"].to_list(),
             cfg["label_resolution"]["source_priority"], seed=cfg["results"]["label_order_seed"])
         counts = pe.label_filter_counts(rows, matrix)
         _merge_json(Path(args.out), "label_filter", {**counts, "benchmark": report["benchmark"]})
