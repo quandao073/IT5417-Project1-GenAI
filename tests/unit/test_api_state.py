@@ -255,6 +255,21 @@ class TestImageProbe:
         state = _state(world)
         assert state.ready and state.image_status == "disabled" and "oldrev" in state.image_reason
 
+    def test_a_corrupt_probe_file_disables_the_probe_only(self, world):
+        (world[0].image_probe_dir / probe.PROBE_FILE).write_bytes(b"not an npz")
+        state = _state(world)
+        assert state.ready is True and state.image_status == "disabled"
+        assert "probe.npz" in state.image_reason
+
+    def test_probe_meta_without_build_id_disables_the_probe_only(self, world):
+        meta_path = world[0].image_probe_dir / probe.META_FILE
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        del meta["build_id"]
+        meta_path.write_text(json.dumps(meta), encoding="utf-8")
+        state = _state(world)
+        assert state.ready is True and state.image_status == "disabled"
+        assert "build_id" in state.image_reason
+
 
 class TestHealth:
     def test_ready_health_reports_the_build(self, world):
