@@ -28,5 +28,8 @@ def health(state: Annotated[AppState, Depends(get_state)]):
         report_index=state.report_status,
         report_studies=(int(state.report_meta["studies"]) if state.report_status == "ok"
                         else None),
+        image_probe=state.image_status,
+        image_probe_id=(state.image_meta.get("probe_id") if state.image_status == "ok"
+                        else None),
         llm=state.llm_status, llm_model=state.settings.llm_model,
     )

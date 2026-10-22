@@ -51,7 +51,7 @@ UncertaintyPolicy = Literal["EXCLUDE", "INCLUDE"]
 class SearchRequest(BaseModel):
     query: str = Field(min_length=1, max_length=500,
                        description="English or Vietnamese request; parsed by /query/parse rules")
-    mode: Literal["vector", "label", "hybrid"] = "vector"
+    mode: Literal["vector", "label", "image", "hybrid"] = "vector"
     top_k: int = Field(10, ge=1, le=50)
     views: list[View] | None = Field(
         None, description="AP/PA facet; overrides the views the parser found when given")
@@ -74,6 +74,7 @@ class LabelAssertion(BaseModel):
 class ScoreBreakdown(BaseModel):
     vector_rank: int | None = None
     report_rank: int | None = None
+    image_rank: int | None = None
     rrf_score: float | None = None
     label_match: bool | None = None
     constraints_satisfied: bool | None = Field(None, description=(
@@ -121,5 +122,7 @@ class HealthResponse(BaseModel):
     qdrant: Literal["ok"]
     report_index: Literal["ok", "disabled"]
     report_studies: int | None
+    image_probe: Literal["ok", "disabled"]
+    image_probe_id: str | None
     llm: Literal["ok", "disabled", "unreachable", "missing_model"]
     llm_model: str

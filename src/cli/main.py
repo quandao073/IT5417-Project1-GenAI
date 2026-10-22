@@ -25,6 +25,7 @@ from src.evaluation import vector_baseline as vb
 from src.query.schema import ParseError
 from src.retrieval import label_filter as lf
 from src.retrieval import report_index
+from src.retrieval.image_concepts import validate_image_probe
 
 
 def _cmd_audit(args: argparse.Namespace) -> int:
@@ -331,6 +332,12 @@ def _cmd_validate_indexes(args: argparse.Namespace) -> int:
                   else Path(args.indexes_dir) / "report_search.sqlite")
     checks.append(report_index.validate_report_index(
         index_path, pl.read_parquet(Path(args.canonical_dir) / "reports.parquet")))
+    probe_dir = (Path(args.image_probe_dir) if args.image_probe_dir
+                 else Path(args.indexes_dir) / "image_probe")
+    checks.append(validate_image_probe(
+        probe_dir, build_id=manifest["build_id"], revision=expected_revision,
+        study_ids=pl.read_parquet(Path(args.canonical_dir) / "studies.parquet")
+        ["study_id"].to_list()))
     for c in checks:
         print(f"{'PASS' if c.ok else 'FAIL'} {c.name:<12}: {c.detail}")
     return 0 if all(c.ok for c in checks) else 1
@@ -680,6 +687,8 @@ def build_parser() -> argparse.ArgumentParser:
     val.add_argument("--qdrant-url", default=None)
     val.add_argument("--report-index", default=None,
                      help="default: <indexes-dir>/report_search.sqlite")
+    val.add_argument("--image-probe-dir", default=None,
+                     help="default: <indexes-dir>/image_probe")
     val.set_defaults(func=_cmd_validate_indexes)
 
     rep = sub.add_parser("build-report-index", help="Phase 5: build the SQLite FTS5 report index")
@@ -691,7 +700,7 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--queries", type=int, default=30)
     bench.add_argument("--repeats", type=int, default=5)
     bench.add_argument("--api-url", default=None, help="also time POST /api/v1/search over HTTP")
-    bench.add_argument("--mode", choices=["vector", "hybrid"], default="vector",
+    bench.add_argument("--mode", choices=["vector", "hybrid", "image"], default="vector",
                        help="search mode posted to --api-url")
     bench.add_argument("--out", default="artifacts/metrics/vector_baseline.json")
     bench.set_defaults(func=_cmd_bench_vector)

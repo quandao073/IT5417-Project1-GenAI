@@ -27,7 +27,7 @@ from src.query.parser import QueryParser
 from src.query.rule_parser import RuleParser
 from src.retrieval.evidence import EvidenceMatcher
 from src.retrieval.hybrid import FusionParams
-from src.retrieval.image_concepts import ImageScores
+from src.retrieval.image_concepts import ImageProbeError, ImageScores, open_image_probe
 from src.retrieval.label_filter import LabelMatrix, build_label_matrix
 from src.retrieval.report_index import ReportIndexError, open_report_index, read_meta
 from src.retrieval.report_search import report_terms_from_config
@@ -89,6 +89,20 @@ def _open_report_index(state: AppState, studies: int) -> None:
         state.report_reason = (f"report index has {meta.get('studies')} studies, "
                                f"manifest says {studies}; run cxr build-report-index")
     logger.warning("report index disabled: %s", state.report_reason)
+
+
+def _open_image_probe(state: AppState, *, build_id: str, revision: str,
+                      study_ids: list[str]) -> None:
+    """Load the image probe's corpus scores; any problem disables the image leg, never readiness."""
+    try:
+        state.image_scores, state.image_meta = open_image_probe(
+            state.settings.image_probe_dir, build_id=build_id, revision=revision,
+            study_ids=study_ids)
+    except ImageProbeError as exc:
+        state.image_reason = str(exc)
+        logger.warning("image probe disabled: %s", state.image_reason)
+    else:
+        state.image_status = "ok"
 
 
 def _default_client(url: str):
@@ -200,6 +214,8 @@ def build_state(settings: Settings, *, encoder_loader=None, client_factory=None,
         if encoder.revision != manifest["embedding_model"]["revision"]:
             raise RuntimeError(f"encoder revision {encoder.revision} != manifest "
                                f"{manifest['embedding_model']['revision']}")
+        _open_image_probe(state, build_id=manifest["build_id"], revision=encoder.revision,
+                          study_ids=studies["study_id"].to_list())
 
         state.manifest, state.client, state.collection = manifest, client, collection
         state.images, state.encoder, state.ready = records, encoder, True

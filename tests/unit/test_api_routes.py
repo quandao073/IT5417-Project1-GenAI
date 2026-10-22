@@ -53,7 +53,8 @@ class TestSearch:
         assert first["image_url"] == f"/api/v1/images/{first['image_id']}"
         # the fake encoder ranks study 3 first, whose effusion is NOT_MENTIONED: a violation
         assert first["score_breakdown"] == {"vector_rank": 1, "report_rank": None,
-                                            "rrf_score": None, "label_match": None,
+                                            "image_rank": None, "rrf_score": None,
+                                            "label_match": None,
                                             "constraints_satisfied": False}
         assert first["labels"][0]["status"] == "NOT_MENTIONED"
         assert isinstance(first["report_evidence"], list)
@@ -168,7 +169,8 @@ class TestLabelMode:
         r = body["results"][0]
         assert r["rank"] == 1 and r["score"] is None
         assert r["score_breakdown"] == {"vector_rank": None, "report_rank": None,
-                                        "rrf_score": None, "label_match": True,
+                                        "image_rank": None, "rrf_score": None,
+                                        "label_match": True,
                                         "constraints_satisfied": True}
         assert r["image_id"] == state.study_image["patient00000/study1"]
         assert r["image_url"] == f"/api/v1/images/{r['image_id']}"
@@ -396,7 +398,35 @@ class TestEvidence:
         assert "report index unavailable; no evidence" in body["warnings"]
 
 
+class TestImageMode:
+    def test_image_mode_returns_image_rank_and_labels(self, client):
+        c, _, _ = client
+        body = _search(c, "edema without pleural effusion", "image", top_k=4)
+        results = body["results"]
+        assert [r["rank"] for r in results] == [1, 2, 3, 4]
+        assert [r["score_breakdown"]["image_rank"] for r in results] == [1, 2, 3, 4]
+        assert all(r["score_breakdown"]["vector_rank"] is None for r in results)
+        assert all(isinstance(r["score"], float) for r in results)
+        assert [a["concept"] for a in results[0]["labels"]] == ["Edema", "Pleural Effusion"]
+
+    def test_image_mode_rejects_nothing_new_in_schema(self, client):
+        c, _, _ = client
+        assert c.post("/api/v1/search", json={"query": "edema", "mode": "image"}).status_code == 200
+        assert c.post("/api/v1/search", json={"query": "edema", "mode": "graph"}).status_code == 422
+
+
 class TestHealth:
+    def test_health_reports_the_image_probe(self, client):
+        c, _, _ = client
+        h = c.get("/api/v1/health").json()
+        assert h["image_probe"] == "ok" and h["image_probe_id"] == "p1"
+
+    def test_health_without_the_probe_is_still_ready(self, world, tmp_path):
+        settings = world[0].model_copy(update={"image_probe_dir": tmp_path / "nowhere"})
+        r = TestClient(create_app(_state(world, settings=settings))).get("/api/v1/health")
+        assert r.status_code == 200
+        assert r.json()["image_probe"] == "disabled" and r.json()["image_probe_id"] is None
+
     def test_health_reports_the_report_index(self, client):
         c, _, _ = client
         h = c.get("/api/v1/health").json()

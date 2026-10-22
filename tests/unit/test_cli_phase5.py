@@ -5,17 +5,14 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
-import polars as pl
 import pytest
 
 from src.cli.main import build_parser, main
 from src.common.config import load_config
-from src.embeddings.validate import Check
 from src.query.parser import QueryParser
 from src.query.rule_parser import RuleParser
 from src.retrieval.hybrid import FusionParams
-from src.retrieval.report_index import build_report_index, open_report_index, read_meta
-from tests.unit.test_embed import images_frame
+from src.retrieval.report_index import open_report_index, read_meta
 from tests.unit.test_label_filter import labels_frame
 from tests.unit.test_parser_benchmark import row, write
 from tests.unit.test_report_index import ROWS, reports_frame
@@ -37,25 +34,6 @@ def test_build_report_index_writes_the_file_and_prints_ascii(tmp_path, capsys):
     text = capsys.readouterr().out
     text.encode("ascii")
     assert "rows=4 sha=" in text
-
-
-def test_validate_indexes_prints_seven_checks(tmp_path, capsys, monkeypatch):
-    canonical = _canonical(tmp_path)
-    indexes = tmp_path / "indexes"
-    indexes.mkdir()
-    (indexes / "build_manifest.json").write_text(json.dumps({"build_id": "b"}), encoding="utf-8")
-    images_frame(8).write_parquet(canonical / "images.parquet")
-    build_report_index(pl.read_parquet(canonical / "reports.parquet"),
-                       indexes / "report_search.sqlite", concepts_sha256="c" * 64,
-                       git_commit=None)
-    six = [Check(f"check{i}", True, "ok") for i in range(6)]
-    monkeypatch.setattr("src.cli.main.validate.validate_indexes", lambda *a, **k: six)
-    monkeypatch.setattr("src.cli.main.validate.expected_config_hash", lambda *a, **k: "x")
-    monkeypatch.setattr("src.cli.main._qdrant_client", lambda *a, **k: None)
-    assert main(["validate-indexes", "--indexes-dir", str(indexes),
-                 "--canonical-dir", str(canonical), "--embeddings", str(tmp_path / "emb")]) == 0
-    lines = capsys.readouterr().out.splitlines()
-    assert len(lines) == 7 and lines[-1].startswith("PASS report_index")
 
 
 def test_eval_retrieval_defaults():

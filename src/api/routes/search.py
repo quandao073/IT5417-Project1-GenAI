@@ -58,7 +58,8 @@ def _result(hit: pipeline.Hit) -> SearchResult:
         rank=hit.rank, study_id=hit.study_id, image_id=hit.image_id,
         image_url=f"/api/v1/images/{hit.image_id}", score=hit.score,
         score_breakdown=ScoreBreakdown(
-            vector_rank=hit.vector_rank, report_rank=hit.report_rank, rrf_score=hit.rrf_score,
+            vector_rank=hit.vector_rank, report_rank=hit.report_rank, image_rank=hit.image_rank,
+            rrf_score=hit.rrf_score,
             label_match=hit.label_match, constraints_satisfied=hit.constraints_satisfied),
         labels=[LabelAssertion(**a) for a in hit.labels],
         report_evidence=[e.model_dump() for e in hit.evidence],

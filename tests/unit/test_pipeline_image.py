@@ -31,6 +31,8 @@ def make_state(world, logits=None, *, probe=True):
             columns[concept][ids.index(study)] = z
         state.image_scores = build_image_scores(pl.DataFrame({"study_id": ids, **columns}), ids)
         state.image_status = "ok"
+    else:   # the world already ships a probe; take it away
+        state.image_scores, state.image_status = None, "disabled"
     return state
 
 
