@@ -325,9 +325,10 @@ Kiểm tính nhất quán: các dòng `image` 0 tái lập đúng số của lư
 mốc 0,6565, `rrf_k` 60 (1, 1) 0,6441, `rrf_k` 10 (1, 1) 0,6406, `rrf_k` 60 (0,5, 1) 0,6545. So từng bộ
 (`rrf_k`, vector, report) với chính nó ở `image` 0 (12 bộ, đọc từ `grid.configs`): `image` 0,5 hơn ở
 **4/12** bộ, cả bốn đều ở `rrf_k` 10 (+0,0017 đến +0,0077); `image` 1 hơn ở **1/12** (`rrf_k` 10, vector
-1, report 0,5: +0,0146). Ở `rrf_k` 60 nhánh ảnh làm tụt ở mọi bộ (tới −0,029). Nhánh ảnh giúp chủ yếu khi
-nó pha loãng một nhánh vector nặng; ở mốc (vector 0,5) nó chỉ thêm +0,0017, và mọi chênh lệch này nằm
-trong cỡ nhiễu của 38 câu dev (WORKLOG T25).
+1, report 0,5: +0,0146). Ở `rrf_k` 60 nhánh ảnh làm tụt ở mọi bộ (tới −0,029). Lợi theo cặp lớn nhất là khi
+ảnh pha loãng một nhánh vector nặng (vector 1), còn cấu hình tốt nhất là khi ảnh thay hẳn nhánh vector
+(vector 0: +0,0027); ở mốc (vector 0,5) nó chỉ thêm +0,0017, và mọi chênh lệch này nằm trong cỡ nhiễu của
+38 câu dev (WORKLOG T25).
 
 **Dev tham chiếu** (`--modes label vector image hybrid --policies default`, section `eval`, fusion đang
 chạy):
@@ -381,8 +382,10 @@ khác trọng số 0, bộ lọc nhãn vẫn bật):
   0,533, Pleural Other 0,563), phần điểm ảnh của concept đó gần như không mang thông tin.
 - **Ảnh chưa góp gì đo thấy vào `hybrid` (S3 FAIL).** Hybrid lọc nhãn trước (D23), nên mọi nhánh chỉ xếp
   thứ tự trong một tập đã đúng; trong tập đó report đứng riêng (0,658) vẫn hơn image đứng riêng (0,632) và
-  vector đứng riêng (0,611). Nhánh ảnh chỉ giúp khi nó pha loãng một nhánh vector nặng, và lợi lớn nhất so
-  với mốc (+0,0040) dưới luật min-gain viết trước. `retrieval.yaml` giữ `image: 0.0`, nhánh không chạy, nên
+  vector đứng riêng (0,611). Trong lưới, nhánh ảnh giúp chủ yếu ở `rrf_k` 10: cấu hình tốt nhất (`rrf_k` 10,
+  vector 0 / report 1 / image 0,5 = 0,6605) là khi ảnh **thay** nhánh vector (+0,0027 so với cùng cấu hình
+  không có ảnh), còn lợi theo cặp lớn nhất là khi ảnh pha loãng một nhánh vector nặng (vector 1: +0,0077,
+  +0,0146). Lợi lớn nhất so với mốc (+0,0040) vẫn dưới luật min-gain viết trước. `retrieval.yaml` giữ `image: 0.0`, nhánh không chạy, nên
   hybrid của nhánh git này là hybrid của `main`.
 - **Prompt đối (A2) lấy được phần lớn phần lợi của probe trên AUROC** (0,640 so với 0,659, probe chỉ hơn A2
   ở 7/14 concept). Theo C1 nó chỉ là một dòng đo; dùng A2 lúc chạy là một thí nghiệm chưa làm.

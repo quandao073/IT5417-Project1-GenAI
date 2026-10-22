@@ -483,18 +483,24 @@ ngữ: `docs/image-probe.md`.
 | D29 | **Image concept probe (nhánh `feat/image-concept-probe`, local):** 14 probe logistic L2 trên embedding BiomedCLIP đóng băng, train **chỉ trên pool ngoài corpus** (88.853 study / 46.682 bệnh nhân, chỉ `train/`, λ 0,1 chọn trên pool-val); mode mới `image` xếp toàn corpus bằng điểm probe, không nhãn, không report; `hybrid` có nhánh `image` nhưng **trọng số 0** vì lưới dev giữ mốc (S3 FAIL), nên nhánh không chạy và hybrid giống hệt `main`; prompt ensemble / prompt đối (hướng A) chỉ được đo | §11.1–11.3 (ba mode, hai nhánh) | Ảnh cần một tín hiệu tự đứng được (P12) mà không finetune encoder (ngoài scope, D28). Đo: S1 PASS (+0,060 AUROC), S2 PASS (`image` hơn `vector` trên câu chung, vi phạm exclude giảm gần nửa), S3 FAIL (+0,0040 < 0,005), S4 PASS (0,607). → `docs/image-probe.md` |
 | — | **Lệch nhỏ của Phase 5:** `blocked_phrases` cho T20; mode mặc định của request giữ `vector`; report index gắn corpus canonical, không gắn `build_id`; `validate-indexes` 7 check; `cxr eval-retrieval` thay cho `cxr evaluate` của §20 (lệnh `evaluate`/`benchmark` của Makefile vẫn trỏ tới `cxr evaluate` chưa tồn tại — ghi nhận, để Phase 7); `per_query` của JSON là dict theo id với các metric, không phải list kèm id đã xếp hạng như spec Phase 5 §11.6 (danh sách xếp hạng cho error analysis để Phase 7); `cxr eval-retrieval` không có `--indexes-dir`/`--qdrant-url` (lấy từ `Settings`); `--report-index` của `validate-indexes` mặc định là `<indexes-dir>/report_search.sqlite`; `evidence_faithful` của spec Phase 5 §11.4 không vào JSON (thay bằng tính đúng theo cấu trúc và round trip 50 ảnh của integration test, xem T26); khối `retrieval.yaml:constraints` (`include_accepts`, `exclude_requires`, `not_mentioned_satisfies_exclude`, `strictness_default`) là dead config, không module nào đọc, và `exclude_requires: [ABSENT]` nói ngược D9. Cũng dead: `report_search.tokenizer` (index hardcode `report_index.TOKENIZER`), `explanation.verify_spans_against_report` (pipeline luôn kiểm, không đọc key), `degradation.on_report_index_unavailable` (`vector_and_label_only` nói sai: thiếu index thì hybrid vẫn chạy, chỉ không có report leg). Giữ nguyên, dọn khi có dịp | — | — |
 
-**D29, những quyết định code không tự nói** (spec `docs/superpowers/specs/2026-10-23-image-concept-probe-design.md` §2.2):
+**D29, quyết định C1–C10 của thiết kế** (spec `docs/superpowers/specs/2026-10-23-image-concept-probe-design.md` §2.2):
 - **C1** Hướng A (prompt ensemble, prompt đối) chỉ là dòng đo trong `image_probe.json`, không vào runtime: chỗ
   duy nhất nó tác động là câu không nhận ra concept, và benchmark không chấm được nhóm đó (câu `other` không có
   gold). A2 đo được 0,640, gần probe; dùng nó lúc chạy là thí nghiệm chưa làm.
+- **C2** Mode `vector` giữ nguyên từng dòng: nó là baseline của đồ án (G3), đổi nó thì mọi so sánh với số của
+  `main` mất nghĩa. Heldout xác nhận: gold vector trùng từng bit với Phase 5.
+- **C3** Mode `image` (đã nêu ở D29): chỉ ảnh, include/exclude bằng điểm probe; là kịch bản "ảnh chưa có report".
 - **C4** Probe chỉ học từ pool; corpus chỉ để đánh giá, `valid/` không bao giờ vào pool. D1 đứng được vì không
   tham số nào học từ corpus; train trên corpus là thấy đáp án.
 - **C5** Đích train: PRESENT = 1, ABSENT và NOT_MENTIONED = 0, UNCERTAIN bỏ (U-Ignore). Điểm probe chỉ là tín
   hiệu xếp hạng, **không bao giờ** thành nhãn hay bằng chứng ABSENT trong bộ lọc (T7 không đổi).
+- **C6** Logistic L2, Newton-IRLS bằng numpy (không thêm dependency, tất định), **một λ chung** cho 14 concept,
+  chọn trên pool-val: probe thử trước thiết kế cho thấy λ ít ảnh hưởng.
 - **C7** Nhánh `image` của hybrid chỉ được bật khi lưới dev hơn cấu hình đang chạy ≥ 0,005 nDCG@10 (luật
   `choose`, mốc là cấu hình đang chạy, không phải mặc định của plan); nhánh trọng số 0 không chạy.
 - **C8** Nhánh chỉ ghi vào đường dẫn mới: `data/`, `artifacts/` gitignored nên hai nhánh dùng chung, và `main`
   phải tái lập được số của nó. Mọi lệnh đo của nhánh có `--out` riêng.
+- **C9** Embed pool trên CPU, chạy nền (≈2 giờ): GPU nhanh hơn nhưng phải cài tạm torch `+cu124` và dễ dính T14.
 - **C10** Heldout chạy một lần, có khai báo, parser `gold rule auto` (auto ≈0,04 USD, câu hỏi đi ra OpenAI)
   để bảng so được với `main`.
 
@@ -601,7 +607,7 @@ cần: P7 tự hết (gpt-5-mini trả đúng câu đó), P6 không làm.
 > Mới nhất lên đầu. Mỗi entry ≤ 10 dòng và trả lời **vì sao**, không kể lại **cái gì**
 > (`git log` đã kể rồi).
 
-### 2026-10-23 — Image probe: nhánh ảnh góp tín hiệu thật (feat/image-concept-probe)
+### 2026-10-23 — Image probe: ảnh tự đứng hơn vector (S1, S2), chưa góp vào hybrid (S3 FAIL)
 
 Ablation của P12 cho thấy vector không góp gì vào hybrid, nhưng không tách được "ảnh vô ích" khỏi "tín hiệu
 zero-shot quá yếu" (AUROC 0,599, không hiểu phủ định). Probe tuyến tính trên encoder đóng băng là cách rẻ nhất để
