@@ -3,7 +3,7 @@
 Pure: the legs arrive as callables already bound to the query, the label-allowed set and
 the view facet, so this module never touches Qdrant or SQLite. Label constraints are applied
 before it runs (WORKLOG D23): `label_order` is the allowed set in the fixed D18 order, and
-results never leave it because both legs only ever return studies inside it.
+results never leave it because every leg only ever returns studies inside it.
 """
 
 from __future__ import annotations
