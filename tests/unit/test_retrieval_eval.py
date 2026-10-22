@@ -55,8 +55,8 @@ def ev(concept, polarity) -> Evidence:
     return Evidence(concept=concept, text="t", start=0, end=1, polarity=polarity)
 
 
-def weights(vector, report) -> dict:
-    return {"vector": vector, "report": report}
+def weights(vector, report, image=0.0) -> dict:
+    return {"vector": vector, "report": report, "image": image}
 
 
 @pytest.fixture(scope="module")
@@ -113,7 +113,8 @@ def fake(rankings):
 
 @pytest.fixture
 def fake_search():
-    fixed = {"label": ["s1", "s3"], "vector": ["s5", "s3", "s1"], "hybrid": ["s2", "s1", "s6"]}
+    fixed = {"label": ["s1", "s3"], "vector": ["s5", "s3", "s1"], "image": ["s2", "s6"],
+             "hybrid": ["s2", "s1", "s6"]}
     return fake(lambda mode, fusion: fixed[mode])
 
 
@@ -298,45 +299,123 @@ def test_relevance_uses_the_gold_views_when_the_parse_drops_them(matrix, agreeme
     assert [call["views"] for call in search.calls] == [[]]
 
 
-def test_grid_has_nine_configs_and_choose_keeps_default_within_min_gain():
-    assert len(rev.GRID) == 9
-    assert rev.GRID[0] == FusionParams(10, weights(1.0, 1.0), 100, 100)
-    assert [(g.rrf_k, g.leg_weights["vector"], g.leg_weights["report"]) for g in rev.GRID] == [
-        (k, v, r) for k in (10, 60, 200) for v, r in ((1.0, 1.0), (1.0, 0.5), (0.5, 1.0))]
-    assert all(g.vector_top_k == g.report_top_k == 100 for g in rev.GRID)
+def test_grid_has_36_configs_and_choose_uses_the_given_baseline():
+    assert len(rev.GRID) == 36
+    assert rev.GRID[0] == FusionParams(10, weights(0.0, 0.5, 0.0), 100, 100, 100)
+    assert [(g.rrf_k, *(g.leg_weights[leg] for leg in ("vector", "report", "image")))
+            for g in rev.GRID] == [
+        (k, v, r, i) for k in (10, 60) for v in (0.0, 0.5, 1.0) for r in (0.5, 1.0)
+        for i in (0.0, 0.5, 1.0)]
+    assert all(g.vector_top_k == g.report_top_k == g.image_top_k == 100 for g in rev.GRID)
 
-    default = FusionParams(60, weights(1.0, 1.0), 100, 100)
-    near = [{"rrf_k": 10, "leg_weights": weights(1.0, 1.0), "ndcg@10": 0.504},
-            {"rrf_k": 60, "leg_weights": weights(1.0, 1.0), "ndcg@10": 0.50}]
-    assert rev.choose(near, default) == default                  # 0.004 < 0.005
-    far = [*near, {"rrf_k": 200, "leg_weights": weights(1.0, 0.5), "ndcg@10": 0.51}]
-    assert rev.choose(far, default) == FusionParams(200, weights(1.0, 0.5), 100, 100)
-    tie = [*near, {"rrf_k": 10, "leg_weights": weights(0.5, 1.0), "ndcg@10": 0.51},
-           {"rrf_k": 200, "leg_weights": weights(1.0, 0.5), "ndcg@10": 0.51}]
-    assert rev.choose(tie, default) == FusionParams(10, weights(0.5, 1.0), 100, 100)
+    baseline = FusionParams(10, weights(0.5, 1.0), 100, 100, 100)
+    near = [{"rrf_k": 10, "leg_weights": weights(0.5, 1.0), "ndcg@10": 0.500},
+            {"rrf_k": 60, "leg_weights": weights(1.0, 1.0, 0.5), "ndcg@10": 0.504}]
+    assert rev.choose(near, baseline) == baseline                # 0.004 < 0.005
+    far = [near[0], {"rrf_k": 60, "leg_weights": weights(1.0, 1.0, 0.5), "ndcg@10": 0.505}]
+    assert rev.choose(far, baseline) == FusionParams(60, weights(1.0, 1.0, 0.5), 100, 100, 100)
+    # top_k values come from the baseline, not from the grid entry
+    wide = FusionParams(10, weights(0.5, 1.0), 50, 60, 70)
+    assert rev.choose(far, wide) == FusionParams(60, weights(1.0, 1.0, 0.5), 50, 60, 70)
+    # a config without an image key matches the baseline through _weights
+    legacy = [{"rrf_k": 10, "leg_weights": {"vector": 0.5, "report": 1.0}, "ndcg@10": 0.5},
+              {"rrf_k": 60, "leg_weights": weights(1.0, 1.0), "ndcg@10": 0.503}]
+    assert rev.choose(legacy, baseline) == baseline
+    with pytest.raises(ValueError, match="baseline"):
+        rev.choose(legacy[1:], baseline)
 
 
 def test_grid_search_scores_every_config_on_gold_hybrid(rows, parser, matrix, agreement):
     def ranking(mode, fusion):
-        good = fusion.rrf_k == 200 and fusion.leg_weights["report"] == 0.5
+        good = fusion.rrf_k == 60 and fusion.leg_weights["report"] == 0.5
         return ["s2", "s1", "s6"] if good else ["s3", "s5", "s1"]
 
+    baseline = FusionParams(10, weights(0.5, 1.0), 100, 100, 100)
     search = fake(ranking)
     out = rev.grid_search(rows, state=None, parser=parser, matrix=matrix, agreement=agreement,
-                          projection_of=PROJECTION, search=search)
+                          projection_of=PROJECTION, baseline=baseline, search=search)
     assert [(c["rrf_k"], c["leg_weights"]) for c in out["configs"]] == [
         (g.rrf_k, g.leg_weights) for g in rev.GRID]
     # s3 s5 s1: en-001 grades s3 2, s1 3 of (4, 3, 2, 2); en-002 s1 2.5 of (3.5, 2.5, 1.5);
     # vi-001 (PA, only s2 relevant) 0
     en001 = (2 + 3 / np.log2(4)) / (4 + 3 / np.log2(3) + 2 / np.log2(4) + 2 / np.log2(5))
     en002 = (2.5 / np.log2(4)) / (3.5 + 2.5 / np.log2(3) + 1.5 / np.log2(4))
-    assert out["default_ndcg"] == pytest.approx((en001 + en002 + 0) / 3)
-    assert out["configs"][3]["ndcg@10"] == out["default_ndcg"]          # (60, (1, 1))
-    assert out["configs"][3]["p@10"] == pytest.approx((0.2 + 0.1 + 0) / 3)
-    assert out["chosen"]["rrf_k"] == 200 and out["chosen"]["leg_weights"] == weights(1.0, 0.5)
-    assert len(search.calls) == 9 * 3
+    assert out["baseline_ndcg"] == pytest.approx((en001 + en002 + 0) / 3)
+    assert "default_ndcg" not in out
+    at = next(i for i, g in enumerate(rev.GRID) if g == baseline)
+    assert out["configs"][at]["ndcg@10"] == out["baseline_ndcg"]
+    assert out["configs"][at]["p@10"] == pytest.approx((0.2 + 0.1 + 0) / 3)
+    assert out["chosen"]["rrf_k"] == 60 and out["chosen"]["leg_weights"] == weights(0.0, 0.5)
+    assert len(search.calls) == 36 * 3
     assert all(c["mode"] == "hybrid" and c["policy"] == rev.DEFAULT_POLICY
                for c in search.calls)
+
+
+def test_image_vs_vector_uses_only_queries_vector_answered():
+    def entry(rows):
+        return {"per_query": {i: {"ndcg@10": n, "returned@10": r, "exclude_violation@10": v}
+                              for i, (n, r, v) in rows.items()}}
+
+    report = {"parsers": {"gold": {"modes": {
+        "vector": entry({"a": (0.4, 1.0, 0.5), "b": (0.6, 0.5, None), "c": (0.0, 0.0, None)}),
+        "image": entry({"a": (0.6, 1.0, 0.2), "b": (0.6, 1.0, None), "c": (0.3, 1.0, 0.0)}),
+        "label": entry({"a": (0.9, 1.0, 0.0), "b": (0.9, 1.0, None), "c": (0.1, 1.0, None)})}}}}
+    out = rev.image_vs_vector(report)
+    assert out["n_common"] == 2                       # c: vector returned nothing
+    assert out["ndcg@10"] == pytest.approx({"image": 0.6, "vector": 0.5})
+    assert (out["wins"], out["ties"], out["losses"]) == (1, 1, 0)
+    # only a has a vector violation rate; c is out of scope although image has one
+    assert out["exclude_violation@10"] == pytest.approx({"image": 0.2, "vector": 0.5})
+    assert out["vector_unanswered"]["n"] == 1
+    assert out["vector_unanswered"]["ndcg@10"] == pytest.approx({"image": 0.3, "label": 0.1})
+    assert out["s2_passed"] is True
+
+    worse = {"parsers": {"gold": {"modes": {
+        "vector": entry({"a": (0.4, 1.0, 0.1)}), "image": entry({"a": (0.6, 1.0, 0.2)})}}}}
+    out = rev.image_vs_vector(worse)
+    assert out["s2_passed"] is False                  # better ndcg, but more violations
+    assert out["vector_unanswered"] == {"n": 0, "ndcg@10": {"image": None, "label": None}}
+
+    plain = {"parsers": {"gold": {"modes": {
+        "vector": entry({"a": (0.4, 1.0, None)}), "image": entry({"a": (0.6, 1.0, None)})}}}}
+    out = rev.image_vs_vector(plain)
+    assert out["exclude_violation@10"] == {"image": None, "vector": None}
+    assert out["s2_passed"] is True                   # no exclude query: that half holds
+
+    assert rev.image_vs_vector({"parsers": {"gold": {"modes": {"vector": entry({})}}}}) is None
+    assert rev.image_vs_vector({"parsers": {"rule": {"modes": {}}}}) is None
+
+
+def test_ablation_runs_every_configuration_through_search(rows, parser, matrix, agreement,
+                                                           fake_search):
+    fusion = FusionParams(60, weights(1.0, 1.0, 0.5), 80, 90, 70)
+    out = rev.ablation(rows, state=None, parser=parser, matrix=matrix, agreement=agreement,
+                       projection_of=PROJECTION, fusion=fusion, search=fake_search)
+    names = ["label", "vector", "image", "filter+vector", "filter+report", "filter+image",
+             "hybrid_main", "hybrid"]
+    assert out["n"] == 3 and out["policy"] == "exclude_present/EXCLUDE"
+    assert list(out["configs"]) == names and list(out["per_query"]) == names
+    assert set(out["per_query"]["label"]) == {"en-001", "en-002", "vi-001"}
+    assert out["configs"]["label"]["ndcg@10"] == pytest.approx(
+        sum(out["per_query"]["label"].values()) / 3)
+
+    calls = fake_search.calls
+    assert len(calls) == 8 * 3                         # the row without gold is never searched
+    by_name = {name: calls[i * 3:(i + 1) * 3] for i, name in enumerate(names)}
+    assert {n: {c["mode"] for c in cs} for n, cs in by_name.items()} == {
+        "label": {"label"}, "vector": {"vector"}, "image": {"image"},
+        "filter+vector": {"hybrid"}, "filter+report": {"hybrid"}, "filter+image": {"hybrid"},
+        "hybrid_main": {"hybrid"}, "hybrid": {"hybrid"}}
+    assert all(c["policy"] == rev.DEFAULT_POLICY for c in calls)
+    report_only = by_name["filter+report"][0]["fusion"]
+    assert (report_only.weight("vector"), report_only.weight("report"),
+            report_only.weight("image")) == (0.0, 1.0, 0.0)
+    assert by_name["filter+image"][0]["fusion"].weight("image") == 1.0
+    assert by_name["filter+vector"][0]["fusion"].rrf_k == 60
+    assert by_name["hybrid_main"][0]["fusion"] == FusionParams(10, weights(0.5, 1.0), 80, 90, 70)
+    assert by_name["hybrid"][0]["fusion"] == fusion
+    assert (report_only.vector_top_k, report_only.report_top_k, report_only.image_top_k) == (
+        80, 90, 70)
 
 
 def test_verdict_uses_the_three_thresholds():

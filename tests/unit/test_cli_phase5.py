@@ -196,11 +196,18 @@ def test_eval_retrieval_builds_the_state_from_the_canonical_dir_flag(world, monk
 def test_eval_retrieval_grid_writes_the_grid_section(world, monkeypatch, capsys):
     # the state runs the chosen fusion; the grid section records it next to the plan default
     world.state.fusion = FusionParams(10, {"vector": 0.5, "report": 1.0}, 100, 100)
-    config = {"rrf_k": 60, "leg_weights": {"vector": 1.0, "report": 1.0},
+    config = {"rrf_k": 60, "leg_weights": {"vector": 1.0, "report": 1.0, "image": 0.5},
               "ndcg@10": 0.5, "p@10": 0.4}
-    grid = {"configs": [config] * 9, "chosen": config, "default_ndcg": 0.5}
-    monkeypatch.setattr("src.evaluation.retrieval_eval.grid_search", lambda rows, **kw: grid)
+    grid = {"configs": [config] * 9, "chosen": config, "baseline_ndcg": 0.5}
+    seen = {}
+
+    def fake_grid(rows, **kw):
+        seen.update(kw)
+        return grid
+
+    monkeypatch.setattr("src.evaluation.retrieval_eval.grid_search", fake_grid)
     assert run(world, "--split", "dev", "--grid") == 0
+    assert seen["baseline"] is world.state.fusion
     data = json.loads(world.out.read_text(encoding="utf-8"))
     assert "eval" not in data and data["grid"]["chosen"] == config
     assert data["grid"]["build_id"] == "b1" and data["grid"]["benchmark"]["split"] == "dev"
@@ -209,4 +216,53 @@ def test_eval_retrieval_grid_writes_the_grid_section(world, monkeypatch, capsys)
                                               "leg_weights": {"vector": 0.5, "report": 1.0}}
     out = capsys.readouterr().out
     out.encode("ascii")
-    assert out.count("rrf_k=60 ") == 9 and "chosen: " in out
+    assert out.count("rrf_k=60 ") == 9 and out.count("image=0.5 ") == 9
+    assert "chosen: " in out and "baseline_ndcg=0.500" in out
+
+
+def test_eval_retrieval_ablation_writes_its_section_and_prints_one_line_per_config(
+        world, monkeypatch, capsys):
+    metrics = {"ndcg@10": 0.4, "p@10": 0.3, "exclude_violation@10": None, "n": 1}
+    result = {"n": 1, "policy": "exclude_present/EXCLUDE",
+              "configs": {"label": metrics, "image": metrics}, "per_query": {}}
+    seen = {}
+
+    def fake_ablation(rows, **kw):
+        seen.update(kw)
+        return result
+
+    monkeypatch.setattr("src.evaluation.retrieval_eval.ablation", fake_ablation)
+    assert run(world, "--split", "dev", "--ablation") == 0
+    assert seen["fusion"] is world.state.fusion
+    data = json.loads(world.out.read_text(encoding="utf-8"))
+    assert "eval" not in data and data["ablation"]["configs"]["image"] == metrics
+    assert data["ablation"]["build_id"] == "b1"
+    out = capsys.readouterr().out
+    out.encode("ascii")
+    assert "label          ndcg=0.400 p@10=0.300 viol=n/a" in out
+
+
+def test_eval_retrieval_refuses_ablation_on_heldout(world, capsys):
+    assert run(world, "--split", "heldout", "--ablation") == 1
+    assert "ablation runs on dev only" in capsys.readouterr().err
+    assert not world.out.exists()
+
+
+def test_eval_retrieval_prints_image_vs_vector_after_the_verdict(world, monkeypatch, capsys):
+    monkeypatch.setattr("src.evaluation.retrieval_eval.evaluate_retrieval",
+                        lambda rows, **kw: canned(kw["parsers"], kw["modes"]))
+    monkeypatch.setattr("src.evaluation.retrieval_eval.verdict", lambda report, t: PASSING)
+    comparison = {"n_common": 2, "ndcg@10": {"image": 0.6, "vector": 0.5}, "wins": 1,
+                  "ties": 1, "losses": 0, "s2_passed": True}
+    monkeypatch.setattr("src.evaluation.retrieval_eval.image_vs_vector",
+                        lambda report: comparison)
+    assert run(world, "--split", "dev", "--parsers", "gold", "--modes", "vector", "image",
+               "hybrid") == 0
+    saved = json.loads(world.out.read_text(encoding="utf-8"))["eval"]
+    assert saved["image_vs_vector"] == comparison
+    assert ("image_vs_vector: n=2 ndcg image=0.600 vector=0.500 wins/ties/losses=1/1/0 s2=PASS"
+            in capsys.readouterr().out)
+    # without the image mode there is nothing to compare, and no line
+    assert run(world, "--split", "dev", "--parsers", "gold", "--modes", "vector", "hybrid") == 0
+    assert "image_vs_vector" not in capsys.readouterr().out
+    assert "image_vs_vector" not in json.loads(world.out.read_text(encoding="utf-8"))["eval"]

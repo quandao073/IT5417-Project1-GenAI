@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 import polars as pl
+import pytest
 
 from src.cli.main import build_parser, main
 from src.embeddings.validate import Check
@@ -34,6 +35,16 @@ def test_build_probe_pool_defaults_do_not_touch_main_paths():
 
 def test_bench_vector_accepts_image_mode():
     assert build_parser().parse_args(["bench-vector", "--mode", "image"]).mode == "image"
+
+
+def test_eval_retrieval_accepts_image_mode_and_ablation_flag():
+    parse = build_parser().parse_args
+    assert parse(["eval-retrieval", "--modes", "image"]).modes == ["image"]
+    assert parse(["eval-retrieval"]).modes == ["label", "vector", "hybrid"]
+    assert parse(["eval-retrieval"]).ablation is False
+    assert parse(["eval-retrieval", "--ablation"]).ablation is True
+    with pytest.raises(SystemExit):
+        parse(["eval-retrieval", "--grid", "--ablation"])
 
 
 def _eight_check_setup(tmp_path, monkeypatch):

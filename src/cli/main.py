@@ -539,9 +539,20 @@ def _print_grid(grid: dict) -> None:
     for c in grid["configs"]:
         w = c["leg_weights"]
         print(f"rrf_k={c['rrf_k']:<3} vector={w['vector']} report={w['report']} "
-              f"ndcg={c['ndcg@10']:.3f} p@10={c['p@10']:.3f}")
+              f"image={w['image']} ndcg={c['ndcg@10']:.3f} p@10={c['p@10']:.3f}")
     print(f"chosen: {json.dumps(grid['chosen'], ensure_ascii=True)} "
-          f"default_ndcg={grid['default_ndcg']:.3f}")
+          f"baseline_ndcg={grid['baseline_ndcg']:.3f}")
+
+
+def _print_image_vs_vector(result: dict | None) -> None:
+    if result is None:
+        print("image_vs_vector: n/a")
+        return
+    m = result["ndcg@10"]
+    print(f"image_vs_vector: n={result['n_common']} ndcg image={_f(m['image'])} "
+          f"vector={_f(m['vector'])} wins/ties/losses="
+          f"{result['wins']}/{result['ties']}/{result['losses']} "
+          f"s2={'PASS' if result['s2_passed'] else 'FAIL'}")
 
 
 def _cmd_eval_retrieval(args: argparse.Namespace) -> int:
@@ -560,7 +571,10 @@ def _cmd_eval_retrieval(args: argparse.Namespace) -> int:
     if args.grid and args.split != "dev":
         print("grid runs on dev only", file=sys.stderr)
         return 1
-    need_llm = "auto" in args.parsers and not args.grid
+    if args.ablation and args.split != "dev":
+        print("ablation runs on dev only", file=sys.stderr)
+        return 1
+    need_llm = "auto" in args.parsers and not (args.grid or args.ablation)
     parser, status = _build_parser_or_exit(need_llm)
     if need_llm and status == "ok":
         with contextlib.suppress(ParseError):      # pay the cold start outside the scored rows
@@ -584,11 +598,19 @@ def _cmd_eval_retrieval(args: argparse.Namespace) -> int:
               "build_id": state.manifest["build_id"]}
     fusion = dataclasses.asdict(state.fusion)
     if args.grid:
-        grid = rev.grid_search(rows, **shared)
+        grid = rev.grid_search(rows, baseline=state.fusion, **shared)
         _merge_json(out, "grid", {**grid, **extras,
                                   "fusion_default": dataclasses.asdict(rev.DEFAULT_FUSION),
                                   "fusion_current": fusion})
         _print_grid(grid)
+        print(f"report     : {args.out}")
+        return 0
+    if args.ablation:
+        result = rev.ablation(rows, fusion=state.fusion, **shared)
+        _merge_json(out, "ablation", {**result, **extras, "fusion_current": fusion})
+        for name, m in result["configs"].items():
+            print(f"{name:<14} ndcg={_f(m['ndcg@10'])} p@10={_f(m['p@10'])} "
+                  f"viol={_f(m['exclude_violation@10'])}")
         print(f"report     : {args.out}")
         return 0
     policies = [rev.DEFAULT_POLICY] + ([rev.NEGATION_POLICY]
@@ -602,11 +624,16 @@ def _cmd_eval_retrieval(args: argparse.Namespace) -> int:
     judged = "gold" in args.parsers and {"vector", "hybrid"} <= set(args.modes)
     v = rev.verdict(report, load_config("evaluation")["thresholds"]) if judged else None
     report["verdict"] = v
+    compared = "gold" in args.parsers and {"image", "vector"} <= set(args.modes)
+    if compared:
+        report["image_vs_vector"] = rev.image_vs_vector(report)
     _merge_json(out, "eval", report)
 
     _print_eval_table(report, args.verbose)
     print("verdict: n/a (needs gold + vector + hybrid)" if v is None else
           f"verdict: {'PASS' if v['passed'] else 'FAIL'} {json.dumps(v, ensure_ascii=True)}")
+    if compared:
+        _print_image_vs_vector(report["image_vs_vector"])
     print(f"report     : {args.out}")
     return 0 if v is None or v["passed"] else 1
 
@@ -731,16 +758,20 @@ def build_parser() -> argparse.ArgumentParser:
     ev.add_argument("--verbose", action="store_true", help="print every mismatch (ASCII)")
     ev.set_defaults(func=_cmd_eval_parser)
 
-    er = sub.add_parser("eval-retrieval", help="Phase 5: score label / vector / hybrid search")
+    er = sub.add_parser("eval-retrieval",
+                        help="Phase 5: score label / vector / image / hybrid search")
     er.add_argument("--benchmark", default="benchmarks/parser_queries_v1.jsonl")
     er.add_argument("--split", choices=["heldout", "dev", "all"], default="heldout")
-    er.add_argument("--modes", nargs="+", choices=["label", "vector", "hybrid"],
+    er.add_argument("--modes", nargs="+", choices=["label", "vector", "image", "hybrid"],
                     default=["label", "vector", "hybrid"])
     er.add_argument("--parsers", nargs="+", choices=["gold", "rule", "auto"],
                     default=["gold", "rule", "auto"])
     er.add_argument("--policies", choices=["default", "negation_both"], default="negation_both")
-    er.add_argument("--grid", action="store_true",
-                    help="fusion grid on gold + hybrid; dev split only")
+    only = er.add_mutually_exclusive_group()
+    only.add_argument("--grid", action="store_true",
+                      help="fusion grid on gold + hybrid; dev split only")
+    only.add_argument("--ablation", action="store_true",
+                      help="leg ablation on gold queries; dev split only")
     er.add_argument("--canonical-dir", default="data/canonical")
     er.add_argument("--out", default="artifacts/metrics/retrieval_eval.json")
     er.add_argument("--verbose", action="store_true", help="print every per-query row (ASCII)")

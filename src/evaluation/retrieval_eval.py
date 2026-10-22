@@ -33,8 +33,10 @@ NEGATION_POLICY = ("explicit_absence_required", "EXCLUDE")
 AGREEMENT_STATUSES = ("PRESENT", "UNCERTAIN", "ABSENT")   # axis 2 of AgreementMatrix.counts
 TOP_K = 10
 DEFAULT_FUSION = FusionParams(60, {"vector": 1.0, "report": 1.0}, 100, 100)
-GRID = [FusionParams(rrf_k, {"vector": vector, "report": report}, 100, 100)
-        for rrf_k in (10, 60, 200) for vector, report in ((1.0, 1.0), (1.0, 0.5), (0.5, 1.0))]
+GRID = [FusionParams(rrf_k, {"vector": vector, "report": report, "image": image}, 100, 100, 100)
+        for rrf_k in (10, 60) for vector in (0.0, 0.5, 1.0) for report in (0.5, 1.0)
+        for image in (0.0, 0.5, 1.0)]
+LEGS = ("vector", "report", "image")
 
 
 @dataclass(frozen=True)
@@ -221,40 +223,118 @@ def evaluate_retrieval(rows: Sequence[BenchmarkQuery], *, state, parser: QueryPa
     return report
 
 
+def _weights(leg_weights: Mapping[str, float]) -> dict[str, float]:
+    return {leg: leg_weights.get(leg, 0.0) for leg in LEGS}
+
+
 def _is(config: Mapping, params: FusionParams) -> bool:
     return (config["rrf_k"] == params.rrf_k
-            and dict(config["leg_weights"]) == dict(params.leg_weights))
+            and _weights(config["leg_weights"]) == _weights(params.leg_weights))
 
 
-def choose(configs: Sequence[dict], default: FusionParams, *,
+def choose(configs: Sequence[dict], baseline: FusionParams, *,
            min_gain: float = 0.005) -> FusionParams:
-    """The best mean ndcg@10 (first on ties), unless it beats the default by less than
+    """The best mean ndcg@10 (first on ties), unless it beats the baseline by less than
     `min_gain`: 40 dev queries are too few to trust a smaller gain (spec 11.5)."""
-    baseline = next(c["ndcg@10"] for c in configs if _is(c, default))
+    base = next((c["ndcg@10"] for c in configs if _is(c, baseline)), None)
+    if base is None:
+        raise ValueError(f"baseline {baseline.rrf_k}/{_weights(baseline.leg_weights)} "
+                         "is not among the configs")
     best = max(configs, key=lambda c: c["ndcg@10"])
-    if best["ndcg@10"] - baseline < min_gain:
-        return default
-    return FusionParams(best["rrf_k"], dict(best["leg_weights"]), default.vector_top_k,
-                        default.report_top_k)
+    if best["ndcg@10"] - base < min_gain:
+        return baseline
+    return FusionParams(best["rrf_k"], dict(best["leg_weights"]), baseline.vector_top_k,
+                        baseline.report_top_k, baseline.image_top_k)
+
+
+def _gold_run(rows: Sequence[BenchmarkQuery], mode: str, params: FusionParams,
+                     **shared) -> dict:
+    report = evaluate_retrieval(rows, parsers=["gold"], modes=[mode],
+                                policies=[DEFAULT_POLICY], fusion=params, **shared)
+    return report["parsers"]["gold"]["modes"][mode]
 
 
 def grid_search(rows: Sequence[BenchmarkQuery], *, state, parser: QueryParser,
                 matrix: lf.LabelMatrix, agreement: AgreementMatrix,
-                projection_of: Mapping[str, str], search=pipeline.run_search) -> dict:
-    """Hybrid on gold queries at the default policy, once per GRID entry. Dev only: the
-    heldout split never runs a grid (spec 11.5)."""
+                projection_of: Mapping[str, str], baseline: FusionParams,
+                search=pipeline.run_search) -> dict:
+    """Hybrid on gold queries at the default policy, once per GRID entry; the chosen entry
+    must beat `baseline` (the running fusion) by `min_gain`. Dev only: the heldout split
+    never runs a grid (spec 11.5)."""
+    shared = {"state": state, "parser": parser, "matrix": matrix, "agreement": agreement,
+              "projection_of": projection_of, "search": search}
     configs = []
     for params in GRID:
-        report = evaluate_retrieval(rows, state=state, parser=parser, matrix=matrix,
-                                    agreement=agreement, projection_of=projection_of,
-                                    parsers=["gold"], modes=["hybrid"],
-                                    policies=[DEFAULT_POLICY], fusion=params, search=search)
-        metrics = report["parsers"]["gold"]["modes"]["hybrid"]["metrics"]
+        metrics = _gold_run(rows, "hybrid", params, **shared)["metrics"]
         configs.append({"rrf_k": params.rrf_k, "leg_weights": dict(params.leg_weights),
                         "ndcg@10": metrics["ndcg@10"], "p@10": metrics["p@10"]})
-    chosen = choose(configs, DEFAULT_FUSION)
+    chosen = choose(configs, baseline)
     return {"configs": configs, "chosen": next(c for c in configs if _is(c, chosen)),
-            "default_ndcg": next(c["ndcg@10"] for c in configs if _is(c, DEFAULT_FUSION))}
+            "baseline_ndcg": next(c["ndcg@10"] for c in configs if _is(c, baseline))}
+
+
+def _mean(values: Sequence[float]) -> float | None:
+    return sum(values) / len(values) if values else None
+
+
+def image_vs_vector(report: dict, *, k: int = TOP_K) -> dict | None:
+    """Gold-parser image against vector on the queries vector answered (returned > 0), so the
+    image's wins on queries vector left empty do not flatter it; those are reported apart.
+    `s2_passed` needs a better mean ndcg and, when any query excludes, fewer violations."""
+    modes = report["parsers"].get("gold", {}).get("modes", {})
+    if "image" not in modes or "vector" not in modes:
+        return None
+    image, vector = modes["image"]["per_query"], modes["vector"]["per_query"]
+    ndcg, violation = f"ndcg@{k}", f"exclude_violation@{k}"
+    common = [i for i, m in vector.items() if m[f"returned@{k}"] > 0]
+    unanswered = [i for i in vector if i not in common]
+    diffs = [image[i][ndcg] - vector[i][ndcg] for i in common]
+    # Same ids on both sides, or the two rates are not comparable.
+    scored = [i for i in common
+              if vector[i][violation] is not None and image[i][violation] is not None]
+    viol = {"image": _mean([image[i][violation] for i in scored]),
+            "vector": _mean([vector[i][violation] for i in scored])}
+    label = modes.get("label", {}).get("per_query")
+    mean = {"image": _mean([image[i][ndcg] for i in common]),
+            "vector": _mean([vector[i][ndcg] for i in common])}
+    violation_ok = viol["vector"] is None or viol["image"] < viol["vector"]
+    return {"n_common": len(common), ndcg: mean,
+            "wins": sum(d > 1e-9 for d in diffs), "ties": sum(abs(d) <= 1e-9 for d in diffs),
+            "losses": sum(d < -1e-9 for d in diffs), violation: viol,
+            "vector_unanswered": {
+                "n": len(unanswered),
+                ndcg: {"image": _mean([image[i][ndcg] for i in unanswered]),
+                       "label": _mean([label[i][ndcg] for i in unanswered]) if label else None}},
+            "s2_passed": bool(common) and mean["image"] > mean["vector"] and violation_ok}
+
+
+def ablation(rows: Sequence[BenchmarkQuery], *, state, parser: QueryParser,
+             matrix: lf.LabelMatrix, agreement: AgreementMatrix,
+             projection_of: Mapping[str, str], fusion: FusionParams,
+             search=pipeline.run_search) -> dict:
+    """Which leg earns its place: the single-leg modes, hybrid with one leg only (the label
+    filter stays on), the shipped-before fusion and the running one. Gold queries, default
+    policy; dev only."""
+    def with_weights(rrf_k: int, vector: float, report: float, image: float) -> FusionParams:
+        return FusionParams(rrf_k, {"vector": vector, "report": report, "image": image},
+                            fusion.vector_top_k, fusion.report_top_k, fusion.image_top_k)
+
+    runs = {"label": ("label", fusion), "vector": ("vector", fusion), "image": ("image", fusion),
+            "filter+vector": ("hybrid", with_weights(fusion.rrf_k, 1.0, 0.0, 0.0)),
+            "filter+report": ("hybrid", with_weights(fusion.rrf_k, 0.0, 1.0, 0.0)),
+            "filter+image": ("hybrid", with_weights(fusion.rrf_k, 0.0, 0.0, 1.0)),
+            "hybrid_main": ("hybrid", with_weights(10, 0.5, 1.0, 0.0)),
+            "hybrid": ("hybrid", fusion)}
+    shared = {"state": state, "parser": parser, "matrix": matrix, "agreement": agreement,
+              "projection_of": projection_of, "search": search}
+    out: dict = {"n": None, "policy": _policy_name(DEFAULT_POLICY), "configs": {},
+                 "per_query": {}}
+    for name, (mode, params) in runs.items():
+        entry = _gold_run(rows, mode, params, **shared)
+        out["configs"][name] = entry["metrics"]
+        out["per_query"][name] = {i: m["ndcg@10"] for i, m in entry["per_query"].items()}
+        out["n"] = entry["metrics"]["n"]
+    return out
 
 
 def _check(value: float | None, threshold: float) -> dict:
