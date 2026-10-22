@@ -21,15 +21,22 @@ Ba mục đó đủ để không phá vỡ thứ gì. Các mục còn lại tra 
 
 > Cập nhật lại mục này mỗi lần ghi log. Mục này mà cũ thì tệ hơn là không có.
 
-**Cập nhật lần cuối:** 2026-10-23 (D28: giữ scope V1, không thêm KG; mở P12 về vector leg; đo ablation, pool ngoài corpus và RadGraph-XL, thêm T29; dọn file: bỏ phương án không chọn, ghi chú đã lỗi thời và phần trùng với README/code)
+**Cập nhật lần cuối:** 2026-10-23, bản của nhánh `feat/image-concept-probe` (image probe: D29, P12 trả lời bằng số đo, khối *Image probe* trong *Sự thật đã đo*). Trước đó cùng ngày, trên `main`: D28 (giữ scope V1, không thêm KG); mở P12 về vector leg; đo ablation, pool ngoài corpus và RadGraph-XL, thêm T29; dọn file
 
 | | |
 |---|---|
 | Đã xong | Part A · Phase 0a · Phase 1 (canonical corpus 25.000 study) · Phase 2 (model gate: BiomedCLIP) · Phase 3 (vector baseline) · Phase 4 (parser + label mode) — parser mặc định OpenAI gpt-5-mini PASS heldout (D22, Phase 4c); qwen 3B cũ FAIL (Phase 4) · **Phase 5 (report FTS + hybrid)** — heldout, gold: nDCG@10 hybrid / vector / label **0,607 / 0,235 / 0,531**, p@10 1,000 / 0,359 / 1,000, exclude_violation@10 vector 0,319 so với hybrid 0; verdict **PASS** (gain 1,579) |
+| Nhánh | `feat/image-concept-probe` (local, chưa merge, chưa push): image probe — S1/S2/S3/S4 = **PASS/PASS/FAIL/PASS** (D29). Heldout gold nDCG@10 mode `image` 0,299 (vector 0,235); trên 138 câu vector trả lời 0,297 so với 0,259, vi phạm exclude 0,165 so với 0,319. Lưới dev giữ trọng số ảnh 0 trong hybrid, nên hybrid 0,607 trùng từng bit với `main`. Chờ người dùng quyết merge (P12). → `docs/image-probe.md` |
 | Đang làm | — |
 | Tiếp theo | **Phase 6 (web UI)**, hoặc Phase 0b song song |
 | Chặn Phase 6 | `pnpm` chưa cài trên máy (T5), cùng chỗ chặn với Phase 0b. P9 đã chốt thành D26; P4, P5, P8, P11, P12 còn mở nhưng không chặn (P5 chọn khi build image ở Phase 6) |
 | Chặn Phase 0b | `pnpm` chưa cài trên máy — xem T5 |
+
+Nhánh thêm `src/data/probe_pool.py`, `src/embeddings/probe.py`, `src/evaluation/probe_eval.py`,
+`src/retrieval/image_concepts.py` (mode `image` và nhánh ảnh của hybrid nằm trong `pipeline.py`/`hybrid.py`)
+và chỉ ghi artifact mới, không ghi đè file nào của `main`: `data/probe_pool/`, `data/indexes/image_probe/`,
+`artifacts/metrics/{image_probe,retrieval_dev_image_probe,retrieval_eval_image_probe,vector_baseline_image_probe}.json`,
+heldout đóng băng `artifacts/metrics/retrieval_eval_heldout_image_probe_20261023.json` (sha256 `af019789…`).
 
 Dữ liệu, chỉ mục và artifact đều gitignored; lệnh dựng lại nằm ở `README.md`. Những điều README không nói:
 
@@ -48,12 +55,12 @@ Dữ liệu, chỉ mục và artifact đều gitignored; lệnh dựng lại n�
 Lệnh kiểm tra sau mỗi thay đổi:
 
 ```bash
-uv run pytest -q                 # 821 tests (4 `model` + 3 `integration` + 3 `llm` bị bỏ chọn mặc định)
+uv run pytest -q                 # 912 tests trên nhánh (4 `model` + 4 `integration` + 3 `llm` bị bỏ chọn mặc định)
 uv run pytest -m llm             # 3 test parse thật qua LLM đang cấu hình (mặc định OpenAI, đọc .env): 2 passed, 1 xpassed
 uv run pytest -m model           # 4 smoke test adapter thật, cần weights đã tải
-uv run pytest -m integration     # 3 test: 50 ảnh vector, 50 ảnh hybrid, evidence trên 1.000 report thật;
-                                 # cần Qdrant Docker (`docker compose up -d qdrant`)
-uv run cxr validate-indexes      # 7 x PASS (thứ 7: report index), cần Qdrant Docker
+uv run pytest -m integration     # 4 test: 50 ảnh vector, 50 ảnh hybrid, evidence trên 1.000 report thật,
+                                 # mode image với probe thật; cần Qdrant Docker (`docker compose up -d qdrant`)
+uv run cxr validate-indexes      # 8 x PASS (thứ 7: report index, thứ 8: image probe), cần Qdrant Docker
 uv run ruff check src tests
 uv run cxr --help
 docker compose config > /dev/null
@@ -413,6 +420,27 @@ join theo text đã chuẩn hóa (T29). Đếm theo lần nhắc (entity), khôn
 | Thử truy vấn giải phẫu: opacity/opacities/consolidation/atelectasis `located_at` anatomy có "left" + lower/base/basilar (tính cả modifier) | 3.864 lần nhắc present · 15 absent |
 | Nguồn gốc | `data_split: "inference"`: output của model, không phải nhãn người; chưa kiểm chất lượng bằng mắt trên mẫu nào |
 
+### Image probe (đo 2026-10-23, nhánh `feat/image-concept-probe`)
+
+**Cách đo:** pool `data/probe_pool/` (`pool.json` ghi `a16f1d3`), embed CPU ở `0940d3e` (`shards.json`), build
+`20261023_pool88k_biomedclip_v1`; `uv run cxr train-probe` ở `6f774bb`; lưới dev, dev tham chiếu, ablation,
+heldout và `bench-vector` ở `6f774bb` với `retrieval.yaml` chỉ đổi comment, mỗi lệnh có `--out` riêng của
+nhánh (lệnh đầy đủ: `docs/image-probe.md`, *Tái lập*). Corpus build `20261011_chexpert25k_biomedclip_v1`,
+`validate-indexes` 8/8, Qdrant Docker, không có API chạy. Heldout chạy một lần (8 phút 2 giây), đóng băng
+`retrieval_eval_heldout_image_probe_20261023.json`, sha256 `af019789…`. Bảng theo concept, nhóm và ngôn
+ngữ: `docs/image-probe.md`.
+
+| Hạng mục | Giá trị | Nguồn |
+|---|---|---|
+| Pool ngoài corpus | 88.853 study / 46.682 bệnh nhân (AP 71.692 / PA 17.161), chỉ `train/`, 0 bệnh nhân chung với corpus (kiểm lại bằng polars); embed CPU 0,0815 s/ảnh, 7.242 s | `pool.json`, `shards.json` |
+| Chọn λ: macro strict AUROC trên pool-val (13 concept, 9.037 study) | 0,1 **0,6196** · 1 0,6166 · 10 0,6114 · 100 0,6051 → λ 0,1, ở mép lưới chọn trước | `image_probe.json:probe.selection` |
+| Corpus: macro strict AUROC 14 concept | zero-shot 0,599 · ensemble (A1) 0,599 · prompt đối (A2) 0,640 · **probe 0,659**; probe − zero-shot +0,060 [0,050; 0,069] paired → S1 PASS. Probe hơn zero-shot 13/14 (Fracture 0,487 < 0,520), hơn A2 7/14; yếu: Fracture 0,487, Lung Lesion 0,533, Pleural Other 0,563 | `image_probe.json:probe.comparison` |
+| Lưới dev, 36 cấu hình (gold, hybrid, 38 câu) | mốc (`rrf_k` 10; vector 0,5 / report 1 / image 0) 0,6565 = `chosen`; tốt nhất (10; 0 / 1 / 0,5) 0,6605, +0,0040 < 0,005 → **S3 FAIL**, `image` giữ 0 | `retrieval_dev_image_probe.json:grid` |
+| Ablation dev, nDCG@10 | image 0,367 · lọc + chỉ vector 0,611 · lọc + chỉ image 0,632 · lọc + chỉ report 0,658 · hybrid 0,657 | `…:ablation.configs` |
+| Heldout gold, nDCG@10 (152 câu) | label 0,531 · vector 0,235 · **image 0,299** · hybrid 0,607 → S4 PASS. Gold và rule ở label / vector / hybrid trùng từng bit với Phase 5 lần 2 | `eval.parsers.gold.modes.<mode>.metrics` |
+| `image_vs_vector` (138 câu vector trả lời) | nDCG@10 0,297 / 0,259, thắng / hòa / thua 77 / 12 / 49, vi phạm exclude 0,165 / 0,319 (26 câu) → **S2 PASS**. 14 câu VI chỉ có exclude: image 0,312, thứ tự label 0,328 | `eval.image_vs_vector` |
+| Latency p50 / p95 ms | trong tiến trình (gold): image 22 / 33, hybrid 215 / 279; `bench-vector` warm tổng 152,2 / 171,5, cold 7.450 | `latency_ms`; `vector_baseline_image_probe.json` |
+
 ---
 
 ## Quyết định đang có hiệu lực
@@ -452,7 +480,23 @@ join theo text đã chuẩn hóa (T29). Đếm theo lần nhắc (entity), khôn
 | D26 | **P9 đóng:** câu EN chỉ có exclude → cả hai parser encode nguyên văn; VI → bỏ vector leg | spec Phase 4 §4.2 (LLM `findings` rỗng → `""`) | Baseline vector phải có thứ để encode và phơi điểm mù phủ định; hybrid không bị |
 | D27 | **Từ vựng report (`report`) tách khỏi lexicon parser (`en`/`vi`)** | `concepts.yaml` header ("FTS5 MATCH builder … use `en` ONLY") | `en` khớp 140/2.442 study Lung Lesion; parser không được đổi sau khi đo heldout Phase 4 |
 | D28 | **Giữ scope V1, không thêm KG vào đồ án chuyên ngành 1.** KG (RadGraph, UMLS/RadLex, Neo4j) vẫn thuộc V2 như `docs/scope-and-non-goals.md` | — (xác nhận lại scope, không ghi đè) | Người dùng xác nhận 2026-10-23: đề đã đăng ký cho môn là "hệ thống truy vấn ảnh X-quang phổi bằng ngôn ngữ tự nhiên", không nêu KG; đề có KG được dán vào ngày 2026-10-22 không phải đề của môn này. Phase 6–7 còn trong Definition of Done, và hybrid V1 là mốc mà KG phải vượt. Đầu vào cho thiết kế V2: *Sự thật đã đo*, RadGraph-XL; T29; cần cầu nối KG ↔ ảnh, chuẩn hóa thuật ngữ và ground truth do người chấm |
+| D29 | **Image concept probe (nhánh `feat/image-concept-probe`, local):** 14 probe logistic L2 trên embedding BiomedCLIP đóng băng, train **chỉ trên pool ngoài corpus** (88.853 study / 46.682 bệnh nhân, chỉ `train/`, λ 0,1 chọn trên pool-val); mode mới `image` xếp toàn corpus bằng điểm probe, không nhãn, không report; `hybrid` có nhánh `image` nhưng **trọng số 0** vì lưới dev giữ mốc (S3 FAIL), nên nhánh không chạy và hybrid giống hệt `main`; prompt ensemble / prompt đối (hướng A) chỉ được đo | §11.1–11.3 (ba mode, hai nhánh) | Ảnh cần một tín hiệu tự đứng được (P12) mà không finetune encoder (ngoài scope, D28). Đo: S1 PASS (+0,060 AUROC), S2 PASS (`image` hơn `vector` trên câu chung, vi phạm exclude giảm gần nửa), S3 FAIL (+0,0040 < 0,005), S4 PASS (0,607). → `docs/image-probe.md` |
 | — | **Lệch nhỏ của Phase 5:** `blocked_phrases` cho T20; mode mặc định của request giữ `vector`; report index gắn corpus canonical, không gắn `build_id`; `validate-indexes` 7 check; `cxr eval-retrieval` thay cho `cxr evaluate` của §20 (lệnh `evaluate`/`benchmark` của Makefile vẫn trỏ tới `cxr evaluate` chưa tồn tại — ghi nhận, để Phase 7); `per_query` của JSON là dict theo id với các metric, không phải list kèm id đã xếp hạng như spec Phase 5 §11.6 (danh sách xếp hạng cho error analysis để Phase 7); `cxr eval-retrieval` không có `--indexes-dir`/`--qdrant-url` (lấy từ `Settings`); `--report-index` của `validate-indexes` mặc định là `<indexes-dir>/report_search.sqlite`; `evidence_faithful` của spec Phase 5 §11.4 không vào JSON (thay bằng tính đúng theo cấu trúc và round trip 50 ảnh của integration test, xem T26); khối `retrieval.yaml:constraints` (`include_accepts`, `exclude_requires`, `not_mentioned_satisfies_exclude`, `strictness_default`) là dead config, không module nào đọc, và `exclude_requires: [ABSENT]` nói ngược D9. Cũng dead: `report_search.tokenizer` (index hardcode `report_index.TOKENIZER`), `explanation.verify_spans_against_report` (pipeline luôn kiểm, không đọc key), `degradation.on_report_index_unavailable` (`vector_and_label_only` nói sai: thiếu index thì hybrid vẫn chạy, chỉ không có report leg). Giữ nguyên, dọn khi có dịp | — | — |
+
+**D29, những quyết định code không tự nói** (spec `docs/superpowers/specs/2026-10-23-image-concept-probe-design.md` §2.2):
+- **C1** Hướng A (prompt ensemble, prompt đối) chỉ là dòng đo trong `image_probe.json`, không vào runtime: chỗ
+  duy nhất nó tác động là câu không nhận ra concept, và benchmark không chấm được nhóm đó (câu `other` không có
+  gold). A2 đo được 0,640, gần probe; dùng nó lúc chạy là thí nghiệm chưa làm.
+- **C4** Probe chỉ học từ pool; corpus chỉ để đánh giá, `valid/` không bao giờ vào pool. D1 đứng được vì không
+  tham số nào học từ corpus; train trên corpus là thấy đáp án.
+- **C5** Đích train: PRESENT = 1, ABSENT và NOT_MENTIONED = 0, UNCERTAIN bỏ (U-Ignore). Điểm probe chỉ là tín
+  hiệu xếp hạng, **không bao giờ** thành nhãn hay bằng chứng ABSENT trong bộ lọc (T7 không đổi).
+- **C7** Nhánh `image` của hybrid chỉ được bật khi lưới dev hơn cấu hình đang chạy ≥ 0,005 nDCG@10 (luật
+  `choose`, mốc là cấu hình đang chạy, không phải mặc định của plan); nhánh trọng số 0 không chạy.
+- **C8** Nhánh chỉ ghi vào đường dẫn mới: `data/`, `artifacts/` gitignored nên hai nhánh dùng chung, và `main`
+  phải tái lập được số của nó. Mọi lệnh đo của nhánh có `--out` riêng.
+- **C10** Heldout chạy một lần, có khai báo, parser `gold rule auto` (auto ≈0,04 USD, câu hỏi đi ra OpenAI)
+  để bảng so được với `main`.
 
 **D5** (qwen 3B làm LLM mặc định) bị D22 thay ngày 2026-10-20. qwen 3B qua Ollama vẫn là lựa chọn offline
 (`LLM_PROVIDER=ollama`); 7B chưa từng được pull.
@@ -544,7 +588,7 @@ T4 (`make setup` thiếu Pillow) đã xử lý 2026-09-22 — `setup` giờ dùn
 | P5 | API nên **đóng gói trọng số vào image** hay dựa vào volume `hf_cache`? | Dựa vào volume `hf_cache` (lần khởi động đầu tải ≈785 MB, sau đó dùng lại) | Đóng gói làm image to hơn nhưng khởi động đầu không cần mạng và không vướng healthcheck; chọn ở Phase 6 khi build image thật. → T15 |
 | P8 | Người dùng duyệt `benchmarks/parser_queries_v1.jsonl` có đổi gold heldout không? | Benchmark giữ nguyên như lúc đo (sha256 `8d19c619…`); người dùng duyệt bây giờ | Spec §7/§12 yêu cầu người dùng duyệt file trước khi đo; kế hoạch bỏ cổng đó, và lần chạy heldout duy nhất (2026-10-14) diễn ra trước mọi lần duyệt. Đổi bất kỳ gold heldout nào thì phải khai báo một lần chạy heldout thứ hai. → `docs/parser-evaluation.md` |
 | P11 | Câu EN chỉ có exclude: giữ nhánh report free-text (đang làm) hay bỏ từ của concept bị loại / bỏ nhánh report? | Giữ: MATCH quote mọi token của nguyên văn câu (D26), kể cả từ của concept bị loại | Spec §8.6 tưởng nhánh report rỗng ở trường hợp này. Trên 14 câu heldout EN như vậy (gold), hybrid / label / vector nDCG@10 0,409 / 0,328 / 0,210, nhưng phần hơn label đến từ bm25 xếp report nhắc chính finding bị loại, đọc cùng văn bản với bậc relevance (proxy có thiên lệch), và evidence lặp một câu. Đổi = một lần heldout khai báo. → *Sự thật đã đo*, Phase 5; `docs/retrieval-evaluation.md` |
-| P12 | Vai trò của vector leg trong hybrid: giữ, bỏ, hay làm mạnh lên (finetune VLM)? | Giữ nguyên (vector 0,5, report 1,0). Đề xuất chưa được duyệt: giữ, và thêm thí nghiệm "ảnh không có report" ở Phase 7. Finetune VLM nằm ngoài scope V1; nếu làm thì chỉ trên pool ngoài corpus (*Sự thật đã đo*, Phase 1) | Ablation dev: lọc + chỉ report 0,658 so với hybrid 0,657; với trọng số hiện tại, study chỉ có ở vector leg không vào được top 10. Nhưng relevance đọc cùng văn bản với report leg, nên phép đo không ghi nhận được thông tin chỉ có trên ảnh; bỏ vector thì mất baseline của câu hỏi nghiên cứu §2.1. Đổi trọng số hay bỏ leg = một lần heldout khai báo → *Sự thật đã đo*, Phase 5 |
+| P12 | Vai trò của vector leg trong hybrid: giữ, bỏ, hay làm mạnh lên (finetune VLM)? | **Đã đo trên nhánh `feat/image-concept-probe` (D29):** làm mạnh bằng probe tuyến tính train ngoài corpus, không finetune. Ảnh tự đứng: mode `image` hơn `vector` trên 138 câu heldout cả hai cùng trả lời (nDCG@10 0,297 so với 0,259, vi phạm exclude 0,165 so với 0,319). Trong hybrid: lưới dev không chọn nhánh ảnh (+0,0040 < 0,005), nên nhánh và `main` có cùng hybrid (vector 0,5, report 1,0, image 0; heldout 0,607) | Còn mở: **có merge nhánh vào `main` không** (thêm mode `image` và probe; hybrid không đổi). Sau lọc nhãn, report đứng riêng (0,658) vẫn hơn image đứng riêng (0,632) trên dev, và relevance vẫn đọc cùng văn bản với report leg, nên chưa phép đo nào ghi nhận được thông tin chỉ có trên ảnh; trục độc lập là human review Phase 7. → *Sự thật đã đo*, Image probe; `docs/image-probe.md` |
 Đã đóng, giữ số để tham chiếu cũ không lệch: P1 (disk guard) và P3 (`docker/qdrant`) → D8, 2026-09-22.
 P2 (`absence_policy`) → D9, 2026-09-23. P10 (parser mặc định) → D22, 2026-10-20. P9 (câu EN chỉ có exclude)
 → D26, 2026-10-21. P6 (pull qwen 7B) và P7 (sửa prompt cho use case 6) đóng 2026-10-23 vì D22 làm chúng hết
@@ -556,6 +600,16 @@ cần: P7 tự hết (gpt-5-mini trả đúng câu đó), P6 không làm.
 
 > Mới nhất lên đầu. Mỗi entry ≤ 10 dòng và trả lời **vì sao**, không kể lại **cái gì**
 > (`git log` đã kể rồi).
+
+### 2026-10-23 — Image probe: nhánh ảnh góp tín hiệu thật (feat/image-concept-probe)
+
+Ablation của P12 cho thấy vector không góp gì vào hybrid, nhưng không tách được "ảnh vô ích" khỏi "tín hiệu
+zero-shot quá yếu" (AUROC 0,599, không hiểu phủ định). Probe tuyến tính trên encoder đóng băng là cách rẻ nhất để
+ảnh học đúng 14 concept mà không finetune (ngoài scope, D28); train trên bệnh nhân ngoài corpus để D1 còn đứng.
+S2 so trên tập câu chung vì 14 câu VI chỉ có exclude cho vector 0 điểm: so trên 152 câu thì `image` có thể
+thắng chỉ nhờ trả lời được chúng, kể cả khi thua ở mọi câu cả hai cùng trả lời. Kết quả: ảnh tự đứng đã hơn baseline (S1, S2
+PASS), nhưng sau lọc nhãn report vẫn dẫn và lưới dev không chọn nhánh ảnh (S3 FAIL), nên hybrid không đổi. Phép
+đo vẫn dựa trên nhãn từ report (spec §8.5); nhánh để ở local chờ người dùng quyết merge (P12, D29).
 
 ### 2026-10-23 — Giữ scope V1, không thêm KG (D28); mở P12
 
