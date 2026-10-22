@@ -588,6 +588,12 @@ def _cmd_eval_retrieval(args: argparse.Namespace) -> int:
         print(f"report index disabled: {state.report_reason}; run cxr build-report-index",
               file=sys.stderr)
         return 1
+    # The state stays ready without the probe, so image mode would score 0 and hybrid would
+    # drop the image leg without a word; refuse rather than record numbers that never ran.
+    if ("image" in args.modes or args.grid or args.ablation) and state.image_status != "ok":
+        print(f"image probe disabled: {state.image_reason}; run cxr train-probe",
+              file=sys.stderr)
+        return 1
     agreement = rev.build_agreement_matrix(
         pl.read_parquet(Path(args.canonical_dir) / "labels.parquet"), state.labels.study_ids)
     shared = {"state": state, "parser": parser, "matrix": state.labels, "agreement": agreement,

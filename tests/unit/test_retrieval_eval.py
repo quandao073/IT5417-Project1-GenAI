@@ -323,6 +323,12 @@ def test_grid_has_36_configs_and_choose_uses_the_given_baseline():
     assert rev.choose(legacy, baseline) == baseline
     with pytest.raises(ValueError, match="baseline"):
         rev.choose(legacy[1:], baseline)
+    # two configs share the best ndcg: the earlier one in `configs` wins
+    tie = [near[0], {"rrf_k": 60, "leg_weights": weights(1.0, 1.0, 0.5), "ndcg@10": 0.51},
+           {"rrf_k": 10, "leg_weights": weights(0.0, 1.0, 1.0), "ndcg@10": 0.51}]
+    assert rev.choose(tie, baseline) == FusionParams(60, weights(1.0, 1.0, 0.5), 100, 100, 100)
+    assert rev.choose([*tie[:1], *tie[:0:-1]], baseline) == FusionParams(
+        10, weights(0.0, 1.0, 1.0), 100, 100, 100)
 
 
 def test_grid_search_scores_every_config_on_gold_hybrid(rows, parser, matrix, agreement):
@@ -381,6 +387,23 @@ def test_image_vs_vector_uses_only_queries_vector_answered():
     out = rev.image_vs_vector(plain)
     assert out["exclude_violation@10"] == {"image": None, "vector": None}
     assert out["s2_passed"] is True                   # no exclude query: that half holds
+
+    # loss: image returned nothing (ndcg 0) where vector scored; tie: diff 5e-10 is within
+    # tolerance; image has no violation rate for d (it returned nothing), so d is skipped on
+    # both sides although vector has one
+    mixed = {"parsers": {"gold": {"modes": {
+        "vector": entry({"a": (0.5, 1.0, 0.4), "b": (0.5, 1.0, 0.2), "d": (0.7, 1.0, 0.9),
+                         "e": (0.2, 1.0, 0.0)}),
+        "image": entry({"a": (0.5 + 5e-10, 1.0, 0.1), "b": (0.9, 1.0, 0.0),
+                        "d": (0.0, 0.0, None), "e": (0.1, 1.0, 0.0)})}}}}
+    out = rev.image_vs_vector(mixed)
+    assert out["n_common"] == 4
+    assert (out["wins"], out["ties"], out["losses"]) == (1, 1, 2)    # b; a; d and e
+    assert out["ndcg@10"] == pytest.approx({"image": (0.5 + 0.9 + 0.0 + 0.1) / 4,
+                                            "vector": (0.5 + 0.5 + 0.7 + 0.2) / 4})
+    assert out["exclude_violation@10"] == pytest.approx(
+        {"image": (0.1 + 0.0 + 0.0) / 3, "vector": (0.4 + 0.2 + 0.0) / 3})
+    assert out["s2_passed"] is False                  # ndcg 0.375 vs 0.475
 
     assert rev.image_vs_vector({"parsers": {"gold": {"modes": {"vector": entry({})}}}}) is None
     assert rev.image_vs_vector({"parsers": {"rule": {"modes": {}}}}) is None

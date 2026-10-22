@@ -73,7 +73,8 @@ def world(tmp_path, monkeypatch):
                         lambda settings: (parser, status["value"]))
     state = SimpleNamespace(
         ready=True, not_ready_reason=None, report_status="ok", report_reason=None,
-        report_meta={"studies": "1"}, labels=SimpleNamespace(study_ids=["s1"]),
+        report_meta={"studies": "1"}, image_status="ok", image_reason=None,
+        labels=SimpleNamespace(study_ids=["s1"]),
         images={"i1": SimpleNamespace(projection="PA")}, study_image={"s1": "i1"},
         manifest={"build_id": "b1"}, parser=parser,
         fusion=FusionParams(60, {"vector": 1.0, "report": 1.0}, 100, 100))
@@ -266,3 +267,30 @@ def test_eval_retrieval_prints_image_vs_vector_after_the_verdict(world, monkeypa
     assert run(world, "--split", "dev", "--parsers", "gold", "--modes", "vector", "hybrid") == 0
     assert "image_vs_vector" not in capsys.readouterr().out
     assert "image_vs_vector" not in json.loads(world.out.read_text(encoding="utf-8"))["eval"]
+
+
+@pytest.mark.parametrize("extra", [("--modes", "label", "vector", "image"), ("--grid",),
+                                   ("--ablation",)])
+def test_eval_retrieval_refuses_image_dependent_runs_without_the_probe(
+        world, monkeypatch, capsys, extra):
+    world.state.image_status, world.state.image_reason = "disabled", "probe artifact missing"
+
+    def boom(*a, **kw):
+        raise AssertionError("nothing may be evaluated")
+
+    for name in ("evaluate_retrieval", "grid_search", "ablation"):
+        monkeypatch.setattr(f"src.evaluation.retrieval_eval.{name}", boom)
+    assert run(world, "--split", "dev", "--parsers", "gold", *extra) == 1
+    err = capsys.readouterr().err
+    assert "image probe disabled: probe artifact missing" in err and "train-probe" in err
+    assert not world.out.exists()
+
+
+def test_eval_retrieval_without_image_still_runs_when_the_probe_is_disabled(world, monkeypatch):
+    world.state.image_status = "disabled"
+    monkeypatch.setattr("src.evaluation.retrieval_eval.evaluate_retrieval",
+                        lambda rows, **kw: canned(kw["parsers"], kw["modes"]))
+    monkeypatch.setattr("src.evaluation.retrieval_eval.verdict", lambda report, t: PASSING)
+    assert run(world, "--split", "dev", "--parsers", "gold", "--modes", "label", "vector",
+               "hybrid") == 0
+    assert world.out.exists()
