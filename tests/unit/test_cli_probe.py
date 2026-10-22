@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
+import numpy as np
 import polars as pl
 import pytest
 
 from src.cli.main import build_parser, main
+from src.data.labels import CHEXPERT_LABELS
+from src.embeddings import embed, probe
 from src.embeddings.validate import Check
 from src.retrieval.report_index import build_report_index
+from tests.unit.fakes import FakeEncoder
 from tests.unit.test_api_state import BUILD, studies_frame, write_probe_artifact
 from tests.unit.test_cli_phase5 import _canonical
 from tests.unit.test_embed import images_frame
@@ -93,3 +98,117 @@ def test_validate_indexes_takes_an_image_probe_dir(tmp_path, capsys, monkeypatch
     write_probe_artifact(elsewhere, studies)
     assert main([*argv, "--image-probe-dir", str(elsewhere)]) == 0
     assert capsys.readouterr().out.splitlines()[-1].startswith("PASS image_probe")
+
+
+def test_train_probe_defaults_use_new_paths_only():
+    args = build_parser().parse_args(["train-probe"])
+    assert args.out == "data/indexes/image_probe"
+    assert args.report == "artifacts/metrics/image_probe.json"
+    assert args.pool_dir == "data/probe_pool"
+    assert args.pool_build_id == "20261023_pool88k_biomedclip_v1"
+    assert args.embeddings == "data/indexes/embeddings"
+    assert args.indexes_dir == "data/indexes" and args.canonical_dir == "data/canonical"
+    assert args.n_boot == 1000
+
+
+POOL_BUILD = "pool_fake_v1"
+
+
+def _train_world(tmp_path, *, shared_patient=False, revision="fakerev0"):
+    """A 20-study corpus, a 12-study pool and a manifest, all embedded with FakeEncoder."""
+    canonical = tmp_path / "canonical"
+    canonical.mkdir()
+    corpus = images_frame(40)
+    corpus.write_parquet(canonical / "images.parquet")
+    studies_frame(corpus).write_parquet(canonical / "studies.parquet")
+    rows = [(s, "Edema", "PRESENT" if i % 2 else "ABSENT", "CHEXPERT_V1")
+            for i, s in enumerate(studies_frame(corpus)["study_id"])]
+    pl.DataFrame(rows, schema=["study_id", "concept", "status", "source"], orient="row"
+                 ).write_parquet(canonical / "labels.parquet")
+
+    pool_dir = tmp_path / "pool"
+    pool_dir.mkdir()
+    n = 12
+    pool = pl.DataFrame({
+        "image_id": [f"{1000 + i:064x}" for i in range(n)],
+        "study_id": [f"poolpatient{i:05d}/study1" for i in range(n)],
+        "patient_id": [f"poolpatient{i:05d}" for i in range(n)],
+        "path_to_image": [f"train/poolpatient{i:05d}/study1/view1_frontal.jpg" for i in range(n)],
+        "projection": ["AP"] * n,
+    })
+    if shared_patient:
+        pool = pool.with_columns(
+            pl.when(pl.col("image_id") == pool["image_id"][0]).then(pl.lit("patient00000"))
+            .otherwise(pl.col("patient_id")).alias("patient_id"))
+    pool.write_parquet(pool_dir / "pool_images.parquet")
+    pl.DataFrame([(s, "Edema", "PRESENT" if i % 2 else "ABSENT")
+                  for i, s in enumerate(pool["study_id"])],
+                 schema=["study_id", "concept", "status"], orient="row"
+                 ).write_parquet(pool_dir / "pool_labels.parquet")
+    (pool_dir / "pool.json").write_text(json.dumps({"pool_sha256": "p" * 64, "studies": n}))
+    embed.run_embed(pool, FakeEncoder(), Path("root"), pool_dir / "embeddings" / POOL_BUILD,
+                    POOL_BUILD, shard_size=5, batch_size=4, library_versions={}, git_commit=None)
+
+    embeddings = tmp_path / "embeddings"
+    embed.run_embed(corpus, FakeEncoder(), Path("root"), embeddings / BUILD, BUILD,
+                    shard_size=16, batch_size=4, library_versions={}, git_commit=None)
+    indexes = tmp_path / "indexes"
+    indexes.mkdir()
+    (indexes / "build_manifest.json").write_text(json.dumps({
+        "build_id": BUILD,
+        "embedding_model": {"model_id": "fake/model", "revision": revision, "dimension": 4}}))
+    return ["train-probe", "--pool-dir", str(pool_dir), "--pool-build-id", POOL_BUILD,
+            "--embeddings", str(embeddings), "--indexes-dir", str(indexes),
+            "--canonical-dir", str(canonical), "--out", str(tmp_path / "probe"),
+            "--report", str(tmp_path / "report.json"), "--n-boot", "20"]
+
+
+def test_train_probe_refuses_a_pool_that_overlaps_the_corpus(tmp_path, capsys):
+    argv = _train_world(tmp_path, shared_patient=True)
+    assert main(argv) == 1
+    assert "POOL OVERLAPS CORPUS: 1 patients" in capsys.readouterr().err
+    assert not (tmp_path / "probe").exists() and not (tmp_path / "report.json").exists()
+
+
+def test_train_probe_refuses_a_pool_embedded_by_another_revision(tmp_path, capsys):
+    argv = _train_world(tmp_path, revision="otherrev")
+    assert main(argv) == 1
+    assert "POOL BUILD MISMATCH" in capsys.readouterr().err
+
+
+def test_train_probe_writes_the_artifact_and_merges_the_report(tmp_path, capsys, monkeypatch):
+    argv = _train_world(tmp_path)
+    seen = {}
+
+    def fake_train(X, statuses, patients, cfg):
+        seen.update(n=len(X), patients=list(patients), statuses=statuses)
+        zero = probe.Probe(np.zeros((14, 4), np.float32), np.zeros(14, np.float32),
+                           tuple(CHEXPERT_LABELS))
+        return zero, {"lambda": 10, "selection": {"per_lambda": {"10": 0.7}}, "n_train": {}}
+
+    monkeypatch.setattr("src.cli.main.train_probe", fake_train)
+    monkeypatch.setattr("src.cli.main._selected_encoder", lambda device: ("fake", FakeEncoder()))
+    (tmp_path / "report.json").write_text('{"quality": {"keep": 1}}')
+
+    assert main(argv) == 0
+
+    # rows follow the shard order (by image_id), patients and statuses aligned to it
+    assert seen["n"] == 12 and seen["patients"][0] == "poolpatient00000"
+    assert seen["statuses"][1, CHEXPERT_LABELS.index("Edema")] == "PRESENT"
+    loaded, meta = probe.load_probe(tmp_path / "probe")
+    assert meta["probe_id"] == f"{BUILD}_probe_lam10" and meta["build_id"] == BUILD
+    assert meta["encoder"] == {"model_id": "fake/model", "revision": "fakerev0", "dim": 4}
+    assert meta["pool_sha256"] == "p" * 64 and meta["pool_build_id"] == POOL_BUILD
+    scores = pl.read_parquet(tmp_path / "probe" / probe.SCORES_FILE)
+    assert scores.height == 20 and scores.columns == ["study_id", "image_id", *CHEXPERT_LABELS]
+    assert scores["image_id"].to_list() == pl.read_parquet(
+        tmp_path / "canonical" / "studies.parquet")["selected_image_id"].to_list()
+    report = json.loads((tmp_path / "report.json").read_text())
+    assert report["quality"] == {"keep": 1}
+    assert set(report["probe"]["comparison"]) >= {"zero_shot", "ensemble", "contrast", "probe",
+                                                  "probe_minus_zero_shot", "s1_passed"}
+    assert report["probe"]["pool"]["studies"] == 12
+    out = capsys.readouterr().out
+    out.encode("ascii")
+    assert "lambda" in out and "probe - zero_shot" in out and "S1 " in out
+    assert loaded.W.shape == (14, 4)
