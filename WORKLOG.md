@@ -21,57 +21,29 @@ Ba mục đó đủ để không phá vỡ thứ gì. Các mục còn lại tra 
 
 > Cập nhật lại mục này mỗi lần ghi log. Mục này mà cũ thì tệ hơn là không có.
 
-**Cập nhật lần cuối:** 2026-10-21 (Phase 5 xong; sửa sau review cuối, mở P11)
+**Cập nhật lần cuối:** 2026-10-23 (D28: giữ scope V1, không thêm KG; mở P12 về vector leg; đo ablation, pool ngoài corpus và RadGraph-XL, thêm T29; dọn file: bỏ phương án không chọn, ghi chú đã lỗi thời và phần trùng với README/code)
 
 | | |
 |---|---|
 | Đã xong | Part A · Phase 0a · Phase 1 (canonical corpus 25.000 study) · Phase 2 (model gate: BiomedCLIP) · Phase 3 (vector baseline) · Phase 4 (parser + label mode) — parser mặc định OpenAI gpt-5-mini PASS heldout (D22, Phase 4c); qwen 3B cũ FAIL (Phase 4) · **Phase 5 (report FTS + hybrid)** — heldout, gold: nDCG@10 hybrid / vector / label **0,607 / 0,235 / 0,531**, p@10 1,000 / 0,359 / 1,000, exclude_violation@10 vector 0,319 so với hybrid 0; verdict **PASS** (gain 1,579) |
 | Đang làm | — |
 | Tiếp theo | **Phase 6 (web UI)**, hoặc Phase 0b song song |
-| Chặn Phase 6 | `pnpm` chưa cài trên máy (T5), cùng chỗ chặn với Phase 0b. P9 đã chốt thành D26; P4–P6, P8, P11 còn mở nhưng không chặn (P5 chọn khi build image ở Phase 6) |
+| Chặn Phase 6 | `pnpm` chưa cài trên máy (T5), cùng chỗ chặn với Phase 0b. P9 đã chốt thành D26; P4, P5, P8, P11, P12 còn mở nhưng không chặn (P5 chọn khi build image ở Phase 6) |
 | Chặn Phase 0b | `pnpm` chưa cài trên máy — xem T5 |
 
-Mã thật hiện có: `src/common/{ids,config}.py`,
-`src/data/{contracts,labels,join,sample,canonical,audit}.py`,
-`src/embeddings/{base,spike,biomedclip,chexzero,xrayclip,embed,index,validate}.py`,
-`src/query/{schema,rule_parser,llm_parser,parser}.py`,
-`src/retrieval/{image_search,label_filter,report_index,report_search,evidence,hybrid,pipeline}.py`,
-`src/api/{main,dependencies}.py`,
-`src/api/routes/*` (có `query.py`), `src/api/schemas/search.py`,
-`src/evaluation/{zero_shot,vector_baseline,parser_benchmark,parser_eval,retrieval_eval}.py`,
-`src/cli/main.py`.
-Ngoài `src/`: `benchmarks/parser_queries_v1.jsonl` (200 câu có gold),
-`configs/prompts/query_parser_v1.txt`. `src/explanation/` còn rỗng.
+Dữ liệu, chỉ mục và artifact đều gitignored; lệnh dựng lại nằm ở `README.md`. Những điều README không nói:
 
-Dữ liệu đã dựng: `data/canonical/*.parquet` (5 bảng, 11 MB) và
-`artifacts/audit/corpus_report.json`. Cả hai gitignored — dựng lại bằng
-`uv run cxr build-corpus --limit 25000` (~4 phút). Spike Phase 2:
-`data/cache/model_spike/` + `artifacts/metrics/model_spike.json`, cũng gitignored.
-Phase 3 (build `20261011_chexpert25k_biomedclip_v1`, gitignored hoặc trong Docker):
-`data/indexes/embeddings/<build_id>/` (25 shard + `shards.json`, 58 MB),
-`data/indexes/build_manifest.json`, volume Docker `cxr-semantic-retrieval_qdrant_data`
-(collection `cxr_images_<build_id>`), `artifacts/metrics/vector_baseline.json`. Dựng lại:
-`uv run cxr embed` → `uv run cxr index` → `uv run cxr build-report-index` →
-`uv run cxr validate-indexes`. Số đo: `docs/vector-baseline.md`.
-Phase 4: `artifacts/metrics/parser_eval.json` (heldout + `label_filter`) và
-`artifacts/metrics/parser_eval_dev.json`, gitignored. Dựng lại bằng `uv run cxr eval-parser --label-filter`
-(cần Ollama native, `.env` rỗng); kết quả LLM không tái lập từng số (T18). **`cxr eval-parser` ghi đè
-`parser_eval.json`**: lần heldout 2026-10-14 được đóng băng ở
-`artifacts/metrics/parser_eval_heldout_20261014.json` (sha256 `999fbc70…`). Số dev lấy từ
-`uv run cxr eval-parser --split dev --out artifacts/metrics/parser_eval_dev.json`. Script thăm dò của dev
-loop: `artifacts/metrics/{views_probe,probe_wide,leak}.py`, prompt thử ở `artifacts/metrics/probe_prompts/`.
-Số đo: `docs/parser-evaluation.md`.
-Phase 5: `data/indexes/report_search.sqlite` (25.000 report, 32,8 MB; `uv run cxr build-report-index`
-≈1 s, rồi `validate-indexes`), `artifacts/metrics/retrieval_dev.json` (lưới + dev) và
-`artifacts/metrics/retrieval_eval.json`, đều gitignored. **`cxr eval-retrieval` (`make eval-retrieval`)
-ghi đè `retrieval_eval.json`**: heldout 2026-10-21 chạy hai lần (đã khai báo), đóng băng ở
-`artifacts/metrics/retrieval_eval_heldout_20261021_run2.json` (sha256 `e6186239…`, lần được trích dẫn) và
-`artifacts/metrics/retrieval_eval_heldout_20261021.json` (lần 1, sha256 `b35a6b76…`). Lệnh heldout, cũng là
-mặc định của `make eval-retrieval`: `uv run cxr eval-retrieval --split heldout --parsers gold rule auto
---modes label vector hybrid --policies negation_both`; cần Qdrant Docker, report index và key OpenAI
-trong `.env` cho `auto` (≈7 phút, ≈0,04 USD ước tính từ số câu), và `auto` không tái lập từng số (T23,
-T25). Lưới dev: `uv run cxr eval-retrieval --split dev --parsers gold --modes hybrid --grid --out
-artifacts/metrics/retrieval_dev.json`. Số đo: `docs/retrieval-evaluation.md`.
+- Build đang phục vụ: `20261011_chexpert25k_biomedclip_v1` (shard ở `data/indexes/embeddings/<build_id>/`,
+  collection `cxr_images_<build_id>` trong volume Docker `cxr-semantic-retrieval_qdrant_data`). Report index
+  `data/indexes/report_search.sqlite` gắn với corpus canonical, không gắn với build.
+- **`cxr eval-parser` ghi đè `parser_eval.json`, `cxr eval-retrieval` ghi đè `retrieval_eval.json`.** Các bản
+  heldout được trích dẫn đã đóng băng trong `artifacts/metrics/`: `parser_eval_heldout_20261014.json` (qwen 3B,
+  sha256 `999fbc70…`), `parser_eval_heldout_gpt-5-mini.json` (parser mặc định),
+  `retrieval_eval_heldout_20261021_run2.json` (sha256 `e6186239…`, lần được trích dẫn; lần 1 là
+  `retrieval_eval_heldout_20261021.json`, `b35a6b76…`).
+- Mọi kết quả có LLM không tái lập từng số (T18, T23, T25). `eval-retrieval` heldout với `auto` mất ≈7 phút,
+  ≈0,04 USD. Chi tiết số đo: `docs/{vector-baseline,parser-evaluation,retrieval-evaluation}.md`.
+- Script thăm dò (chỉ đọc) nằm ở `artifacts/metrics/*.py`; mỗi số đo bên dưới ghi script của nó.
 
 Lệnh kiểm tra sau mỗi thay đổi:
 
@@ -155,6 +127,12 @@ không có bước resize nào cả.
 
 187.537 ở đây nhỏ hơn con số 187.674 đo trước đó vì phép đo cũ chỉ lọc frontal
 AP/PA, chưa yêu cầu impression non-empty.
+
+**Pool ngoài corpus** (đo 2026-10-22 cho câu hỏi finetune VLM, chưa có quyết định): bỏ mọi
+`patient_id` của corpus (18.007) và cả `valid/`, còn **90.654 ảnh frontal / 88.853 study / 46.682
+bệnh nhân** có impression, 25.603 study có findings. Corpus chiếm phần lớn số dòng vì bệnh nhân của
+nó có nhiều study. Cách đo: `uv run python artifacts/metrics/train_pool_probe.py` (`join.read_plus_rows`,
+lọc AP/PA + impression, chỉ `train/`; không kiểm file trên đĩa, join rate 1,0000).
 
 ### P2 đã giải quyết: prevalence sau resolve (% của 25.000)
 
@@ -246,11 +224,7 @@ bỏ câu đầu (n = 159). Chi tiết: `docs/parser-evaluation.md`.
 
 | Hạng mục | Giá trị | Đo bằng |
 |---|---:|---|
-| Ollama cài native | 0.40.3; thư mục cài 2,8 GB | `/api/version`; `du -sh %LOCALAPPDATA%\Programs\Ollama` |
-| Model 3B q4 | 1.929.912.432 B trên đĩa; 2.159.374.499 B VRAM, trọn trên GPU, context 4.096 | `/api/tags`, `/api/ps` |
-| Pull model | 1,9 GB, 72 s | `ollama pull`, 2026-10-13 (spec §1) |
-| Gọi `/api/chat` lần đầu sau khi cài | **72 s** (load 27 s + prompt eval 41 s) | 2026-10-13 (spec §1), xem T16 |
-| Gọi lần đầu sau khi server khởi động lại, model chưa nạp | 5,3 s (`llm_ms`); lần hai 1,07 s | `cxr parse` hai lần liền; `/api/ps` rỗng trước lần một |
+| Ollama 0.40.3 + qwen 3B q4 | 1,9 GB trên đĩa; 2,16 GB VRAM, trọn trên GPU, context 4.096; cold start xem T16 | `/api/tags`, `/api/ps` |
 | Prompt cuối | 2.328 token, 20 ví dụ | `prompt_eval_count`; `prompt_examples()` |
 | Heldout `auto` (= `llm`) concept / status / view macro-F1 | **0,880 / 0,718 / 0,890 → FAIL** (ngưỡng 0,90) | `parser_eval.json:eval.verdict` |
 | Heldout `rule` concept / status / view | 0,793 / **0,862 / 0,945** | như trên |
@@ -259,8 +233,6 @@ bỏ câu đầu (n = 159). Chi tiết: `docs/parser-evaluation.md`.
 | Heldout `auto` theo ngôn ngữ, status F1 | EN 0,826 · VI 0,593 | `by_language` |
 | Latency p50 / p95 | rule 0,1 / 0,2 ms · llm 756 / 1.366 ms · auto 778 / 1.473 ms | `latency_ms` |
 | Dev cuối `auto` / `rule` | 0,912 / 0,827 / 0,833 · 1,000 / 1,000 / 1,000 | `parser_eval_dev.json` |
-| Dev `llm` trước → sau 4 vòng chỉnh | 0,761 / 0,606 / 0,900 → 0,909 / 0,841 / 0,900 | `parser_dev_0.json`, `parser_dev_4.json` |
-| Hai lần chạy dev, cùng prompt | 5/40 dự đoán `llm` khác nhau (T18) | `parser_dev_4.json` so với `parser_eval_dev.json` |
 | Rule exact match cả 200 câu, sau chỉnh | EN 68/100 · VI 69/100 | heldout `by_language` × n + dev 20/20 |
 | Label filter, nhóm `negation` (40 câu heldout), median study khớp | `exclude_present/EXCLUDE` **10.223** · `explicit_absence_required/EXCLUDE` **1.013** | `label_filter.summary` |
 | — theo từng câu: `explicit_absence_required` / `exclude_present` | median 0,199 (min 0,01, max 0,664); 0 câu khớp 0 ở mọi cặp policy | `label_filter.per_query` |
@@ -291,32 +263,11 @@ mọi mention "sternotomy wire", "pleural plaque/calcification" và "pulmonary c
 
 ### Phase 4b — parser với LLM hosted (đo 2026-10-20)
 
-**Cách đo:** `OpenAICompatClient` qua endpoint OpenAI-compatible của Gemini, model
-`gemini-2.5-flash` (bản ổn định, không dùng alias `-latest`), **cùng prompt `c975e4ca…`, cùng
-benchmark `8d19c619…`**, không chỉnh gì cho Gemini. Lệnh: `LLM_PROVIDER=openai
-LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai LLM_MODEL=gemini-2.5-flash
-LLM_API_KEY=… uv run cxr eval-parser --split heldout --parsers rule llm --out
-artifacts/metrics/parser_eval_heldout_gemini-2.5-flash.json`. Chạy một lần.
-
-| Parser, heldout 160 câu | Concept F1 | Status F1 | View F1 | Exact | p50 / p95 |
-|---|---:|---:|---:|---:|---:|
-| `gemini-2.5-flash` | **0,994** | **0,980** | **0,947** | **0,975** | 1.879 / 2.938 ms |
-| `qwen2.5:3b` (2026-10-14) | 0,880 | 0,718 | 0,890 | 0,650 | 756 / 1.366 ms |
-| rule | 0,793 | 0,862 | 0,945 | 0,606 | 0,1 / 0,2 ms |
-
-Gemini qua cả ba ngưỡng macro-F1 0,90. Verdict vẫn ghi FAIL vì `schema_valid` 0,988 < 0,99, nhưng
-2 câu "invalid" (vi-035, vi-058) đều là `ReadTimeout` 20 s của API, **0 output sai định dạng**; ở mode
-`auto` chúng rơi về rule parser. Hai lỗi thật: en-045 gắn Lung Opacity `UNCERTAIN` thay vì `PRESENT`
-("opacity that may represent pneumonia", phạm vi của hedge), vi-079 "tư thế trước-sau" (AP) ra PA.
-Theo ngôn ngữ: EN exact 0,988, VI 0,963; view F1 VI 0,89.
-
-**18 câu chỉ có điều kiện dương** (script thử, không phải benchmark; mode vector top 10/50, đúng =
-nhãn resolve PRESENT, nền = `total_matches` mode label / 25.000): qwen 3B parse sai **8/18**, trong đó
-"pneumothorax", "Show pleural effusion", "atelectasis" bị đưa vào **exclude** (đảo nghĩa) và "tràn khí
-màng phổi" thành Pleural Effusion; rule parser đúng 18/18; Gemini đúng cả 5 câu đã thử lại. Với parse
-đúng (rule), vector P@10 trung bình **46%** so với nền 26% (≈1,8×); tốt nhất "tim to + phù phổi" 60%
-so với 13,7%; tràn khí 20% so với 14,4%; "pleural thickening" 0% (dưới nền). Cosine của mọi top 10
-nằm trong 0,44–0,51, hạng 1 hơn hạng 10 trung bình 0,012.
+Không được chọn (D22 chọn OpenAI); chỉ giữ kết luận. `gemini-2.5-flash` qua `OpenAICompatClient`, **cùng
+prompt `c975e4ca…` và benchmark `8d19c619…`** với qwen 3B, không chỉnh gì cho Gemini: heldout concept / status
+/ view **0,994 / 0,980 / 0,947** so với 0,880 / 0,718 / 0,890 của qwen 3B, 0 output sai định dạng. Vậy prompt
+không phải nút thắt; lỗi parser của Phase 4 là do model 3B (nó đảo cả câu dương đơn giản như "pneumothorax"
+thành exclude). File: `artifacts/metrics/parser_eval_heldout_gemini-2.5-flash.json`. Bẫy lộ ra: T21, T22.
 
 ### Phase 4c — chọn model OpenAI cho parser (đo 2026-10-20)
 
@@ -350,19 +301,8 @@ của D21), vi-079 "tư thế trước-sau" thành PA (Gemini cũng sai đúng c
 dương parse đúng; use case 6 ra Cardiomegaly + Edema, exclude Pleural Effusion, `vi`, mode label 849 ca,
 0/10 vi phạm; `pytest -m llm` 2 passed, 1 xpassed.
 
-**Hai model khác được người dùng đề xuất sau đó, cũng chạy heldout một lần** (vì muốn `temperature: 0`
-để tái lập được), rồi đo lặp lại: parse 40 câu dev hai lần, gọi thẳng `QueryParser._parse` để bỏ qua
-cache, so toàn bộ output (`scratchpad/repeat.py`).
-
-| Heldout 160 câu | Concept / Status / View | Exact | Sai | Verdict | Lặp lại dev | $ / 1k | p50 |
-|---|---|---:|---:|---|---:|---:|---:|
-| **gpt-5-mini** (temp mặc định) | 0,995 / 0,988 / 0,947 | 0,981 | 3 | PASS | **40/40** | **0,220** | 1,31 s |
-| gpt-4.1-mini (temp 0) | 0,986 / 0,980 / 0,947 | 0,956 | 7 | PASS | 39/40 | 0,423 | 1,07 s |
-| gpt-4o-mini (temp 0) | 0,965 / 0,938 / **0,869** | 0,881 | 19 | **FAIL** | không đo đủ¹ | 0,228 | 1,32 s |
-
-¹ Ba lần parse cùng câu use case 6 ra `views` `[]`, `AP`, `AP`. gpt-4o-mini đọc "frontal"/"thẳng" thành
-AP (trượt cả 4 câu kiểu đó, "Show frontal chest x-rays" ra AP 3/3 lần); gpt-4.1-mini và gpt-5-mini thì
-không. File: `artifacts/metrics/parser_eval_heldout_gpt-4o-mini.json`, `..._gpt-4.1-mini.json`.
+gpt-4.1-mini và gpt-4o-mini (nhận `temperature: 0`) cũng được đo heldout một lần theo yêu cầu người dùng; cả
+hai kém hơn và không tất định hơn, không được chọn. Số và bài học: T25.
 
 **Lưu ý phương pháp:** heldout parser giờ đã được xem cho bốn model (Gemini, gpt-5-mini, gpt-4o-mini,
 gpt-4.1-mini). gpt-5-mini là lựa chọn của luật viết trước trên dev và người dùng giữ nó sau khi thấy cả ba
@@ -454,6 +394,24 @@ hybrid chỉ khớp 0,292.
 | Evidence trên 1.000 report thật, mọi concept PRESENT | **2.375 / 3.803 cặp (62,5%)** có câu evidence, mọi câu là lát cắt đúng. Theo concept: No Finding 23,6% · Enlarged Cardiomediastinum 4,4% · Cardiomegaly 42,9% · Lung Opacity 67,4% · Lung Lesion 45,2% · Edema 62,4% · Consolidation 57,9% · Pneumonia 57,9% · Atelectasis 58,5% · Pneumothorax 66,4% · Pleural Effusion 72,2% · Pleural Other 45,1% · Fracture 52,5% · Support Devices 77,9% | `uv run pytest tests/integration/test_hybrid_live.py -m integration -s` |
 | Gold, nDCG@10 hybrid / label / vector trên câu heldout chỉ có exclude (gold `include` rỗng, `exclude` khác rỗng) | 14 câu EN **0,409 / 0,328 / 0,210**, 62 câu EN còn lại 0,661 / 0,577 / 0,269 · 14 câu VI 0,328 / 0,328 / 0,000, 62 câu VI còn lại 0,661 / 0,577 / 0,260. Hybrid EN hơn VI (0,615 / 0,599) chỉ ở 14 cặp câu này | `uv run python artifacts/metrics/exclude_only_probe.py artifacts/metrics/retrieval_eval_heldout_20261021_run2.json` (chỉ đọc; 2026-10-21): trung bình `per_query[id]["ndcg@10"]` dưới `parsers.gold` của JSON đóng băng lần 2 |
 | Report leg của 14 câu EN đó, top 10 bm25 trong tập cho phép (policy mặc định) | MATCH quote nguyên văn câu, kể cả từ của concept bị loại (`"show" OR "films" OR "with" OR "evidence" OR "pneumothorax"` cho en-023). **44/140** hit trích một câu phủ định concept bị loại (en-023, en-027 8/10; en-051, en-087 0/10); **37/140** trích cùng một câu hai lần, vd `"1. EXPIRATORY FILM SHOWING NO EVIDENCE OF PNEUMOTHORAX."` vừa là Pneumothorax `negated` vừa là `mention` free-text. Đây là report leg đứng riêng, chưa hợp nhất với vector leg | cùng script: `build_match` + `search_reports` trên `data/indexes/report_search.sqlite` (`mode=ro`), `EvidenceMatcher.build` |
+| Ablation nhánh trong hybrid, **dev** (38 câu gold, policy mặc định, fusion đang dùng), nDCG@10 | label 0,524 · vector 0,302 · lọc + chỉ vector **0,611** · lọc + chỉ report **0,658** · hybrid 0,657. Hybrid so với chỉ report: thắng 12 / hòa 19 / thua 7 câu, chênh lớn nhất +0,009 / −0,042; top 10 trùng trung bình 9,5/10. Trong 380 hit top 10 của hybrid: 69 có cả hai hạng, 281 chỉ report, **0 chỉ vector**, 30 không nhánh nào (thứ tự label). Theo cấu trúc: với `rrf_k` 10 và trọng số (0,5, 1), study chỉ có ở vector leg được tối đa 0,5/11 ≈ 0,045 < 1/20 = 0,05 của report hạng 10, nên không bao giờ vào top 10 khi report leg có ≥ 10 ứng viên. Heldout chưa chạy ablation này; relevance đọc cùng văn bản với report leg (thiên lệch như P11) | `uv run python artifacts/metrics/leg_ablation_probe.py <out.txt>` ở `0940d3e` (chỉ đọc; tắt nhánh bằng cách thay `pipeline._vector_search` / `pipeline.search_reports` bằng hàm trả `[]`), 2026-10-22 |
+
+### RadGraph-XL (đo 2026-10-22, chưa dùng ở V1)
+
+**Cách đo:** `uv run python artifacts/metrics/radgraph_align_probe.py <out>` (cách khớp với CSV) và
+`uv run python artifacts/metrics/radgraph_content_probe.py <out>` (nội dung trên corpus 25.000), chỉ đọc,
+join theo text đã chuẩn hóa (T29). Đếm theo lần nhắc (entity), không theo study, trừ khi ghi rõ.
+
+| Hạng mục | Giá trị |
+|---|---:|
+| Bản ghi `section_impression.json` / `section_findings.json` | 223.292 / 57.805; khớp text CSV **100%** cả hai; 157.063 / 39.160 khớp đúng một dòng, phần còn lại trùng text giữa nhiều dòng |
+| Phủ corpus | impression 25.000 / 25.000 · findings 6.231 / 6.419 study có findings |
+| Entity / study | trung bình 24,9 · trung vị 21 · p95 53 |
+| Nhãn entity | Observation present 277.453 · Anatomy present 273.098 · Observation **absent 40.654** · Observation **uncertain 29.011** · measurement 2.374 · Anatomy uncertain/absent 131 |
+| Quan hệ | `modify` 259.362 · `located_at` 152.124 · `suggestive_of` 22.508; 24.913 / 25.000 study có ≥ 1 `located_at`; 21.760 study có anatomy left/right/bilateral |
+| Từ vựng thô (lowercase, chưa chuẩn hóa) | anatomy 3.581 chuỗi (1.861 chỉ gặp 1 lần) · observation 7.104 chuỗi (3.773 gặp 1 lần); entity là từ đơn ghép bằng `modify` ("left" → "lobe" ← "lower"), không có CUI |
+| Thử truy vấn giải phẫu: opacity/opacities/consolidation/atelectasis `located_at` anatomy có "left" + lower/base/basilar (tính cả modifier) | 3.864 lần nhắc present · 15 absent |
+| Nguồn gốc | `data_split: "inference"`: output của model, không phải nhãn người; chưa kiểm chất lượng bằng mắt trên mẫu nào |
 
 ---
 
@@ -471,7 +429,6 @@ hybrid chỉ khớp 0,292.
 | D2 | **Bỏ Tier A/B.** `studies.parquet` **không có** `corpus_tier`, chỉ có `has_report`/`has_impression`/`has_findings`. "Degradation" hiểu là *runtime* (FTS index thiếu/tắt), không phải thành phần corpus. | §7.4, §8.2 | Impression phủ 99,93% và pool gấp 7,5× target → Tier B rỗng theo construction |
 | D3 | **Package phẳng tên `src/`**, `api/` nằm trong nó, không có `apps/`. `src` là package thật (`packages = ["src"]`), không phải source root trần. | §15 (`src/cxr_search/` + `apps/`) | Repo đã mang tên dự án; lặp lại là thừa. Giữ *một* namespace vì `cxr` và 2 Docker image đều `pip install`. → `docs/adr/0002` |
 | D4 | **Giữ `compose.gpu.yaml`**, không tạo `compose.cpu.yaml`. Base compose là CPU-safe. | §15 | Runtime (api/web/qdrant) không bao giờ cần GPU; chỉ worker lúc embed cần. → `docs/adr/0002` |
-| D5 | **LLM mặc định `qwen2.5:3b-instruct-q4_K_M`**, không phải 7b. | `models.yaml` cũ | 7B q4 trên CPU tốn 8–20 s/query, ăn trọn ngân sách 12 s end-to-end. 7B giữ làm nhánh so sánh trong parser ablation |
 | D6 | **Không hardcode embedding dim ở bất kỳ đâu.** Phase 2 gate chọn 1 trong 3 candidate; encoder tự báo dim, `build_manifest.json` ghi lại, `cxr validate-indexes` assert khớp. | §16 (`dimension: 768`), `models.yaml` (512) | Ba nguồn mâu thuẫn nhau; để số đo quyết |
 | D7 | **Qdrant point id = `uuid5(NAMESPACE_URL, normalized_path)`**, không phải `image_id`. | — | Qdrant chỉ nhận uint64 hoặc UUID; sha256 hex64 không phải cả hai. Cắt xuống 64 bit thì mời câu hỏi birthday-collision vô ích |
 | D9 | **`absence_policy` mặc định là `exclude_present`**, không phải `explicit_absence_required`. Cái sau vẫn phơi ra UI và báo cáo song song trong evaluation. | §11.3 | Đo trên corpus thật: median `ABSENT` chỉ 5,0%, bốn concept dưới 2% (Pleural Other 0,9%, Atelectasis 1,3%, Lung Lesion 1,9%, No Finding 0,7%). Bắt buộc `ABSENT` sẽ làm recall sụp với phần lớn concept |
@@ -482,19 +439,23 @@ hybrid chỉ khớp 0,292.
 | D12 | **200 ca nhãn bác sĩ (`valid/`, rank 0–199) không bao giờ tham gia chọn model hay tune.** Spike lấy rank 200–1199; `select_sample` raise nếu chạm ca `valid/`. | cách hiểu mặc định của §17 | Đó là ground truth người duy nhất của test. Chọn model là tune; dùng chúng ở đây thì con số test cuối cùng không còn sạch |
 | D13 | **Spike chấm bằng 14 prompt đơn concept** (`"chest x-ray showing {}"` + `concepts.yaml:<c>.en[0]`), không phải 30–50 canonical query. | §17 | Query phủ định/đa concept cần parser Phase 4; bịa chúng bây giờ là đo sai thứ. Prompt đơn dương là đúng phép vector mode sẽ chạy |
 | D14 | **Embed hai bước qua shard file.** `cxr embed` ghi `data/indexes/embeddings/<build_id>/shard_NNNN.npz` + `shards.json`; `cxr index` upsert vào Qdrant và ghi `build_manifest.json`. `build_id` cố định lúc embed bắt đầu, `index` đọc lại chứ không sinh mới. | §17 ("Index vào Qdrant", không nói cách) | Embed CPU ≈34 phút (đo từ mtime shard của lần chạy CPU dở, chưa tính nạp model) là thứ đắt, còn Qdrant/Docker/payload là thứ hay đổi. Tách ra thì nâng image Qdrant hay `--recreate` không phải embed lại; resume theo shard là lưới an toàn; `cxr score-corpus` chấm chất lượng thẳng từ shard, không cần Qdrant. → `docs/vector-baseline.md` |
-| D15 | **API Phase 3 tối thiểu**: `/health`, `/search` (chỉ mode `vector`), `/images/{image_id}`. `query` tiếng Anh dùng nguyên văn làm `semantic_query` (`parser: "passthrough"`); `score` là cosine thô từ Qdrant, không chuẩn hóa. `/query/parse`, `/studies/{id}` hoãn sang Phase 4 và 6. | §13 | Parser là việc của Phase 4; một parser tạm sẽ làm baseline đo sai thứ. Hợp nhất ở Phase 5 dùng RRF theo thứ hạng nên không cần chuẩn hóa score; schema ghi rõ score không phải xác suất |
+| D15 | **API gọn**: `/health`, `/search` (mode `label`/`vector`/`hybrid`), `/query/parse`, `/images/{image_id}`; `/studies/{id}` hoãn sang Phase 6. `score` là tín hiệu thứ hạng (cosine thô ở `vector`, RRF ở `hybrid`, null ở `label`), không chuẩn hóa. API nạp cả hai nhánh BiomedCLIP (784,6 MB) dù chỉ cần text tower | §13 | Hợp nhất dùng RRF theo thứ hạng nên không cần chuẩn hóa score; schema ghi rõ score không phải xác suất. Nạp cả model là chấp nhận được ở V1 (cold start ≈7,6 s, warm p95 171 ms); tối ưu để sau |
 | D16 | **`config_hash` của vector index chỉ phủ `data.yaml` + `models.yaml:image_encoder`** (`VECTOR_INDEX_CONFIGS`, selector `name:section` hash một section đã parse). `build_manifest.json` ghi `config_scope`; `validate-indexes` tính lại hash theo scope đó, không theo mặc định của code. | Phase 0a (hash cả 4 config `data`, `models`, `retrieval`, `concepts`) | `retrieval.yaml`, `concepts.yaml` và `models.yaml:llm` là tham số lúc truy vấn; Phase 4–5 tune chúng liên tục mà vector trong Qdrant không đổi, nên hash 4 file sẽ làm check 1 FAIL ở mỗi lần sửa. Scope nằm trong manifest nên manifest cũ (scope 4 file) vẫn kiểm được; Phase 5 FTS index sẽ ghi scope riêng |
 | D17 | **`SearchQuery` gọn:** `semantic_query`, `include` (concept + `PRESENT`/`UNCERTAIN`), `exclude`, `views`, `language`. Parse **không** sinh `explicit_absence`, `uncertainty_policy`, `top_k`, `intent`; `absence_policy`/`uncertainty_policy`/`top_k` là tham số của request `/search`. | §10.2 | Đó là lựa chọn của người dùng/UI, không phải nội dung câu. Bắt LLM 3B đoán chúng chỉ thêm chỗ sai mà không thêm thông tin, và mặc định `absence_policy` đã được số đo quyết (D9) |
 | D18 | **Mode `label` không xếp hạng.** Tập khớp trả theo hoán vị cố định `np.random.default_rng(retrieval.yaml:results.label_order_seed).permutation(n)`, kèm `total_matches`; `score` null. | §11.1, §12.2 (không nói thứ tự) | Nhãn không có tín hiệu xếp hạng. `rank_in_manifest` sẽ đặt 200 ca `valid/` (rank 0–199) lên đầu mọi truy vấn. Hoán vị theo seed cho top-k là mẫu không thiên lệch và tái lập được |
 | D19 | **"Parsed-query chips" của UI hoãn sang Phase 6.** API trả `parsed_query` + `warnings` để UI dùng sau. | §17 Phase 4 | Chưa có app web (`web/` rỗng, `pnpm` chưa cài — T5) |
-| D20 | **LLM qua Ollama `/api/chat` với `format` = JSON schema** (enum 14 concept), Pydantic validate, retry 1 lần rồi về rule parser. Prompt là file có version `configs/prompts/query_parser_v1.txt`; sha256 của prompt đã render nằm trong khóa cache và trong `parser_eval.json`. Chỉ chỉnh prompt/lexicon trên `dev`. `semantic_query` do một quy tắc chung dựng (`QueryParser._finalize`) cho cả hai parser. | §10.3 (prompt nội tuyến, không nói cách ràng buộc output) | Enum chặn concept lạ ngay lúc decoding; vẫn validate vì server cũ bỏ qua `format`. Hash prompt để cache không trả parse của prompt cũ và mọi số đo truy được về prompt. Quy tắc `semantic_query` chung nên ablation LLM vs rule đo ràng buộc, không đo cách diễn đạt |
+| D20 | **Output của LLM bị ràng buộc bằng JSON schema** (enum 14 concept; Ollama `format`, OpenAI `response_format` strict), Pydantic validate, retry 1 lần rồi về rule parser. Prompt là file có version `configs/prompts/query_parser_v1.txt`; sha256 của prompt đã render nằm trong khóa cache và trong `parser_eval.json`. Chỉ chỉnh prompt/lexicon trên `dev`. `semantic_query` do một quy tắc chung dựng (`QueryParser._finalize`) cho cả hai parser. | §10.3 (prompt nội tuyến, không nói cách ràng buộc output) | Enum chặn concept lạ ngay lúc decoding; vẫn validate vì server cũ bỏ qua `format`. Hash prompt để cache không trả parse của prompt cũ và mọi số đo truy được về prompt. Quy tắc `semantic_query` chung nên ablation LLM vs rule đo ràng buộc, không đo cách diễn đạt |
 | D21 | **Benchmark theo quy ước cụm từ của CheXpert labeler.** `airspace disease` thuộc Lung Opacity (không phải Consolidation), `collapsed lung` thuộc Atelectasis (không phải Pneumothorax), cả trong `concepts.yaml` lẫn gold. Ba câu heldout `en-043`, `vi-027`, `vi-052` là bẫy cấu trúc (phủ định đứng xa, "có thể" không phải hedge), viết lại **sau khi** thấy output của rule parser trên heldout; được khai báo. | — | Nhãn resolve là ground truth của mode `label`; gold lệch labeler thì parse "đúng" vẫn lọc sai tập. Số đo: *Sự thật đã đo*, Phase 4, bảng quy ước cụm từ. Ba câu bẫy là những câu duy nhất kiểm cấu trúc thay vì từ vựng, nên số `negation`/`uncertainty` chủ yếu đo độ phủ từ vựng → `docs/parser-evaluation.md` |
 | D23 | **Hybrid lọc trước rồi RRF** (tập cho phép → hai leg trong tập đó → RRF); bỏ `concept_match_bonus`/`uncertain_penalty`/`constraint_violation_penalty` | §11.3–11.4 (gộp 100+100 ứng viên rồi lọc, bonus/penalty) | Ràng buộc thỏa 100% theo cấu trúc, recall đủ, có `total_matches`; sau khi lọc cứng không còn gì để thưởng/phạt; §1: FTS thô bị phủ định đầu độc nên không thể để nhánh report sinh ứng viên trước khi lọc |
 | D24 | **Đánh giá retrieval trên 200 câu của benchmark parser** (dev 40 tune / heldout 160 một lần; chạy lại một lần có khai báo, Nhật ký 2026-10-21), ba cấu hình parser, **graded = đồng thuận nguồn nhãn** | §18.1 (400 câu, 150/250, patient-disjoint), §17 Phase 5 "tuning trên validation" | Chưa có tập 400; tập 200 đã có gold đúng cấu trúc relevance §18.2; nhị phân không tách được hybrid với label-only |
 | D25 | **Evidence = câu nguyên văn (offset vào `search_text`), polarity bằng rule parser trên lexicon `en + report`, 1 câu/concept, có ở mọi mode** | §11.5, §12.4 (study detail tool) | Faithfulness kiểm được bằng substring; polarity cho UI thấy lệch; `/studies/{id}` vẫn hoãn (D15) |
 | D26 | **P9 đóng:** câu EN chỉ có exclude → cả hai parser encode nguyên văn; VI → bỏ vector leg | spec Phase 4 §4.2 (LLM `findings` rỗng → `""`) | Baseline vector phải có thứ để encode và phơi điểm mù phủ định; hybrid không bị |
 | D27 | **Từ vựng report (`report`) tách khỏi lexicon parser (`en`/`vi`)** | `concepts.yaml` header ("FTS5 MATCH builder … use `en` ONLY") | `en` khớp 140/2.442 study Lung Lesion; parser không được đổi sau khi đo heldout Phase 4 |
+| D28 | **Giữ scope V1, không thêm KG vào đồ án chuyên ngành 1.** KG (RadGraph, UMLS/RadLex, Neo4j) vẫn thuộc V2 như `docs/scope-and-non-goals.md` | — (xác nhận lại scope, không ghi đè) | Người dùng xác nhận 2026-10-23: đề đã đăng ký cho môn là "hệ thống truy vấn ảnh X-quang phổi bằng ngôn ngữ tự nhiên", không nêu KG; đề có KG được dán vào ngày 2026-10-22 không phải đề của môn này. Phase 6–7 còn trong Definition of Done, và hybrid V1 là mốc mà KG phải vượt. Đầu vào cho thiết kế V2: *Sự thật đã đo*, RadGraph-XL; T29; cần cầu nối KG ↔ ảnh, chuẩn hóa thuật ngữ và ground truth do người chấm |
 | — | **Lệch nhỏ của Phase 5:** `blocked_phrases` cho T20; mode mặc định của request giữ `vector`; report index gắn corpus canonical, không gắn `build_id`; `validate-indexes` 7 check; `cxr eval-retrieval` thay cho `cxr evaluate` của §20 (lệnh `evaluate`/`benchmark` của Makefile vẫn trỏ tới `cxr evaluate` chưa tồn tại — ghi nhận, để Phase 7); `per_query` của JSON là dict theo id với các metric, không phải list kèm id đã xếp hạng như spec Phase 5 §11.6 (danh sách xếp hạng cho error analysis để Phase 7); `cxr eval-retrieval` không có `--indexes-dir`/`--qdrant-url` (lấy từ `Settings`); `--report-index` của `validate-indexes` mặc định là `<indexes-dir>/report_search.sqlite`; `evidence_faithful` của spec Phase 5 §11.4 không vào JSON (thay bằng tính đúng theo cấu trúc và round trip 50 ảnh của integration test, xem T26); khối `retrieval.yaml:constraints` (`include_accepts`, `exclude_requires`, `not_mentioned_satisfies_exclude`, `strictness_default`) là dead config, không module nào đọc, và `exclude_requires: [ABSENT]` nói ngược D9. Cũng dead: `report_search.tokenizer` (index hardcode `report_index.TOKENIZER`), `explanation.verify_spans_against_report` (pipeline luôn kiểm, không đọc key), `degradation.on_report_index_unavailable` (`vector_and_label_only` nói sai: thiếu index thì hybrid vẫn chạy, chỉ không có report leg). Giữ nguyên, dọn khi có dịp | — | — |
+
+**D5** (qwen 3B làm LLM mặc định) bị D22 thay ngày 2026-10-20. qwen 3B qua Ollama vẫn là lựa chọn offline
+(`LLM_PROVIDER=ollama`); 7B chưa từng được pull.
 
 **D4, bổ sung 2026-10-11:** `make embed` giờ chạy **trực tiếp trên CPU** (`uv run cxr embed`, cùng pin
 torch 2.4.1 với Phase 2 nên vector tái lập được), không qua Docker worker GPU như §20. Lệnh Docker
@@ -505,72 +466,21 @@ vẫn là CPU. **Mỗi build chỉ embed trên một thiết bị**: phần CPU 
 GPU và CPU của cùng ảnh nhỏ nhất 0,999995, sai lệch từng phần tử lớn nhất 4,6e-4, tức không trùng
 bit (*Sự thật đã đo*, Phase 3); ảnh hưởng lên thứ hạng chưa đo.
 
-**D15, ghi chú:** API nạp cả hai nhánh BiomedCLIP (weights 784,6 MB) dù chỉ cần text tower. Chấp nhận
-ở V1 (cold start 5,3 s, warm p95 158 ms). Đây là điểm tối ưu để sau, chưa phải quyết định.
-
-**D15, cập nhật 2026-10-15:** `parser: "passthrough"` không còn. Từ Phase 4, `/search` mode `vector`
-encode `semantic_query` do `QueryParser` dựng (D20), có thêm mode `label` (D18) và `/query/parse`.
-`/studies/{id}` vẫn hoãn sang Phase 6.
-
-**Tinh chỉnh spec Phase 4 (không phải lệch):**
-- D20: `models.yaml:llm.prompt_file` là `prompts/query_parser_v1.txt`, tương đối với `configs/`
-  (`llm_parser.load_prompt`), không phải `configs/prompts/...` như spec §9 viết.
-- D21: spec §7 cho mỗi câu một list `groups`. Benchmark ghi một `group` chính do tác giả gán; `groups`
-  được suy ra từ gold lúc nạp (`parser_benchmark.derive_groups`), và câu có `group` không khớp gold bị từ chối.
-- D21: `dev` là câu 001–020 của mỗi ngôn ngữ, không phải các câu chia hết cho 5 như spec §7 viết: với
-  chu kỳ 20 câu của `PATTERN`, bội số của 5 chỉ rơi vào nhóm uncertainty, multi và negation.
-- Rule parser: cue gần concept hơn thắng, hòa thì uncertainty thắng (review Task 2), thay cho
-  "uncertainty thắng mỗi khi cả hai cue cùng chạm tới" của spec §4.3.
-- `llm_first_try_valid_rate` của spec §8.1 bị bỏ: suy ra được từ `retry_rate` và `fallback_rate`.
-- JSON của `cxr eval-parser`: `model`, `ollama_version`, `prompt_sha256` nằm dưới `eval.llm`; breakdown
-  theo ngôn ngữ và nhóm nằm trong từng parser (`eval.parsers.<mode>`).
-- Test CLI của spec §10 lúc đầu bị thu hẹp thành test mặc định của argparse; đợt sửa 2026-10-15
-  khôi phục chúng (`tests/unit/test_cli_phase4.py`).
-- Spec §4.5 bước 6 được sửa: kết quả fallback **không** vào cache, vì một lần LLM lỗi thoáng qua
-  không được thành vĩnh viễn cho câu đó; cache hit trả `llm_ms` null.
-
-**D22, ghi chú 2026-10-21:** cấu hình `auto` của `cxr eval-retrieval` (Phase 5) chính là parser mặc định
-này: gpt-5-mini, prompt `c975e4ca…`, không phải Ollama.
+**Phase 4–5 lệch spec của từng phase ở vài điểm nhỏ.** Các spec đó không nằm trong repo; những lệch mà code
+đã tự nói (docstring, test) không chép lại ở đây. Chỉ còn những điểm code không cho thấy lý do:
+- `dev` của benchmark là câu 001–020 của mỗi ngôn ngữ, không phải các câu chia hết cho 5: với chu kỳ 20 câu
+  của `PATTERN`, bội số của 5 chỉ rơi vào nhóm uncertainty, multi và negation. Benchmark ghi một `group`
+  chính; `groups` suy ra từ gold lúc nạp, câu có `group` không khớp gold bị từ chối.
+- Relevance của `cxr eval-retrieval` dùng **view của gold** cho mọi cấu hình parser; request search mang view
+  của parse. Bản đầu dùng view của parse cho `rule`/`auto`, nên heldout Phase 5 phải chạy lần 2 có khai báo.
+- JSON của `cxr eval-retrieval` ghi `parsers.<parser>.fallback_rate`: fallback không vào cache, nên sau khi
+  chạy không còn cách nào khác biết `auto` có rơi về rule giữa chừng hay không.
 
 **D23, ghi chú:** khi hybrid **không có ràng buộc** nhưng có view, tập cho phép của report leg là các study có
 ảnh **bất kỳ** trong view (như filter view của Qdrant cho vector leg), còn hybrid có ràng buộc và mode label
 lọc theo view của ảnh đã chọn; kết quả luôn trả ảnh đã chọn của study. Hai thứ chỉ lệch khi một study có
 nhiều ảnh. Corpus thật có một ảnh frontal mỗi study (Phase 1), chỉ world của unit test (2 ảnh/study) lệch,
 nên không sửa. Corpus nào có nhiều ảnh mỗi study thì thumbnail có thể sai view.
-
-**Tinh chỉnh spec Phase 5 (không phải lệch):**
-- D26: câu VI chỉ có exclude ra `semantic_query` "" với warning `no positive finding; vector leg skipped` ở
-  cả hai parser; `no concept recognised in a Vietnamese query; vector leg skipped` chỉ còn cho câu VI không
-  có concept nào (spec §10.1 bước 4 chỉ nói "warning hiện có"). Test `test_llm_with_no_findings_and_no_include_warns`
-  khẳng định hành vi cũ mà D26 đảo, nên được thay bằng `test_llm_with_nothing_at_all_in_english_encodes_the_raw_text`.
-- `report_search.free_text_tokens()` công khai, trả đúng các token mà nhánh free-text của `build_match`
-  quote (theo thứ tự, bỏ trùng); pipeline đưa list đó cho `EvidenceMatcher.build`.
-- `free_text_tokens` bỏ thêm bốn từ khóa FTS `and`/`or`/`not`/`near`: `min_token_chars` 3 vẫn giữ "and",
-  và đã quote thì chúng khớp gần như mọi report. Từ "not"/"and" của câu free-text vì vậy không tới report
-  leg hay evidence.
-- Tập cho phép của report leg đi vào SQL bằng `study_id IN (SELECT value FROM json_each(?))`, không qua
-  bảng TEMP như probe: connection `mode=ro` dùng chung không phải ghi gì dưới lock.
-- `point_ids == []` nghĩa là không có gì để tìm (trả `[]`, không gọi Qdrant); chỉ `None` mới là không lọc.
-  Tập cho phép rỗng thì pipeline trả `[]`, `total_matches` 0, không phát warning "label order".
-- `search_hybrid` bỏ ứng viên của mọi leg nằm ngoài `set(label_order)` trước khi hợp nhất (phòng thủ, có
-  test với id lạ).
-- Test `test_vector_search_returns_ranked_results_with_urls` của plan kỳ vọng `constraints_satisfied: True`,
-  nhưng FakeEncoder xếp study3 (Pleural Effusion `NOT_MENTIONED`) lên đầu cho "pleural effusion", nên
-  `False` mới đúng. `AppState` có thêm `report_min_token_chars`, đọc từ `retrieval.yaml:report_search`.
-- JSON của `cxr eval-retrieval` ghi `parsers.<parser>.fallback_rate` (tỉ lệ câu `fallback_used`; None với
-  `gold`): fallback không vào cache, nên sau khi chạy không còn cách nào biết `auto` có rơi về rule giữa
-  chừng hay không.
-- Verdict chỉ tính khi có `gold` và cả `vector` lẫn `hybrid` (thiếu thì `verdict: null`, in `verdict: n/a`);
-  policy mặc định luôn đứng đầu.
-- Relevance dùng **view của gold** cho mọi cấu hình parser (spec §11.3); request search vẫn mang view của
-  parse. Bản đầu dùng view của parse cho `rule`/`auto`, nên heldout phải chạy lần 2 có khai báo (Nhật ký
-  2026-10-21).
-- Spec §8.6 coi câu EN chỉ có exclude là có nhánh report rỗng. Thực tế D26 cho `semantic_query` = nguyên
-  văn câu, `include` rỗng nên `build_match` đi nhánh free-text và quote mọi token, kể cả từ của concept
-  bị loại: "show me films with no evidence of pneumothorax" → `"show" OR "films" OR "with" OR
-  "evidence" OR "pneumothorax"`. Trong tập cho phép, report leg vì thế xếp trước các report nhắc chính
-  finding bị loại (thường để phủ định nó), và evidence có thể trích một câu hai lần (một lần `negated`
-  cho concept, một lần `mention` free-text). Giữ hành vi, mở P11; số đo ở *Sự thật đã đo*, Phase 5.
 
 ### Lấp lỗ hổng của kế hoạch
 
@@ -579,14 +489,8 @@ Kế hoạch không quyết những điểm này, nhưng chúng âm thầm quy�
 | # | Quy tắc | Vì sao bắt buộc |
 |---|---|---|
 | G1 | **`label_resolution`** (`configs/retrieval.yaml`): ưu tiên `CHEXPERT_V1 > CHEXBERT_IMPRESSION > CHEXBERT_FINDINGS > CHEXBERT_REPORT`, lấy giá trị non-`NOT_MENTIONED` đầu tiên. Ma trận resolve dựng trong RAM lúc API startup, **không** tạo bảng canonical thứ sáu. | §8.3 bảo giữ cả 4 nguồn kèm provenance (đúng cho *storage*), nhưng §12.2 `filter_studies_by_labels` cần **đúng một** status cho mỗi `(study, concept)` |
-| G2 | **`report_search.match_from: parsed_concepts`**: chuỗi FTS5 MATCH và evidence extractor chỉ dùng `concepts.yaml:*.en`, **không bao giờ** dùng raw string của người dùng. `semantic_query` luôn là tiếng Anh, kể cả khi input tiếng Việt. | Report là tiếng Anh. Nếu MATCH dựng từ raw string thì report leg đóng góp **bằng 0** cho mọi query tiếng Việt → use case 6 hỏng và hybrid trông tệ hơn thực tế. Tiện thể triệt tiêu FTS5 injection theo construction |
+| G2 | **MATCH của report leg không bao giờ dựng từ chuỗi người dùng gõ.** Có include: OR các cụm `concepts.yaml:*.report` của concept include (D27). Không có include: các token đã quote của `semantic_query`; với câu EN đó là nguyên văn câu (D26), nên từ của concept bị loại cũng vào MATCH (P11); câu VI trên đường rule/gold không có report leg vì `semantic_query` rỗng (trên đường LLM, `findings` tiếng Anh thành `semantic_query`). Evidence khớp `en + report`. `semantic_query` luôn là tiếng Anh | Report là tiếng Anh. Nếu MATCH dựng từ raw string thì report leg đóng góp **bằng 0** cho mọi query tiếng Việt → use case 6 hỏng và hybrid trông tệ hơn thực tế. Tiện thể triệt tiêu FTS5 injection theo construction |
 | G3 | **`vector` mode**: có lọc view AP/PA (metadata facet), **không** áp ràng buộc nhãn. | Nó là baseline mà hybrid phải vượt. Tính công bằng của con số nDCG chủ đạo phụ thuộc vào phân biệt này. → `docs/evaluation-design.md` |
-
-**G2, cập nhật 2026-10-21:** MATCH của report leg giờ dựng từ `concepts.yaml:*.report` của concept include,
-và evidence khớp `en + report` (D27), không còn chỉ `*.en`. Câu không có include thì MATCH là các token đã
-quote của `semantic_query` (EN không có include = nguyên văn câu, D26, nên từ của concept bị loại cũng vào
-MATCH: P11). Câu VI không có include chỉ không có report leg trên đường rule/gold (`semantic_query` rỗng);
-trên đường LLM, `findings` tiếng Anh khác rỗng thành `semantic_query` và cho report leg free-text.
 
 ---
 
@@ -607,11 +511,11 @@ trên đường LLM, `findings` tiếng Anh khác rỗng thành `semantic_query`
 | T9 | **`section_impression` thường mở đầu bằng ký tự xuống dòng** và có đánh số `1. 2. 3.` bên trong. | `.strip()` trước khi kiểm tra rỗng và trước khi ghép `search_text`. Con số 99,93% ở trên đã tính sau khi strip |
 | T10 | **`grep -r` ở gốc repo sẽ quét cả `data/` (12 GB, 223k file)** và treo. | Dùng `git grep` hoặc thêm `--exclude-dir=data` |
 | T12 | **Model ID và loader trong kế hoạch sai.** `models.yaml` từng ghi `StanfordAIMI/CheXzero` và `StanfordAIMI/XrayCLIP` — cả hai không tồn tại. CheXzero chỉ có trên Google Drive (state dict OpenAI CLIP). XrayCLIP là transformers `CLIPModel`, không phải open_clip. open_clip 2.24 với `hf-hub:` **bỏ qua revision** âm thầm, và không có `open_clip.__version__`. | ID thật + pin trong `configs/models.yaml`; CheXzero pin bằng sha256 file. BiomedCLIP nạp từ `snapshot_download(revision=...)` rồi load file local. Version: `open_clip.version.__version__`. Chỉ báo cáo của `cxr spike-models --rescore` là quyết định: chạy `--models <tên>` lẻ ghi đè `model_spike.json` bằng báo cáo một model |
-| T13 | **Qdrant và shard file.** `compose.yaml` từng pin server `qdrant/qdrant:v1.9.2` trong khi `qdrant-client` là 1.19.1 (lệch 10 minor). Docker Desktop phải chạy trước `cxr index` và API. `QdrantClient.search` đã deprecated. Client `:memory:` bỏ qua payload index (chỉ cảnh báo). `np.savez` tự nối `.npz` vào mọi tên khác đuôi, nên `shard.npz.part` thành `shard.npz.part.npz`. Chạy native mà `.env` có `QDRANT_URL=http://qdrant:6333` (hostname trong Docker) thì không kết nối được. `build_id` mặc định lấy ngày hôm nay. | Server nâng lên `v1.19.2`. Dùng `client.query_points`. Ghi shard qua file handle rồi rename. Unit test spy lời gọi `create_payload_index`; `tests/integration/test_vector_index.py` kiểm `payload_schema` trên server thật. Native: `QDRANT_URL=http://localhost:6333` hoặc `--qdrant-url`. `make setup` chép `.env.example` thành `.env` với `QDRANT_URL=http://qdrant:6333` và đường dẫn `/app/...`, nên mọi lệnh native (`cxr index`, `validate-indexes`, `bench-vector`, uvicorn) cần hoặc không có `.env`, hoặc ghi đè `QDRANT_URL=http://localhost:6333`, `IMAGE_ROOT=data/raw/CheXpert-v1.0-small`, `CANONICAL_DIR=data/canonical`, `INDEXES_DIR=data/indexes` (lần chạy thật chỉ chạy được vì `.env` lúc đó rỗng) Resume embed sang ngày khác: `--build-id <build_id cũ>`. Phase 4: `cxr parse` và `cxr eval-parser` native cũng cần `.env` rỗng, vì `.env.example` đặt `LLM_BASE_URL=http://host.docker.internal:11434`. Phase 5: `FTS_DB_PATH=/app/...` là giá trị thứ năm phải ghi đè (`FTS_DB_PATH=data/indexes/report_search.sqlite`). Sai thì API tắt report index (hybrid chạy không có report leg, không có evidence) mà `validate-indexes` vẫn 7/7 PASS: nó đọc `<--indexes-dir>/report_search.sqlite` (mặc định `data/indexes`), không đọc `Settings.fts_db_path` |
+| T13 | **Qdrant, shard file và `.env` khi chạy native.** `QdrantClient.search` đã deprecated. Client `:memory:` bỏ qua payload index (chỉ cảnh báo). `np.savez` tự nối `.npz` vào mọi tên khác đuôi, nên `shard.npz.part` thành `shard.npz.part.npz`. `build_id` mặc định lấy ngày hôm nay. Docker Desktop phải chạy trước `cxr index` và API. `.env` do `make setup` tạo chỉ đúng trong container (README liệt kê các biến phải ghi đè). Điều README không nói: sai `FTS_DB_PATH` thì API tắt report index (hybrid chạy không có report leg, không có evidence) mà `validate-indexes` vẫn 7/7 PASS, vì nó đọc `<--indexes-dir>/report_search.sqlite`, không đọc `Settings.fts_db_path` | Server Qdrant ghim `v1.19.2` cho khớp client 1.19 (từng lệch 10 minor). Dùng `client.query_points`. Ghi shard qua file handle rồi rename. Unit test spy `create_payload_index`; `tests/integration/test_vector_index.py` kiểm `payload_schema` trên server thật. Resume embed sang ngày khác: `--build-id <build_id cũ>`. Chạy native: không có `.env`, hoặc ghi đè theo README |
 | T14 | **`uv run` không gỡ torch CUDA cài bằng `uv pip`.** torch/numpy chỉ nằm trong extra, còn `uv run` sync inexact phần base, nên venv lặng lẽ ở `2.4.1+cu124`; `uv sync --all-extras` thì nhận ra và cài lại. Đã xảy ra: `cxr index` chạy sau khi embed GPU ghi torch `+cu124`, numpy 2.5.2 vào `build_manifest.json`. | Sau khi dùng GPU: `uv sync --all-extras`, rồi kiểm `torch.__version__` có `+cpu`. `uv sync --all-extras --dry-run` cho biết venv có lệch lockfile không |
 | T15 | **Image API chưa từng được build hay chạy.** Với cấu hình trước bản sửa này, HF cache (`HF_HOME=/app/.hf_cache`) không ghi được bởi uid 10001 nên `snapshot_download` báo PermissionError và API kẹt 503 vĩnh viễn; kể cả khi ghi được, container đầu tiên tải ≈785 MB trọng số trong cửa sổ healthcheck ≈3 phút. Image api nặng hơn ≈1 GB vì giờ mang torch CPU (spec §4.4) | Đã thêm `mkdir`+`chown` `/app/.hf_cache` vào `docker/api.Dockerfile`, mount volume `hf_cache` vào api, ghim `qdrant-client>=1.19,<1.20` trong extra `api`/`worker` (image pip-install từ pyproject, không từ lock). **Chưa kiểm**: Phase 6 phải chạy `docker compose build api` + `make up` thật |
 | T16 | **Ollama: cold start và server không tự lên.** Lần gọi `/api/chat` đầu tiên sau khi cài mất **72 s** (load 27 s + prompt eval 41 s, khởi tạo CUDA; đo 2026-10-13, spec §1), trong khi `llm.timeout_seconds` là 20 → câu đầu rơi về rule parser. Ngày 2026-10-14, server vừa khởi động lại, model đã trên đĩa nhưng chưa nạp (`/api/ps` rỗng): lần đầu chỉ 5,3 s. Vì sao chênh với 72 s thì chưa đo. `keep_alive` mặc định của Ollama là 5 phút. App Ollama (tray) không tự chạy lại sau khi khởi động lại phiên trên máy này. | API warm-up ở thread nền (`build_query_parser(warm_up=True)`); mọi request đặt `keep_alive: 30m`. `uv run pytest -m llm` ngay sau khi Ollama lên có thể fail vì timeout: chạy một `cxr parse` trước. Trước `cxr eval-parser`: `curl -s localhost:11434/api/version`; không trả lời thì chạy `ollama serve` hoặc mở app |
-| T17 | **3B với prompt thô thì hỏng; với few-shot thì chép mẫu.** Probe thiết kế (spec §1): điền `views` cả AP lẫn PA, gắn `UNCERTAIN` cho finding thường, câu VI sai gần hết. Prompt 5 ví dụ ban đầu: dev status F1 0,606. Khi thêm ví dụ, model gắn concept với list nó xuất hiện trong ví dụ ("không có xẹp phổi" → exclude làm "Which studies have atelectasis?" cũng thành exclude), chọn nhãn theo chữ cái đầu (pacemaker → Pneumothorax), và hai ví dụ có view làm 5/12 câu tự viết không nêu view bị đoán ra view (một lần chạy thăm dò, output không lưu; script ở `artifacts/metrics/views_probe.py`; theo T18, chạy lại sẽ không ra đúng số này). Prompt cuối làm hỏng câu use case 6, trong khi prompt gốc qua được: include ra Edema trước Cardiomegaly và `language` ra `en`, nên `test_use_case_six_through_the_llm` FAIL 4/4 lần. Tập concept vẫn đúng; chỉ `semantic_query` bị đảo thứ tự. | Few-shot trong `query_parser_v1.txt` là phần chịu lực, không phải trang trí. Sửa prompt thì đo lại trên `dev` **và** trên bộ câu tự viết trước khi tin. Không thêm ví dụ có view; cân để mỗi concept không chỉ xuất hiện ở một list. Không nới assertion của live test: từ 2026-10-15 test tách đôi, phần ràng buộc (tập concept, status, exclude, views) phải pass, phần thứ tự include, `language` và `semantic_query` mang `xfail(strict=False)`. Có sửa prompt hay không là P7 |
+| T17 | **3B với prompt thô thì hỏng; với few-shot thì chép mẫu.** Probe thiết kế (spec §1): điền `views` cả AP lẫn PA, gắn `UNCERTAIN` cho finding thường, câu VI sai gần hết. Prompt 5 ví dụ ban đầu: dev status F1 0,606. Khi thêm ví dụ, model gắn concept với list nó xuất hiện trong ví dụ ("không có xẹp phổi" → exclude làm "Which studies have atelectasis?" cũng thành exclude), chọn nhãn theo chữ cái đầu (pacemaker → Pneumothorax), và hai ví dụ có view làm 5/12 câu tự viết không nêu view bị đoán ra view (một lần chạy thăm dò, output không lưu; script ở `artifacts/metrics/views_probe.py`; theo T18, chạy lại sẽ không ra đúng số này). Prompt cuối làm hỏng câu use case 6, trong khi prompt gốc qua được: include ra Edema trước Cardiomegaly và `language` ra `en`, nên `test_use_case_six_through_the_llm` FAIL 4/4 lần. Tập concept vẫn đúng; chỉ `semantic_query` bị đảo thứ tự. | Few-shot trong `query_parser_v1.txt` là phần chịu lực, không phải trang trí. Sửa prompt thì đo lại trên `dev` **và** trên bộ câu tự viết trước khi tin. Không thêm ví dụ có view; cân để mỗi concept không chỉ xuất hiện ở một list. Không nới assertion của live test: từ 2026-10-15 test tách đôi, phần ràng buộc (tập concept, status, exclude, views) phải pass, phần thứ tự include, `language` và `semantic_query` mang `xfail(strict=False)`. Chỉ áp dụng khi chạy Ollama 3B: gpt-5-mini (D22) trả đúng câu use case 6 với cùng prompt (live test XPASS), nên P7 đã đóng |
 | T18 | **LLM không tái lập giữa các lần chạy.** Cùng prompt (`c975e4ca…`), cùng 40 câu dev, temperature 0, seed 20260101, Ollama 0.40.3 trên GPU: vòng k=4 và lần chạy dev cuối khác nhau ở **5/40** dự đoán (en-020, vi-002, vi-008, vi-016, vi-020); view F1 0,900 → 0,833, status 0,841 → 0,827. Trong một tiến trình, `llm` và `auto` có lúc cũng lệch (k=1: view 0,800 so với 0,667). | Coi mỗi số LLM từ một lần chạy là có nhiễu cỡ 1–2 câu / 40. Phase 7 chạy LLM parser ≥ 3 lần và báo cáo dao động. So hai prompt bằng nhiều câu hơn một lần chạy dev |
 | T19 | **`cxr bench-vector --api-url` (`bench_http`) giờ đo cả parse lẫn search.** Từ Phase 4, `/search` chạy `QueryParser` trước khi tìm: lần gọi đầu của mỗi câu gồm cả LLM (≈0,8 s), các lần lặp sau trúng cache parse. HTTP p50/p95 150/158 ms của Phase 3 vì vậy không còn so được với lần đo mới. | Phase 5: đo lại con số vector-only với `LLM_DISABLED=true` → đã đo 2026-10-21: `bench-vector --mode vector` 156 / 171 ms, `--mode hybrid` 174 / 219 ms (*Sự thật đã đo*, Phase 5) |
 | T21 | **Gemini qua endpoint OpenAI-compatible trả 400 khi request có `seed`** ("Unknown name \"seed\""). | `OpenAICompatClient` không gửi `seed`; với API hosted seed vốn chỉ là best-effort, `temperature: 0` mới là phần dùng chung được. Có test khóa |
@@ -623,6 +527,7 @@ trên đường LLM, `findings` tiếng Anh khác rỗng thành `semantic_query`
 | T26 | **`search_text` xuống dòng cứng giữa câu, impression đánh số `1. 2. 3.`** (T9). `"There \nis prominence of the cardiac shadow…"`: tách câu theo newline thì ra mảnh `"There "` và evidence trích nửa câu; tách theo dấu chấm thì số thứ tự `1.` thành một "câu" riêng. | `evidence.sentences` chỉ tách theo dấu câu (`(?<=[.!?])\s+`), không theo newline; mảnh chỉ là số thứ tự được gộp vào câu sau (chuỗi `1. 2. x` gộp hết, số thứ tự ở cuối bị bỏ). Offset trỏ vào `search_text` nguyên văn, không strip hay chuẩn hóa, nên câu trích có thể chứa `\n`. Faithfulness đúng **theo cấu trúc**: `sentences()` cắt lát từ chính `text` và `verify=True` kiểm lại đúng lát đó, cộng với việc sqlite lưu `search_text` nguyên văn (`test_search_text_is_stored_verbatim`). Phép kiểm độc lập là round trip 50 ảnh (`test_hybrid_fifty_images_round_trip`: evidence lấy từ sqlite qua pipeline, so với `search_text` của parquet). Vòng 1.000 report (`text[start:end] == e.text` trên 2.375 câu trích) so lát với chính text vừa cắt, nên chỉ là regression check cho cách tách câu trên report thật, không phải bằng chứng độc lập |
 | T27 | **Một connection SQLite read-only dùng chung giữa các thread của API.** Endpoint sync chạy trên threadpool, nên các request song song (test dùng 8 thread) cùng dùng một connection. Thử bỏ lock 5 lần thì hỏng cả 5 (4 lần exception như `TypeError: float() argument must be ... not 'NoneType'`, 1 lần hit thiếu `report_rank`/evidence mà không lỗi). Test song song bản đầu chỉ kiểm status 200 nên **pass cả khi bỏ lock**: lỗi sqlite bị pipeline đổi thành warning + 200, vì report index không bao giờ được làm sập search. | `open_report_index` mở `mode=ro`, `check_same_thread=False`; mọi truy cập qua `state.report_lock` (như `encode_lock`). `test_parallel_hybrid_requests_share_the_connection` kiểm **body** (không warning `report leg failed`, mọi hit có `report_rank` và evidence). Test cho một đường degrade thì phải kiểm nội dung, không chỉ status. Phụ: probe lọc Qdrant để lại payload index `study_id` KEYWORD trên collection local; vô hại (idempotent), code không dùng |
 | T28 | **Dựng lại report index trong khi file đang mở.** Trên Windows, `cxr build-report-index` raise `PermissionError [WinError 5]` ở `os.replace` khi bất kỳ tiến trình nào đang mở `report_search.sqlite` (vd một uvicorn native), và để lại `report_search.sqlite.part`. Tái hiện 2026-10-21: mở connection `mode=ro` bằng `open_report_index` rồi gọi `build_report_index` trên cùng path → `PermissionError` 5, `.part` còn; đóng connection rồi dựng lại thì thành công. Trên Docker (Linux) `os.replace` thành công nhưng container api đang chạy vẫn đọc inode cũ tới khi khởi động lại (chưa thử) | Dừng API trước khi dựng lại; Docker: khởi động lại api sau khi dựng. `.part` còn sót thì xóa (lần dựng sau cũng tự xóa nó trước khi ghi) |
+| T29 | **RadGraph-XL không có khóa ảnh và thứ tự bị xáo.** Mỗi bản ghi chỉ có `{"0": {text, entities, data_source, data_split}}`, không có `path_to_image`. Số bản ghi lệch số dòng có section (findings 57.805 so với 59.441; impression 223.292 so với 223.296). Khớp theo vị trí (bản ghi thứ k ↔ dòng có section thứ k) ra **0 / 2.000** text khớp: mọi thống kê theo study từ phép khớp đó là rác (đã xảy ra 2026-10-22). Text RadGraph đã tách token ("LEFT - SIDED", "1 ."), khác chuỗi CSV | Join theo text chuẩn hóa (`re.sub(r"[^a-z0-9]", "", text.lower())`) của đúng section: khớp 100% bản ghi. Text trùng thì graph trùng, nên trùng nhiều dòng không gây nhập nhằng. Script: `artifacts/metrics/radgraph_align_probe.py` |
 
 T4 (`make setup` thiếu Pillow) đã xử lý 2026-09-22 — `setup` giờ dùng
 `uv sync --all-extras`. Số được giữ nguyên, không đánh lại, để tham chiếu cũ không lệch.
@@ -637,16 +542,13 @@ T4 (`make setup` thiếu Pillow) đã xử lý 2026-09-22 — `setup` giờ dùn
 |---|---|---|---|
 | P4 | Có xem lại **giao thức chấm của gate** Phase 2 không (một prompt dương `"chest x-ray showing {}"`, spec Q3, khớp phép vector search lúc chạy)? | Giữ nguyên; D11 (BiomedCLIP) có hiệu lực tới khi người dùng quyết | Một lần chấm lại tạm thời, ngoài gate, trên embedding đã cache của CheXzero bằng cặp prompt `"{c}"`/`"no {c}"` cho điểm cao hơn. Lần đó khác cả giao thức lẫn cách viết concept, không có trong `model_spike.json`, script không giữ lại. Gợi ý: tiền xử lý CheXzero nhiều khả năng không hỏng, và giao thức một prompt dương có thể bất lợi cho nó. → `docs/model-decision.md` |
 | P5 | API nên **đóng gói trọng số vào image** hay dựa vào volume `hf_cache`? | Dựa vào volume `hf_cache` (lần khởi động đầu tải ≈785 MB, sau đó dùng lại) | Đóng gói làm image to hơn nhưng khởi động đầu không cần mạng và không vướng healthcheck; chọn ở Phase 6 khi build image thật. → T15 |
-| P6 | Có pull **`qwen2.5:7b-instruct-q4_K_M`** (4,7 GB) làm nhánh chất lượng cho parser ablation không? | Không pull; mặc định vẫn 3B (D5) | Heldout 3B **FAIL** (concept / status / view 0,880 / 0,718 / 0,890), và rule parser hơn 3B ở status (0,862) lẫn view (0,945). 7B là bước kế tiếp đã khai báo trước (spec §12) nếu luận văn cần nhánh so sánh hoặc muốn thử vượt ngưỡng. Latency và VRAM của 7B trên máy này chưa đo. → `docs/parser-evaluation.md` |
-| P7 | Có sửa prompt cho câu use case 6 không? Prompt `c975e4ca` trả include Edema trước Cardiomegaly và `language` `en`, nên live test của câu này đang `xfail` | Giữ prompt hiện tại; phần thứ tự/`language` của live test mang `xfail(strict=False)`, phần ràng buộc phải pass | Sửa thì phải đo lại dev và khai báo một lần chạy heldout thứ hai (số heldout hiện tại gắn với `c975e4ca`). Giữ thì `semantic_query` của câu nhiều concept có thể đảo thứ tự; tập ràng buộc không đổi, nên mode `label` không bị ảnh hưởng. Người dùng quyết. → T17 |
-| P8 | Người dùng duyệt `benchmarks/parser_queries_v1.jsonl` có đổi gold heldout không? | Benchmark giữ nguyên như lúc đo (sha256 `8d19c619…`); người dùng duyệt bây giờ | Spec §7/§12 yêu cầu người dùng duyệt file trước khi đo; kế hoạch bỏ cổng đó, và lần chạy heldout duy nhất (2026-10-14) diễn ra trước mọi lần duyệt. Đổi bất kỳ gold heldout nào thì phải khai báo một lần chạy heldout thứ hai (cùng quy tắc với P7). → `docs/parser-evaluation.md` |
+| P8 | Người dùng duyệt `benchmarks/parser_queries_v1.jsonl` có đổi gold heldout không? | Benchmark giữ nguyên như lúc đo (sha256 `8d19c619…`); người dùng duyệt bây giờ | Spec §7/§12 yêu cầu người dùng duyệt file trước khi đo; kế hoạch bỏ cổng đó, và lần chạy heldout duy nhất (2026-10-14) diễn ra trước mọi lần duyệt. Đổi bất kỳ gold heldout nào thì phải khai báo một lần chạy heldout thứ hai. → `docs/parser-evaluation.md` |
 | P11 | Câu EN chỉ có exclude: giữ nhánh report free-text (đang làm) hay bỏ từ của concept bị loại / bỏ nhánh report? | Giữ: MATCH quote mọi token của nguyên văn câu (D26), kể cả từ của concept bị loại | Spec §8.6 tưởng nhánh report rỗng ở trường hợp này. Trên 14 câu heldout EN như vậy (gold), hybrid / label / vector nDCG@10 0,409 / 0,328 / 0,210, nhưng phần hơn label đến từ bm25 xếp report nhắc chính finding bị loại, đọc cùng văn bản với bậc relevance (proxy có thiên lệch), và evidence lặp một câu. Đổi = một lần heldout khai báo. → *Sự thật đã đo*, Phase 5; `docs/retrieval-evaluation.md` |
-| ~~P10~~ | **Đã chốt 2026-10-20 → D22** (OpenAI gpt-5-mini). Kéo theo: P7 (prompt cho use case 6) tự hết vì gpt-5-mini trả đúng thứ tự và `vi` với prompt hiện tại (live test XPASS); P6 (pull 7B) chỉ còn là nhánh ablation tùy chọn | — | — |
-| ~~P10 cũ~~ | **Parser mặc định là gì?** qwen 3B local (D5) đứng cuối ở status (0,718) và đảo nghĩa câu dương đơn giản; Gemini 2.5 Flash qua cả ba ngưỡng nhưng cần mạng, API key, chịu chi phí, gửi truy vấn ra ngoài và chậm hơn (p50 1,9 s); rule parser không phụ thuộc gì, nhanh, hơn 3B ở status/view nhưng concept 0,793 | Ollama 3B vẫn là mặc định trong code. API đang chạy phiên này dùng `LLM_DISABLED=true` (rule) | Mục tiêu §1 của kế hoạch là chạy local, nên đổi sang LLM hosted làm mặc định là quyết định của người dùng, không phải của agent. P6 (pull 7B) giờ là một nhánh của câu hỏi này: thử 7B để xem local có tới gần Gemini không |
-| ~~P9~~ | **Đã chốt 2026-10-21 → D26.** Câu EN chỉ có exclude: cả hai parser encode nguyên văn câu; câu VI: không có vector leg. Heldout cho thấy đúng điều P9 lo: vector vi phạm exclude 0,319, hybrid 0 | — | — |
-
-P1 (disk guard) và P3 (`docker/qdrant`) chốt 2026-09-22 → D8. P2 (`absence_policy`) chốt
-2026-09-23 bằng số liệu corpus → D9.
+| P12 | Vai trò của vector leg trong hybrid: giữ, bỏ, hay làm mạnh lên (finetune VLM)? | Giữ nguyên (vector 0,5, report 1,0). Đề xuất chưa được duyệt: giữ, và thêm thí nghiệm "ảnh không có report" ở Phase 7. Finetune VLM nằm ngoài scope V1; nếu làm thì chỉ trên pool ngoài corpus (*Sự thật đã đo*, Phase 1) | Ablation dev: lọc + chỉ report 0,658 so với hybrid 0,657; với trọng số hiện tại, study chỉ có ở vector leg không vào được top 10. Nhưng relevance đọc cùng văn bản với report leg, nên phép đo không ghi nhận được thông tin chỉ có trên ảnh; bỏ vector thì mất baseline của câu hỏi nghiên cứu §2.1. Đổi trọng số hay bỏ leg = một lần heldout khai báo → *Sự thật đã đo*, Phase 5 |
+Đã đóng, giữ số để tham chiếu cũ không lệch: P1 (disk guard) và P3 (`docker/qdrant`) → D8, 2026-09-22.
+P2 (`absence_policy`) → D9, 2026-09-23. P10 (parser mặc định) → D22, 2026-10-20. P9 (câu EN chỉ có exclude)
+→ D26, 2026-10-21. P6 (pull qwen 7B) và P7 (sửa prompt cho use case 6) đóng 2026-10-23 vì D22 làm chúng hết
+cần: P7 tự hết (gpt-5-mini trả đúng câu đó), P6 không làm.
 
 ---
 
@@ -654,6 +556,15 @@ P1 (disk guard) và P3 (`docker/qdrant`) chốt 2026-09-22 → D8. P2 (`absence_
 
 > Mới nhất lên đầu. Mỗi entry ≤ 10 dòng và trả lời **vì sao**, không kể lại **cái gì**
 > (`git log` đã kể rồi).
+
+### 2026-10-23 — Giữ scope V1, không thêm KG (D28); mở P12
+
+Người dùng hỏi vector có cần không, rồi có nên chuyển sang KG theo một đề tài có KG. Ablation trên dev cho thấy
+trong hybrid, report sau lọc nhãn đã đủ (0,658 so với 0,657): mọi study đều có report, nhãn trích từ report và
+relevance lấy từ nhãn, một vòng khép kín mà vector không thêm được gì đo thấy (P12). RadGraph-XL đủ để dựng KG
+từ report (phủ 25.000/25.000, có `located_at`, phủ định ở mức entity), nhưng phải join theo text (T29), chưa
+chuẩn hóa thuật ngữ, không nối được tới vùng ảnh, và là output của model nên không làm ground truth được. Đề đã
+đăng ký cho môn không nêu KG, nên giữ scope và làm Phase 6–7 (D28); các điểm trên là đầu vào cho V2.
 
 ### 2026-10-21 — Phase 5: report FTS, evidence và hybrid
 
@@ -667,36 +578,16 @@ nên thứ hạng chủ yếu do report dẫn. Heldout chạy hai lần, cả ha
 400 câu và human review (Phase 7), UI và `/studies/{id}` (Phase 6), bấm giờ riêng report leg trên chỉ mục
 thật, lỗ từ vựng report (Enlarged Cardiomediastinum: 4/91 study có evidence).
 
-### 2026-10-20 — Thử gpt-4o-mini và gpt-4.1-mini, giữ gpt-5-mini (D22, T25)
+### 2026-10-20 — Parser mặc định chuyển sang OpenAI gpt-5-mini (D22)
 
-Người dùng muốn đổi sang gpt-4o-mini, rồi gpt-4.1-mini, vì hai model này nhận `temperature: 0`. Mỗi lần
-đổi, tôi đo heldout một lần cùng một phép thử lặp lại trước khi commit; tiêu chí cho 4.1-mini được đặt ra
-trước khi có số (PASS, F1 trong dải 0,02, và tất định thật). 4o-mini trượt view (đọc "frontal" thành
-AP) và không tất định; 4.1-mini PASS nhưng sai 7 so với 3, đắt gần gấp đôi, và lặp lại 39/40 trong khi
-gpt-5-mini được 40/40. Người dùng chốt gpt-5-mini. Bài học thành T25: dev 40 câu không xếp hạng được
-model mạnh, và temperature 0 không phải bằng chứng của tính tái lập.
-
-### 2026-10-20 — Chuyển parser mặc định sang OpenAI gpt-5-mini (D22)
-
-Người dùng chuyển sang OpenAI và yêu cầu model "tối ưu chi phí nhưng hiệu năng vẫn tốt". Luật chọn viết
-trước, chọn trên dev, heldout chỉ chạy một lần cho model thắng, như gate của Phase 2. Bảy model nhỏ, giá
-lấy từ trang pricing chứ không nhớ. Hai model nano rẻ nhất thua: gpt-5-nano trượt status 0,820,
-gpt-4.1-nano qua gate nhưng kém 0,065. gpt-5-mini thắng với ~0,22 USD / 1.000 câu, rồi PASS heldout
-(0,995 / 0,988 / 0,947). Phần lớn công sức nằm ở T23: mỗi họ model từ chối một tham số khác nhau, nên
-tham số đưa vào config theo model thay vì đoán trong code. Mặc định trong code giờ là OpenAI, key đọc
-từ `OPENAI_API_KEY`; không có key thì vẫn chạy bằng rule parser. API phiên này chạy bằng OpenAI, Ollama
-đã tắt.
-
-### 2026-10-20 — Adapter LLM hosted; lỗi parser là do model 3B
-
-Người dùng hỏi lỗi parser có phải do LLM yếu không. Thêm `OpenAICompatClient` (một adapter cho cả
-OpenAI và Gemini, chọn bằng `LLM_PROVIDER`, mặc định vẫn Ollama) và giữ nguyên prompt `c975e4ca` để
-đổi model chỉ đo model. Kết quả trả lời dứt khoát: cùng prompt, Gemini 2.5 Flash 0,994 / 0,980 /
-0,947 trên heldout so với 0,880 / 0,718 / 0,890 của qwen 3B, nên prompt không phải nút thắt. Prompt
-được chỉnh trên dev cho 3B, Gemini không được chỉnh gì, nên phép so nếu có lệch thì lệch về phía 3B.
-Hai lỗi chỉ lộ ra khi gọi API thật (T21 `seed`, T22 thinking token) và đều đã có test. T17 nặng hơn
-ghi chép cũ: không chỉ đảo thứ tự include mà đảo cả include thành exclude. Key nằm trong `.env`
-(gitignored) và chỉ được nạp vào biến môi trường lúc chạy. Chưa đổi mặc định: P10.
+Người dùng hỏi lỗi parser có phải do LLM yếu không. `OpenAICompatClient` (OpenAI và Gemini) giữ nguyên prompt
+`c975e4ca` để đổi model chỉ đo model: Gemini 2.5 Flash 0,994 / 0,980 / 0,947 trên heldout so với 0,880 /
+0,718 / 0,890 của qwen 3B, nên prompt không phải nút thắt. Người dùng chuyển sang OpenAI, yêu cầu tối ưu chi
+phí; luật chọn viết trước, chọn trên dev, heldout chạy một lần cho model thắng như gate Phase 2. gpt-5-mini
+thắng (~0,22 USD / 1.000 câu) rồi PASS heldout (0,995 / 0,988 / 0,947). Phần lớn công sức nằm ở việc mỗi họ
+model từ chối một tham số khác nhau (T21–T23), nên tham số theo model nằm trong config. Người dùng thử thêm
+gpt-4o-mini và gpt-4.1-mini để có `temperature: 0`: 4o-mini trượt view, 4.1-mini sai 7 so với 3 và đắt gần
+gấp đôi, không cái nào tất định hơn, nên giữ gpt-5-mini (T25). Không có key thì vẫn chạy bằng rule parser.
 
 ### 2026-10-15 — Sửa sau review cuối Phase 4
 
@@ -760,9 +651,6 @@ xem lại giao thức chấm hay không để người dùng quyết → P4.
 
 ### 2026-09-23 — Phase 1: canonical corpus
 
-`labels.py`, `join.py`, `sample.py`, `canonical.py` và `cxr build-corpus`. TDD
-toàn bộ, 208 test.
-
 **Phát hiện đáng giá nhất không đến từ test mà từ việc nhìn số liệu.** Corpus lần
 đầu build sạch, mọi contract pass — nhưng `No Finding PRESENT = 78,5%` trong khi
 CheXpert thật khoảng 9%. Đào ra T11. Nếu bỏ qua, phần đánh giá phủ định — đóng
@@ -799,18 +687,12 @@ polars parse đúng CSV có newline nhúng — nếu sai thì Phase 1 sẽ sinh 
 
 ### 2026-09-22 — Phase 0a: ba module nền
 
-Chưa commit. `src/common/ids.py` (57 dòng, 23 test), `src/data/contracts.py`
-(145 dòng, 31 test), `src/common/config.py` (87 dòng, 17 test). TDD: test viết
-trước, chạy thấy đỏ, rồi mới implement.
-
-Làm ba module này trước vì Phase 1 không chạy được nếu thiếu chúng, và vì chúng
+Làm ba module `ids`, `contracts`, `config` trước vì Phase 1 không chạy được nếu thiếu chúng, và vì chúng
 chốt T1 một lần cho cả pipeline. Kiểm chứng thêm trên CSV thật: hai cách viết path
 cho ra cùng `image_id` và cùng `point_id`, path chuẩn hóa resolve đúng file.
 
 `config_hash` hash **nội dung đã parse**, không hash file — sửa comment không làm
-index đang đúng bị coi là stale. Chỉ phủ 4 config ảnh hưởng build
-(`data`, `models`, `retrieval`, `concepts`); `logging`/`evaluation` không thể đổi
-thứ nằm trong Qdrant.
+index đang đúng bị coi là stale. Phạm vi hash sau đó thu hẹp lại (D16).
 
 Thêm 3 test chống trôi lệch code ↔ config: `ids.ROOT_PREFIX` ↔ `data.yaml`,
 `contracts.LABEL_STATUSES` ↔ `data.yaml`, mọi field `Settings` ↔ `.env.example`.
