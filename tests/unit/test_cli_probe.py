@@ -200,7 +200,8 @@ def test_train_probe_writes_the_artifact_and_merges_the_report(tmp_path, capsys,
         return zero, {"lambda": 10, "selection": {"per_lambda": {"10": 0.7}}, "n_train": {}}
 
     monkeypatch.setattr("src.cli.main.train_probe", fake_train)
-    monkeypatch.setattr("src.cli.main._selected_encoder", lambda device: ("fake", FakeEncoder()))
+    monkeypatch.setattr("src.cli.main._encoder_by_name",
+                        lambda name, device: (name or "fake", FakeEncoder()))
     (tmp_path / "report.json").write_text('{"quality": {"keep": 1}}')
 
     assert main(argv) == 0
@@ -210,7 +211,9 @@ def test_train_probe_writes_the_artifact_and_merges_the_report(tmp_path, capsys,
     assert seen["statuses"][1, CHEXPERT_LABELS.index("Edema")] == "PRESENT"
     loaded, meta = probe.load_probe(tmp_path / "probe")
     assert meta["probe_id"] == f"{BUILD}_probe_lam10" and meta["build_id"] == BUILD
-    assert meta["encoder"] == {"model_id": "fake/model", "revision": "fakerev0", "dim": 4}
+    assert meta["encoder"] == {"name": "fake", "model_id": "fake/model", "revision": "fakerev0",
+                               "dim": 4}
+    assert meta["source"] == "probe"
     assert meta["pool_sha256"] == "p" * 64 and meta["pool_build_id"] == POOL_BUILD
     scores = pl.read_parquet(tmp_path / "probe" / probe.SCORES_FILE)
     assert scores.height == 20 and scores.columns == ["study_id", "image_id", *CHEXPERT_LABELS]
@@ -225,3 +228,61 @@ def test_train_probe_writes_the_artifact_and_merges_the_report(tmp_path, capsys,
     out.encode("ascii")
     assert "lambda" in out and "probe - zero_shot" in out and "S1 " in out
     assert loaded.W.shape == (14, 4)
+
+
+def test_embed_encoder_and_scope_flags_default():
+    args = build_parser().parse_args(["embed"])
+    assert args.encoder is None and args.scope == "chexpert25k"
+
+
+def test_embed_with_encoder_flag_names_the_build_after_it(tmp_path, monkeypatch):
+    from datetime import date
+
+    monkeypatch.setattr("src.cli.main._encoder_by_name",
+                        lambda name, device: (name or "fake", FakeEncoder()))
+    images = images_frame(4)
+    images.write_parquet(tmp_path / "pool.parquet")
+    assert main(["embed", "--images", str(tmp_path / "pool.parquet"), "--image-root", "root",
+                 "--out", str(tmp_path / "emb"), "--encoder", "fake2", "--scope", "pool88k",
+                 "--shard-size", "4", "--batch-size", "4"]) == 0
+    build = embed.make_build_id("fake2", date.today(), scope="pool88k")
+    assert build.endswith("_pool88k_fake2_v1")
+    manifest = embed.load_shards_manifest(tmp_path / "emb" / build)
+    assert manifest["encoder"] == "fake2" and manifest["n_images"] == 4
+
+
+def test_train_probe_defaults_keep_the_manifest_path():
+    args = build_parser().parse_args(["train-probe"])
+    assert args.encoder is None and args.corpus_build_id is None
+
+
+def _zero_train(X, statuses, patients, cfg):
+    zero = probe.Probe(np.zeros((14, 4), np.float32), np.zeros(14, np.float32),
+                       tuple(CHEXPERT_LABELS))
+    return zero, {"lambda": 1, "selection": {"per_lambda": {"1": 0.5}}, "n_train": {}}
+
+
+def test_train_probe_with_corpus_build_id_needs_no_manifest(tmp_path, monkeypatch):
+    argv = _train_world(tmp_path)
+    (tmp_path / "indexes" / "build_manifest.json").unlink()
+    monkeypatch.setattr("src.cli.main.train_probe", _zero_train)
+    monkeypatch.setattr("src.cli.main._encoder_by_name",
+                        lambda name, device: (name or "fake", FakeEncoder()))
+    assert main([*argv, "--encoder", "fake2", "--corpus-build-id", BUILD]) == 0
+    _, meta = probe.load_probe(tmp_path / "probe")
+    assert meta["build_id"] == BUILD and meta["probe_id"] == f"{BUILD}_probe_lam1"
+    assert meta["encoder"] == {"name": "fake2", "model_id": "fake/model", "revision": "fakerev0",
+                               "dim": 4}
+    assert meta["source"] == "probe"
+
+
+def test_train_probe_refuses_an_encoder_whose_revision_differs_from_the_build(
+        tmp_path, monkeypatch, capsys):
+    argv = _train_world(tmp_path)
+    other = FakeEncoder()
+    other.revision = "otherrev"
+    monkeypatch.setattr("src.cli.main.train_probe", _zero_train)
+    monkeypatch.setattr("src.cli.main._encoder_by_name", lambda name, device: ("fake2", other))
+    assert main([*argv, "--encoder", "fake2"]) == 1
+    assert "ENCODER MISMATCH" in capsys.readouterr().err
+    assert not (tmp_path / "probe").exists()

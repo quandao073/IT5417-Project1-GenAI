@@ -38,6 +38,11 @@ class TestHelpers:
             "20261011_chexpert25k_biomedclip_v1"
         )
 
+    def test_build_id_takes_a_scope(self):
+        assert embed.make_build_id("cxrclip", date(2026, 10, 23), scope="pool88k") == (
+            "20261023_pool88k_cxrclip_v1"
+        )
+
     def test_shard_bounds_cover_everything_once(self):
         assert embed.shard_bounds(10, 4) == [(0, 4), (4, 8), (8, 10)]
         assert embed.shard_bounds(8, 4) == [(0, 4), (4, 8)]
@@ -200,3 +205,12 @@ class TestRunEmbed:
     def test_load_shards_manifest_hints_when_missing(self, tmp_path):
         with pytest.raises(FileNotFoundError, match="cxr embed"):
             embed.load_shards_manifest(tmp_path)
+
+
+def test_manifest_records_the_encoder_name(tmp_path):
+    kwargs = {"shard_size": 4, "batch_size": 4, "library_versions": {}, "git_commit": None}
+    default = embed.run_embed(images_frame(4), FakeEncoder(), Path("root"), tmp_path / "a", "a",
+                              **kwargs)
+    named = embed.run_embed(images_frame(4), FakeEncoder(), Path("root"), tmp_path / "b", "b",
+                            encoder_name="fake2", **kwargs)
+    assert default["encoder"] == "fake" and named["encoder"] == "fake2"
