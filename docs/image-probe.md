@@ -1,7 +1,8 @@
 # Image concept probe — nhánh ảnh trong truy vấn
 
 **Ngày:** 2026-10-23 · **Nhánh:** `feat/image-concept-probe` (chỉ ở local, chưa merge, chưa push) ·
-**Git:** probe train ở `6f774bb`; lưới dev, dev tham chiếu, ablation, heldout và bench chạy ở `6f774bb`
+**Git:** probe train ở `6f774bb`, sinh lại ở `667cafb` chỉ để thêm `selection.n_val` (`probe.npz`,
+`corpus_scores.parquet` trùng từng byte); lưới dev, dev tham chiếu, ablation, heldout và bench chạy ở `6f774bb`
 với `configs/retrieval.yaml` chỉ sửa comment (trọng số không đổi, xem *Lưới dev và ablation*) ·
 **build_id corpus:** `20261011_chexpert25k_biomedclip_v1` · **build_id pool:**
 `20261023_pool88k_biomedclip_v1` · **probe_id:** `20261011_chexpert25k_biomedclip_v1_probe_lam0.1` ·
@@ -11,7 +12,7 @@ Nguồn của mọi số dưới đây (đều gitignored, đều là **file m�
 `retrieval_eval.json`, `retrieval_dev.json` hay `vector_baseline.json` của `main`, spec C8):
 
 - `artifacts/metrics/image_probe.json` (`cxr train-probe`: chọn λ, AUROC trên corpus), sha256
-  `2b19ad0874625376eecd3f3ebe246979631eb873ef5de078602b497c5d2cf5ee`; `data/probe_pool/pool.json`;
+  `4311ce32d1b1daa167c11040ad4a91caa6858cf18699513a59525cafbca41fd6`; `data/probe_pool/pool.json`;
   `data/indexes/image_probe/probe.json`.
 - `artifacts/metrics/retrieval_dev_image_probe.json` (section `grid`, `eval`, `ablation` của dev), sha256
   `b8f8ebc153fe73a27e190706a9c2a59af117c8bfa26631289e9fea1b39b5758c`.
@@ -127,24 +128,25 @@ AUROC PRESENT so với ABSENT trên 14 concept đủ mẫu, bootstrap 1.000 lầ
 Probe − zero-shot = **+0,060, CI 95% paired [0,050; 0,069]** (`probe_minus_zero_shot`), `s1_passed: true`.
 
 Theo concept (`comparison.<dòng>.per_concept`; train = `probe.n_train` PRESENT / 0 / UNCERTAIN bỏ trên
-toàn pool; val = `selection.val_auroc` ở λ đã chọn):
+toàn pool; val dương / âm = `probe.selection.n_val`, PRESENT / ABSENT của pool-val, tức hai lớp mà
+`selection.val_auroc` ở λ đã chọn chấm):
 
-| Concept | train dương / âm / bỏ | val AUROC | zero-shot | A1 | A2 | probe | probe − zero-shot |
-|---|---|---:|---:|---:|---:|---:|---:|
-| No Finding | 17.287 / 71.566 / 0 | n/a | 0,585 | 0,602 | 0,390 | **0,665** | +0,081 |
-| Enlarged Cardiomediastinum | 8.773 / 67.774 / 12.306 | 0,671 | 0,602 | 0,602 | 0,667 | **0,655** | +0,053 |
-| Cardiomegaly | 21.554 / 61.528 / 5.771 | 0,723 | 0,681 | 0,683 | 0,719 | **0,718** | +0,037 |
-| Lung Opacity | 62.239 / 24.279 / 2.335 | 0,744 | 0,646 | 0,620 | 0,731 | **0,757** | +0,112 |
-| Lung Lesion | 9.581 / 77.961 / 1.311 | 0,495 | 0,469 | 0,447 | 0,587 | **0,533** | +0,064 |
-| Edema | 31.794 / 48.356 / 8.703 | 0,730 | 0,681 | 0,617 | 0,720 | **0,739** | +0,058 |
-| Consolidation | 8.910 / 61.023 / 18.920 | 0,740 | 0,655 | 0,675 | 0,733 | **0,757** | +0,103 |
-| Pneumonia | 4.471 / 68.605 / 15.777 | 0,578 | 0,564 | 0,578 | 0,644 | **0,589** | +0,025 |
-| Atelectasis | 25.162 / 39.765 / 23.926 | 0,615 | 0,559 | 0,652 | 0,631 | **0,629** | +0,070 |
-| Pneumothorax | 10.598 / 76.436 / 1.819 | 0,630 | 0,564 | 0,564 | 0,613 | **0,655** | +0,090 |
-| Pleural Effusion | 43.622 / 39.323 / 5.908 | 0,827 | 0,763 | 0,761 | 0,794 | **0,827** | +0,064 |
-| Pleural Other | 3.911 / 82.652 / 2.290 | 0,222 | 0,496 | 0,492 | 0,564 | **0,563** | +0,067 |
-| Fracture | 8.883 / 79.355 / 615 | 0,476 | 0,520 | 0,509 | 0,565 | **0,487** | −0,033 |
-| Support Devices | 69.077 / 19.369 / 407 | 0,602 | 0,604 | 0,580 | 0,608 | **0,650** | +0,045 |
+| Concept | train dương / âm / bỏ | val dương / âm | val AUROC | zero-shot | A1 | A2 | probe | probe − zero-shot |
+|---|---|---|---:|---:|---:|---:|---:|---:|
+| No Finding | 17.287 / 71.566 / 0 | 1.751 / 0 | n/a | 0,585 | 0,602 | 0,390 | **0,665** | +0,081 |
+| Enlarged Cardiomediastinum | 8.773 / 67.774 / 12.306 | 924 / 2.550 | 0,671 | 0,602 | 0,602 | 0,667 | **0,655** | +0,053 |
+| Cardiomegaly | 21.554 / 61.528 / 5.771 | 2.282 / 1.939 | 0,723 | 0,681 | 0,683 | 0,719 | **0,718** | +0,037 |
+| Lung Opacity | 62.239 / 24.279 / 2.335 | 6.324 / 488 | 0,744 | 0,646 | 0,620 | 0,731 | **0,757** | +0,112 |
+| Lung Lesion | 9.581 / 77.961 / 1.311 | 921 / 134 | 0,495 | 0,469 | 0,447 | 0,587 | **0,533** | +0,064 |
+| Edema | 31.794 / 48.356 / 8.703 | 3.327 / 1.607 | 0,730 | 0,681 | 0,617 | 0,720 | **0,739** | +0,058 |
+| Consolidation | 8.910 / 61.023 / 18.920 | 900 / 2.377 | 0,740 | 0,655 | 0,675 | 0,733 | **0,757** | +0,103 |
+| Pneumonia | 4.471 / 68.605 / 15.777 | 417 / 308 | 0,578 | 0,564 | 0,578 | 0,644 | **0,589** | +0,025 |
+| Atelectasis | 25.162 / 39.765 / 23.926 | 2.517 / 77 | 0,615 | 0,559 | 0,652 | 0,631 | **0,629** | +0,070 |
+| Pneumothorax | 10.598 / 76.436 / 1.819 | 1.033 / 4.719 | 0,630 | 0,564 | 0,564 | 0,613 | **0,655** | +0,090 |
+| Pleural Effusion | 43.622 / 39.323 / 5.908 | 4.452 / 2.724 | 0,827 | 0,763 | 0,761 | 0,794 | **0,827** | +0,064 |
+| Pleural Other | 3.911 / 82.652 / 2.290 | 428 / 11 | 0,222 | 0,496 | 0,492 | 0,564 | **0,563** | +0,067 |
+| Fracture | 8.883 / 79.355 / 615 | 919 / 458 | 0,476 | 0,520 | 0,509 | 0,565 | **0,487** | −0,033 |
+| Support Devices | 69.077 / 19.369 / 407 | 7.131 / 279 | 0,602 | 0,604 | 0,580 | 0,608 | **0,650** | +0,045 |
 
 - Probe hơn zero-shot ở **13/14** concept; **Fracture kém hơn** (0,487 so với 0,520).
 - **Ba concept yếu, gần ngẫu nhiên:** Fracture 0,487, Lung Lesion 0,533, Pleural Other 0,563. Câu chỉ hỏi
@@ -154,7 +156,7 @@ toàn pool; val = `selection.val_auroc` ở λ đã chọn):
   concept, và A2 hơn probe ở Lung Lesion (0,587 so với 0,533) và Fracture (0,565 so với 0,487). A1 không
   đổi gì (0,599). Theo C1 của spec, A chỉ là dòng đo, không vào runtime; A2 trên No Finding chỉ 0,390
   (prompt "no no finding" vô nghĩa).
-- **val AUROC của Pleural Other (0,222) đứng trên 11 ca ABSENT** của pool-val (đếm lại như trên; 428
+- **val AUROC của Pleural Other (0,222) đứng trên 11 ca ABSENT** của pool-val (`selection.n_val`; 428
   PRESENT), vì cả pool chỉ có 123 ca ABSENT. Con số đó gần như không có thông tin; AUROC trên corpus
   (0,563) mới là số để đọc.
 
@@ -375,7 +377,7 @@ khác trọng số 0, bộ lọc nhãn vẫn bật):
 - **Ảnh tự đứng được, và đã hơn baseline của đồ án.** Không đọc nhãn hay report, mode `image` hơn `vector` ở
   nDCG@10 (0,299 so với 0,235 trên 152 câu; 0,297 so với 0,259 trên 138 câu chung) và giảm vi phạm exclude
   gần một nửa (0,165 so với 0,319). Đó là kịch bản "ảnh chưa có report" (spec §8.4) và câu trả lời có số cho
-  P12: nhánh ảnh **làm mạnh được** mà không finetune encoder.
+  P12: **tín hiệu ảnh** (mode `image`, ảnh đứng riêng) làm mạnh được mà không finetune encoder.
 - **Nhưng ảnh còn xa nhãn.** `image` 0,299 so với label-only 0,531 và hybrid 0,607; p@10 0,507, tức khoảng
   một nửa top 10 không relevant. Ở 14 câu VI chỉ có exclude, `image` (0,312) còn kém thứ tự cố định của tập đã
   lọc nhãn (0,328); ở nhóm `view` nó kém `vector`. Với ba concept gần ngẫu nhiên (Fracture 0,487, Lung Lesion
@@ -439,4 +441,5 @@ uv run python -c "import json; g=json.load(open('artifacts/metrics/retrieval_eva
 ```
 
 `gold` và `rule` tái lập được với cùng commit, cùng build, cùng report index và cùng probe
-(`probe.json` sha256 `e9deb1ae…`); `auto` chạy lại sẽ không ra đúng từng số (WORKLOG T23, T25).
+(`probe.json` sha256 `aaa7cc00…`; bản lúc chạy heldout là `e9deb1ae…`, chỉ khác ở `selection.n_val`,
+`git_commit`, `trained_at`); `auto` chạy lại sẽ không ra đúng từng số (WORKLOG T23, T25).

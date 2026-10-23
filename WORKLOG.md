@@ -21,15 +21,15 @@ Ba mục đó đủ để không phá vỡ thứ gì. Các mục còn lại tra 
 
 > Cập nhật lại mục này mỗi lần ghi log. Mục này mà cũ thì tệ hơn là không có.
 
-**Cập nhật lần cuối:** 2026-10-23, bản của nhánh `feat/image-concept-probe` (image probe: D29, P12 trả lời bằng số đo, khối *Image probe* trong *Sự thật đã đo*). Trước đó cùng ngày, trên `main`: D28 (giữ scope V1, không thêm KG); mở P12 về vector leg; đo ablation, pool ngoài corpus và RadGraph-XL, thêm T29; dọn file
+**Cập nhật lần cuối:** 2026-10-23, bản của nhánh `feat/image-concept-probe` (image probe: D29, P12 trả lời bằng số đo, khối *Image probe* trong *Sự thật đã đo*; mở P13 về prompt đối). Trước đó cùng ngày, trên `main`: D28 (giữ scope V1, không thêm KG); mở P12 về vector leg; đo ablation, pool ngoài corpus và RadGraph-XL, thêm T29; dọn file
 
 | | |
 |---|---|
 | Đã xong | Part A · Phase 0a · Phase 1 (canonical corpus 25.000 study) · Phase 2 (model gate: BiomedCLIP) · Phase 3 (vector baseline) · Phase 4 (parser + label mode) — parser mặc định OpenAI gpt-5-mini PASS heldout (D22, Phase 4c); qwen 3B cũ FAIL (Phase 4) · **Phase 5 (report FTS + hybrid)** — heldout, gold: nDCG@10 hybrid / vector / label **0,607 / 0,235 / 0,531**, p@10 1,000 / 0,359 / 1,000, exclude_violation@10 vector 0,319 so với hybrid 0; verdict **PASS** (gain 1,579) |
-| Nhánh | `feat/image-concept-probe` (local, chưa merge, chưa push): image probe — S1/S2/S3/S4 = **PASS/PASS/FAIL/PASS** (D29). Heldout gold nDCG@10 mode `image` 0,299 (vector 0,235); trên 138 câu vector trả lời 0,297 so với 0,259, vi phạm exclude 0,165 so với 0,319. Lưới dev giữ trọng số ảnh 0 trong hybrid, nên hybrid 0,607 trùng từng bit với `main`. Chờ người dùng quyết merge (P12). → `docs/image-probe.md` |
+| Nhánh | `feat/image-concept-probe` (local, chưa merge, chưa push): image probe — S1/S2/S3/S4 = **PASS/PASS/FAIL/PASS** (D29). Heldout gold, 138 câu vector trả lời: nDCG@10 mode `image` 0,297 so với `vector` 0,259, vi phạm exclude 0,165 so với 0,319; cả 152 câu (spec §8.4 "ảnh không có report") 0,299 / 0,235. Lưới dev giữ trọng số ảnh 0 trong hybrid, nên hybrid 0,607 trùng từng bit với `main`. Chờ người dùng quyết merge (P12). → `docs/image-probe.md` |
 | Đang làm | — |
 | Tiếp theo | **Phase 6 (web UI)**, hoặc Phase 0b song song |
-| Chặn Phase 6 | `pnpm` chưa cài trên máy (T5), cùng chỗ chặn với Phase 0b. P9 đã chốt thành D26; P4, P5, P8, P11, P12 còn mở nhưng không chặn (P5 chọn khi build image ở Phase 6) |
+| Chặn Phase 6 | `pnpm` chưa cài trên máy (T5), cùng chỗ chặn với Phase 0b. P9 đã chốt thành D26; P4, P5, P8, P11, P12, P13 còn mở nhưng không chặn (P5 chọn khi build image ở Phase 6) |
 | Chặn Phase 0b | `pnpm` chưa cài trên máy — xem T5 |
 
 Nhánh thêm `src/data/probe_pool.py`, `src/embeddings/probe.py`, `src/evaluation/probe_eval.py`,
@@ -423,7 +423,8 @@ join theo text đã chuẩn hóa (T29). Đếm theo lần nhắc (entity), khôn
 ### Image probe (đo 2026-10-23, nhánh `feat/image-concept-probe`)
 
 **Cách đo:** pool `data/probe_pool/` (`pool.json` ghi `a16f1d3`), embed CPU ở `0940d3e` (`shards.json`), build
-`20261023_pool88k_biomedclip_v1`; `uv run cxr train-probe` ở `6f774bb`; lưới dev, dev tham chiếu, ablation,
+`20261023_pool88k_biomedclip_v1`; `uv run cxr train-probe` ở `6f774bb` (sinh lại ở `667cafb` chỉ để thêm
+`selection.n_val`, `W`/`b` và `corpus_scores.parquet` trùng từng byte); lưới dev, dev tham chiếu, ablation,
 heldout và `bench-vector` ở `6f774bb` với `retrieval.yaml` chỉ đổi comment, mỗi lệnh có `--out` riêng của
 nhánh (lệnh đầy đủ: `docs/image-probe.md`, *Tái lập*). Corpus build `20261011_chexpert25k_biomedclip_v1`,
 `validate-indexes` 8/8, Qdrant Docker, không có API chạy. Heldout chạy một lần (8 phút 2 giây), đóng băng
@@ -595,6 +596,7 @@ T4 (`make setup` thiếu Pillow) đã xử lý 2026-09-22 — `setup` giờ dùn
 | P8 | Người dùng duyệt `benchmarks/parser_queries_v1.jsonl` có đổi gold heldout không? | Benchmark giữ nguyên như lúc đo (sha256 `8d19c619…`); người dùng duyệt bây giờ | Spec §7/§12 yêu cầu người dùng duyệt file trước khi đo; kế hoạch bỏ cổng đó, và lần chạy heldout duy nhất (2026-10-14) diễn ra trước mọi lần duyệt. Đổi bất kỳ gold heldout nào thì phải khai báo một lần chạy heldout thứ hai. → `docs/parser-evaluation.md` |
 | P11 | Câu EN chỉ có exclude: giữ nhánh report free-text (đang làm) hay bỏ từ của concept bị loại / bỏ nhánh report? | Giữ: MATCH quote mọi token của nguyên văn câu (D26), kể cả từ của concept bị loại | Spec §8.6 tưởng nhánh report rỗng ở trường hợp này. Trên 14 câu heldout EN như vậy (gold), hybrid / label / vector nDCG@10 0,409 / 0,328 / 0,210, nhưng phần hơn label đến từ bm25 xếp report nhắc chính finding bị loại, đọc cùng văn bản với bậc relevance (proxy có thiên lệch), và evidence lặp một câu. Đổi = một lần heldout khai báo. → *Sự thật đã đo*, Phase 5; `docs/retrieval-evaluation.md` |
 | P12 | Vai trò của vector leg trong hybrid: giữ, bỏ, hay làm mạnh lên (finetune VLM)? | **Đã đo trên nhánh `feat/image-concept-probe` (D29):** làm mạnh bằng probe tuyến tính train ngoài corpus, không finetune. Ảnh tự đứng: mode `image` hơn `vector` trên 138 câu heldout cả hai cùng trả lời (nDCG@10 0,297 so với 0,259, vi phạm exclude 0,165 so với 0,319). Trong hybrid: lưới dev không chọn nhánh ảnh (+0,0040 < 0,005), nên nhánh và `main` có cùng hybrid (vector 0,5, report 1,0, image 0; heldout 0,607) | Còn mở: **có merge nhánh vào `main` không** (thêm mode `image` và probe; hybrid không đổi). Sau lọc nhãn, report đứng riêng (0,658) vẫn hơn image đứng riêng (0,632) trên dev, và relevance vẫn đọc cùng văn bản với report leg, nên chưa phép đo nào ghi nhận được thông tin chỉ có trên ảnh; trục độc lập là human review Phase 7. → *Sự thật đã đo*, Image probe; `docs/image-probe.md` |
+| P13 | Prompt đối (A2, `contrast`) đạt AUROC 0,640 không cần train, sát probe 0,659: có đưa vào runtime cho câu không nhận ra concept không? | Không (C1, chỉ đo) | Cần một lần đo trên dev/heldout cho mode `vector` với A2 trước khi quyết. → `image_probe.json:probe.comparison` |
 Đã đóng, giữ số để tham chiếu cũ không lệch: P1 (disk guard) và P3 (`docker/qdrant`) → D8, 2026-09-22.
 P2 (`absence_policy`) → D9, 2026-09-23. P10 (parser mặc định) → D22, 2026-10-20. P9 (câu EN chỉ có exclude)
 → D26, 2026-10-21. P6 (pull qwen 7B) và P7 (sửa prompt cho use case 6) đóng 2026-10-23 vì D22 làm chúng hết

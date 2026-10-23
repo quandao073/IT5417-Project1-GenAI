@@ -1,4 +1,4 @@
-"""CLI wiring for Phase 5: build-report-index and the seventh validate-indexes check."""
+"""CLI wiring for Phase 5: build-report-index and eval-retrieval."""
 
 from __future__ import annotations
 

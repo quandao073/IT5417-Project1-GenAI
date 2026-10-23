@@ -122,11 +122,16 @@ def select_lambda(
         elif macros[lam] > macros[best]:
             best = lam
     chosen = {j: per_concept[best][j] for j in eligible}
+    val_pos, val_strict, _ = zs.label_masks(statuses[val])
     return best, {
         "per_lambda": {str(lam): macros[lam] for lam in lambdas},
         "eligible": [CHEXPERT_LABELS[j] for j in eligible],
         "val_auroc": {
             name: chosen.get(j) for j, name in enumerate(CHEXPERT_LABELS)
+        },
+        "n_val": {
+            name: {"pos": int(val_pos[:, j].sum()), "neg": int(val_strict[:, j].sum())}
+            for j, name in enumerate(CHEXPERT_LABELS)
         },
     }
 

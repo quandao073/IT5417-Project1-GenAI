@@ -95,7 +95,9 @@ corpus canonical chứ không với `build_id`, nên đổi encoder không phả
 chạy heldout ngày 2026-10-21 được đóng băng ở `artifacts/metrics/retrieval_eval_heldout_20261021.json` và
 `artifacts/metrics/retrieval_eval_heldout_20261021_run2.json` (lần được trích dẫn). Lưới fusion chỉ chạy
 trên dev: `uv run cxr eval-retrieval --split dev --parsers gold --modes hybrid --grid --out
-artifacts/metrics/retrieval_dev.json`. `auto` cần key OpenAI trong `.env` (WORKLOG D22). Report index tắt,
+artifacts/metrics/retrieval_dev.json`. Mode `image` không nằm trong ba mode mặc định của `make eval-retrieval`:
+muốn chấm nó thì gọi thẳng `uv run cxr eval-retrieval` và truyền `--modes label vector image hybrid` (lệnh đầy
+đủ của nhánh, với `--out` riêng: `docs/image-probe.md`, *Tái lập*). `auto` cần key OpenAI trong `.env` (WORKLOG D22). Report index tắt,
 hoặc có `auto` mà LLM không `ok`, thì lệnh thoát mã 1. Số đo: [docs/retrieval-evaluation.md](docs/retrieval-evaluation.md).
 
 Chạy native (không qua Docker): `make setup` chép `.env.example` thành `.env` với

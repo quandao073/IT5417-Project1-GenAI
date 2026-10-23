@@ -120,6 +120,13 @@ def test_select_lambda_prefers_larger_on_tie_and_skips_thin_concepts(monkeypatch
     assert CHEXPERT_LABELS[0] in report["eligible"]
     assert report["val_auroc"][CHEXPERT_LABELS[thin]] is None
     assert report["val_auroc"][CHEXPERT_LABELS[0]] == 0.5
+    # Counts of the val slice for every concept, the thin one included: PRESENT and strict ABSENT.
+    assert list(report["n_val"]) == list(CHEXPERT_LABELS)
+    assert report["n_val"][CHEXPERT_LABELS[thin]] == {"pos": int(val.sum()) - 3, "neg": 3}
+    assert report["n_val"][CHEXPERT_LABELS[0]] == {
+        "pos": int((statuses[val, 0] == "PRESENT").sum()),
+        "neg": int((statuses[val, 0] == "ABSENT").sum()),
+    }
 
 
 def test_select_lambda_picks_the_best_macro_when_lambdas_differ(monkeypatch):
