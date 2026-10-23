@@ -72,6 +72,18 @@ class AppState:
     image_status: Literal["ok", "disabled"] = "disabled"
     image_reason: str | None = None
     image_meta: dict = field(default_factory=dict)
+    # The image modes (WORKLOG D31): a second encoder and collection for `image_joint`, the
+    # decomposed H6 scores for `image_decomposed`. Disabled, never not-ready, when missing.
+    joint_manifest: dict | None = None
+    joint_collection: str | None = None
+    joint_encoder: object | None = None
+    joint_lock: threading.Lock = field(default_factory=threading.Lock)
+    joint_status: Literal["ok", "disabled"] = "disabled"
+    joint_reason: str | None = None
+    decomposed_scores: ImageScores | None = None
+    decomposed_meta: dict = field(default_factory=dict)
+    decomposed_status: Literal["ok", "disabled"] = "disabled"
+    decomposed_reason: str | None = None
 
 
 def _open_report_index(state: AppState, studies: int) -> None:
@@ -105,15 +117,63 @@ def _open_image_probe(state: AppState, *, build_id: str, revision: str,
         state.image_status = "ok"
 
 
+def _open_image_modes(state: AppState, client, candidates: dict, encoder_loader,
+                      study_ids: list[str]) -> None:
+    """The image modes' manifest, collection, encoder and decomposed scores (spec 5.1).
+
+    Any failure up to the encoder disables both modes with one reason; a scores problem
+    disables `image_decomposed` alone. Readiness is never touched (Review Focus 5)."""
+    settings = state.settings
+    try:
+        path = settings.image_build_manifest
+        if not path.is_file():
+            raise RuntimeError(f"{path} not found; run cxr index --role image")
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        collection = index.collection_name(settings.qdrant_collection_prefix,
+                                           manifest["build_id"])
+        if not client.collection_exists(collection):
+            raise RuntimeError(f"collection {collection} does not exist in Qdrant; "
+                               "run cxr index --role image")
+        n = client.count(collection).count
+        if n != manifest["counts"]["vectors"]:
+            raise RuntimeError(f"collection {collection} has {n} vectors, image manifest says "
+                               f"{manifest['counts']['vectors']}")
+        name = manifest.get("encoder")
+        if not name:
+            raise RuntimeError(f"{path} names no encoder; re-run cxr index --role image")
+        encoder = encoder_loader(name, candidates.get(name), settings.embedding_device)
+        revision = manifest["embedding_model"]["revision"]
+        if encoder.revision != revision:
+            raise RuntimeError(f"encoder {name} revision {encoder.revision} != image manifest "
+                               f"{revision}")
+    except Exception as exc:  # noqa: BLE001 - every failure is a reason, never a 503
+        state.joint_reason = state.decomposed_reason = str(exc)
+        logger.warning("image modes disabled: %s", exc)
+        return
+    state.joint_manifest, state.joint_collection = manifest, collection
+    state.joint_encoder, state.joint_status = encoder, "ok"
+    try:
+        state.decomposed_scores, state.decomposed_meta = open_image_probe(
+            settings.image_scores_dir, build_id=manifest["build_id"], revision=revision,
+            encoder_name=name, study_ids=study_ids, command="cxr build-image-scores")
+    except ImageProbeError as exc:
+        state.decomposed_reason = str(exc)
+        logger.warning("image_decomposed disabled: %s", exc)
+    else:
+        state.decomposed_status = "ok"
+
+
 def _default_client(url: str):
     from qdrant_client import QdrantClient
 
     return QdrantClient(url=url, timeout=30)
 
 
-def _default_encoder(name: str, candidate: dict, device: str):
+def _default_encoder(name: str, candidate: dict | None, device: str):
     from src.embeddings.base import load_encoder
 
+    if candidate is None:
+        raise RuntimeError(f"{name!r} is not a models.yaml image_encoder candidate")
     return load_encoder(name, candidate, device)
 
 
@@ -159,9 +219,11 @@ def build_query_parser(settings: Settings, *, llm_factory=None,
 
 
 def build_state(settings: Settings, *, encoder_loader=None, client_factory=None,
-                llm_factory=None, warm_up: bool = False) -> AppState:
+                llm_factory=None, warm_up: bool = False,
+                image_encoder_loader=None) -> AppState:
     state = AppState(settings=settings)
     encoder_loader = encoder_loader or _default_encoder
+    image_encoder_loader = image_encoder_loader or _default_encoder
     client_factory = client_factory or _default_client
     try:
         manifest_path = settings.indexes_dir / index.MANIFEST_FILE
@@ -216,6 +278,8 @@ def build_state(settings: Settings, *, encoder_loader=None, client_factory=None,
                                f"{manifest['embedding_model']['revision']}")
         _open_image_probe(state, build_id=manifest["build_id"], revision=encoder.revision,
                           study_ids=studies["study_id"].to_list())
+        _open_image_modes(state, client, cfg["candidates"], image_encoder_loader,
+                          studies["study_id"].to_list())
 
         state.manifest, state.client, state.collection = manifest, client, collection
         state.images, state.encoder, state.ready = records, encoder, True

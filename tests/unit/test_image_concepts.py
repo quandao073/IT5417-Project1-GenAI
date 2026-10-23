@@ -162,3 +162,30 @@ def test_meta_without_build_id_or_revision_is_an_image_probe_error(tmp_path):
     meta_path.write_text(json.dumps({**meta, "build_id": "b1", "encoder": {}}), encoding="utf-8")
     with pytest.raises(ic.ImageProbeError, match="revision"):
         ic.open_image_probe(path, build_id="b1", revision="r1", study_ids=IDS)
+
+
+def test_open_image_probe_checks_the_encoder_name_only_when_both_sides_have_one(tmp_path):
+    named = {"name": "fake2", "model_id": "m", "revision": "r1", "dim": 4}
+    path = _write_artifact(tmp_path, encoder=named)
+    scores, _ = ic.open_image_probe(path, build_id="b1", revision="r1", study_ids=IDS,
+                                    encoder_name="fake2")
+    assert scores.logits.shape == (3, len(CHEXPERT_LABELS))
+    # the caller does not care which encoder: the name is not checked
+    ic.open_image_probe(path, build_id="b1", revision="r1", study_ids=IDS)
+    with pytest.raises(ic.ImageProbeError, match="encoder fake2.*manifest says other"):
+        ic.open_image_probe(path, build_id="b1", revision="r1", study_ids=IDS,
+                            encoder_name="other")
+    # an artifact written before the name existed is accepted on build and revision alone
+    legacy = _write_artifact(tmp_path / "legacy")
+    ic.open_image_probe(legacy, build_id="b1", revision="r1", study_ids=IDS, encoder_name="x")
+
+
+def test_validate_image_probe_takes_a_check_name(tmp_path):
+    named = {"name": "fake2", "model_id": "m", "revision": "r1", "dim": 4}
+    path = _write_artifact(tmp_path, encoder=named)
+    check = ic.validate_image_probe(path, build_id="b1", revision="r1", study_ids=IDS,
+                                    encoder_name="fake2", name="image_scores")
+    assert check.ok and check.name == "image_scores"
+    bad = ic.validate_image_probe(path, build_id="b1", revision="r1", study_ids=IDS,
+                                  encoder_name="other", name="image_scores")
+    assert not bad.ok and bad.name == "image_scores" and "other" in bad.detail

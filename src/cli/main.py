@@ -319,7 +319,10 @@ def _cmd_index(args: argparse.Namespace) -> int:
     except (ValueError, FileNotFoundError) as exc:
         print(f"INDEX FAILED: {exc}", file=sys.stderr)
         return 1
-    out = Path(args.indexes_dir) / index.MANIFEST_FILE
+    # `image` fills the image modes' collection and writes its own manifest (D34); the
+    # vector baseline's build_manifest.json is never touched by it.
+    out = Path(args.indexes_dir) / (index.IMAGE_MANIFEST_FILE if args.role == "image"
+                                    else index.MANIFEST_FILE)
     index.write_manifest(out, manifest)
     print(f"collection : {manifest['collection']}")
     print(f"vectors    : {manifest['counts']['vectors']:,}  "
@@ -350,13 +353,38 @@ def _cmd_validate_indexes(args: argparse.Namespace) -> int:
         index_path, pl.read_parquet(Path(args.canonical_dir) / "reports.parquet")))
     probe_dir = (Path(args.image_probe_dir) if args.image_probe_dir
                  else Path(args.indexes_dir) / "image_probe")
+    study_ids = pl.read_parquet(Path(args.canonical_dir) / "studies.parquet")["study_id"].to_list()
     checks.append(validate_image_probe(
         probe_dir, build_id=manifest["build_id"], revision=expected_revision,
-        study_ids=pl.read_parquet(Path(args.canonical_dir) / "studies.parquet")
-        ["study_id"].to_list()))
+        study_ids=study_ids))
+    image_manifest_path = Path(args.indexes_dir) / index.IMAGE_MANIFEST_FILE
+    if image_manifest_path.is_file():
+        checks.extend(_image_mode_checks(args, image_manifest_path, images, study_ids))
     for c in checks:
         print(f"{'PASS' if c.ok else 'FAIL'} {c.name:<12}: {c.detail}")
     return 0 if all(c.ok for c in checks) else 1
+
+
+def _image_mode_checks(args: argparse.Namespace, manifest_path: Path, images: pl.DataFrame,
+                       study_ids: list[str]) -> list[validate.Check]:
+    """The six collection checks on the image modes' manifest, named `image:<check>`, plus
+    `image_scores`: the decomposed H6 artifact against that manifest (spec 5.1). The
+    expected revision is the pin of the candidate the manifest names, not `selected`."""
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    candidates = load_config("models")["image_encoder"]["candidates"]
+    expected_revision = candidates.get(manifest.get("encoder"), {}).get("revision")
+    checks = validate.validate_indexes(
+        _qdrant_client(args.qdrant_url), manifest, Path(args.embeddings) / manifest["build_id"],
+        images, expected_config_hash=validate.expected_config_hash(manifest),
+        expected_revision=expected_revision,
+    )
+    scores_dir = (Path(args.image_scores_dir) if args.image_scores_dir
+                  else Path(args.indexes_dir) / "image_scores")
+    return [validate.Check(f"image:{c.name}", c.ok, c.detail) for c in checks] + [
+        validate_image_probe(scores_dir, build_id=manifest["build_id"],
+                             revision=expected_revision, encoder_name=manifest.get("encoder"),
+                             study_ids=study_ids, name="image_scores",
+                             command="cxr build-image-scores")]
 
 
 def _cmd_build_report_index(args: argparse.Namespace) -> int:
@@ -931,6 +959,9 @@ def build_parser() -> argparse.ArgumentParser:
     idx.add_argument("--indexes-dir", default="data/indexes")
     idx.add_argument("--qdrant-url", default=None, help="default: QDRANT_URL / Settings")
     idx.add_argument("--recreate", action="store_true")
+    idx.add_argument("--role", choices=["vector", "image"], default="vector",
+                     help="image: the image modes' collection; writes build_manifest_image.json "
+                          "and leaves build_manifest.json alone")
     idx.set_defaults(func=_cmd_index)
 
     val = sub.add_parser("validate-indexes", help="Phase 3: cross-check manifest, shards, Qdrant")
@@ -942,6 +973,9 @@ def build_parser() -> argparse.ArgumentParser:
                      help="default: <indexes-dir>/report_search.sqlite")
     val.add_argument("--image-probe-dir", default=None,
                      help="default: <indexes-dir>/image_probe")
+    val.add_argument("--image-scores-dir", default=None,
+                     help="decomposed scores checked against build_manifest_image.json when "
+                          "that manifest exists; default: <indexes-dir>/image_scores")
     val.set_defaults(func=_cmd_validate_indexes)
 
     rep = sub.add_parser("build-report-index", help="Phase 5: build the SQLite FTS5 report index")

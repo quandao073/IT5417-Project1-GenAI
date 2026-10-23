@@ -25,6 +25,9 @@ from tests.unit.test_label_filter import labels_frame
 from tests.unit.test_report_index import ROWS, reports_frame
 
 BUILD = "20261011_chexpert25k_fake_v1"
+IMAGE_BUILD = "20261023_chexpert25k_fake2_v1"   # the image modes' second collection (D34)
+IMAGE_ENCODER = {"name": "fake2", "model_id": "fake/model", "revision": FakeEncoder.revision,
+                 "dim": 4}
 
 WORLD_LABELS = [  # (study_id, concept, status, source) for the 4 studies of images_frame(8)
     ("patient00000/study1", "Edema", "PRESENT", "CHEXBERT_IMPRESSION"),
@@ -46,11 +49,12 @@ def studies_frame(images: pl.DataFrame) -> pl.DataFrame:
     ).sort("study_id")
 
 
-def write_probe_artifact(out_dir, studies, *, build_id=BUILD, drop=0):
+def write_probe_artifact(out_dir, studies, *, build_id=BUILD, drop=0, encoder=None):
     """A probe artifact for `studies` (a studies_frame): zero weights, zero logits,
-    `drop` rows of corpus_scores left out."""
+    `drop` rows of corpus_scores left out; `encoder` replaces the meta's encoder block."""
     meta = {"probe_id": "p1", "build_id": build_id,
-            "encoder": {"model_id": "fake", "revision": FakeEncoder().revision, "dim": 4}}
+            "encoder": encoder or {"model_id": "fake", "revision": FakeEncoder().revision,
+                                   "dim": 4}}
     scores = pl.DataFrame({
         "study_id": studies["study_id"], "image_id": studies["selected_image_id"],
         **{c: pl.Series([0.0] * studies.height, dtype=pl.Float32) for c in CHEXPERT_LABELS},
@@ -61,10 +65,26 @@ def write_probe_artifact(out_dir, studies, *, build_id=BUILD, drop=0):
         meta, scores.head(studies.height - drop))
 
 
+def write_image_build(tmp_path, client, images, studies, indexes, *, scores_build=IMAGE_BUILD,
+                      scores_encoder=IMAGE_ENCODER):
+    """The image modes' build: shards by `fake2`, a second collection, its manifest and the
+    decomposed scores artifact (H6) for `scores_build`."""
+    out = tmp_path / "embeddings" / IMAGE_BUILD
+    embed.run_embed(images, FakeEncoder(), Path("root"), out, IMAGE_BUILD, shard_size=4,
+                    batch_size=4, library_versions={}, git_commit=None, encoder_name="fake2")
+    manifest = index.run_index(client, out, images, "cxr_images", recreate=True,
+                               config_hash="c", git_commit=None, dataset={}, library_versions={})
+    index.write_manifest(indexes / index.IMAGE_MANIFEST_FILE, manifest)
+    write_probe_artifact(indexes / "image_scores", studies, build_id=scores_build,
+                         encoder=scores_encoder)
+    return manifest
+
+
 @pytest.fixture
 def world(tmp_path):
     """Canonical dir, shards, an in-memory Qdrant with the collection, a manifest, the
-    report index (ROWS are keyed by the same four studies) and an image probe."""
+    report index (ROWS are keyed by the same four studies), an image probe and the image
+    modes' build (second collection, image manifest, decomposed scores)."""
     images = images_frame(8)
     canonical = tmp_path / "canonical"
     canonical.mkdir()
@@ -83,20 +103,26 @@ def world(tmp_path):
     index.write_manifest(indexes / index.MANIFEST_FILE, manifest)
     settings = Settings(_env_file=None, canonical_dir=canonical, image_root=tmp_path / "root",
                         fts_db_path=indexes / "x.sqlite", indexes_dir=indexes,
-                        image_probe_dir=indexes / "image_probe", llm_disabled=True)
+                        image_probe_dir=indexes / "image_probe", llm_disabled=True,
+                        image_build_manifest=indexes / index.IMAGE_MANIFEST_FILE,
+                        image_scores_dir=indexes / "image_scores")
     build_report_index(reports_frame(ROWS), settings.fts_db_path, concepts_sha256="x",
                        git_commit=None)
     write_probe_artifact(settings.image_probe_dir, studies)
+    write_image_build(tmp_path, client, images, studies, indexes)
     return settings, client, manifest
 
 
-def _state(world, encoder=None, client=None, settings=None, llm_factory=None):
+def _state(world, encoder=None, client=None, settings=None, llm_factory=None,
+           image_encoder=None, image_loader=None):
     s, c, _ = world
     return deps.build_state(
         settings or s,
         encoder_loader=lambda name, cand, device: encoder or FakeEncoder(),
         client_factory=lambda url: client or c,
         llm_factory=llm_factory,
+        image_encoder_loader=image_loader or (
+            lambda name, cand, device: image_encoder or FakeEncoder()),
     )
 
 
@@ -269,6 +295,104 @@ class TestImageProbe:
         state = _state(world)
         assert state.ready is True and state.image_status == "disabled"
         assert "build_id" in state.image_reason
+
+
+class TestImageModes:
+    """The image modes open their own manifest, collection, encoder and scores; nothing
+    about them ever touches readiness (Review Focus 5)."""
+
+    def test_ready_with_both_image_modes(self, world):
+        state = _state(world)
+        assert state.ready and state.collection == "cxr_images_" + BUILD
+        assert state.joint_status == "ok" and state.joint_reason is None
+        assert state.joint_collection == "cxr_images_" + IMAGE_BUILD
+        assert state.joint_manifest["build_id"] == IMAGE_BUILD
+        assert state.joint_manifest["encoder"] == "fake2"
+        assert state.joint_encoder is not None and state.joint_encoder is not state.encoder
+        assert state.decomposed_status == "ok" and state.decomposed_reason is None
+        assert state.decomposed_scores.logits.shape == (4, 14)
+        assert state.decomposed_scores.row_of == {
+            s: i for i, s in enumerate(state.labels.study_ids)}
+        assert state.decomposed_meta["probe_id"] == "p1"
+
+    def test_image_modes_disabled_without_manifest(self, world, tmp_path):
+        settings = world[0].model_copy(update={"image_build_manifest": tmp_path / "nowhere.json"})
+        state = _state(world, settings=settings)
+        assert state.ready and state.joint_status == state.decomposed_status == "disabled"
+        assert "nowhere.json" in state.joint_reason
+        assert "cxr index --role image" in state.joint_reason
+        assert state.decomposed_reason == state.joint_reason
+        assert state.joint_encoder is None and state.decomposed_scores is None
+
+    def test_image_modes_disabled_when_collection_missing_but_api_ready(self, world):
+        settings, client, _ = world
+        client.delete_collection("cxr_images_" + IMAGE_BUILD)
+        state = _state(world)
+        assert state.ready and state.not_ready_reason is None
+        assert state.joint_status == state.decomposed_status == "disabled"
+        assert "cxr_images_" + IMAGE_BUILD in state.joint_reason
+        assert "does not exist" in state.joint_reason
+
+    def test_image_modes_disabled_when_vector_count_differs(self, world):
+        settings, client, _ = world
+        client.upsert("cxr_images_" + IMAGE_BUILD, points=[models.PointStruct(
+            id="00000000-0000-0000-0000-000000000009", vector=[1.0, 0, 0, 0], payload={})])
+        state = _state(world)
+        assert state.ready and state.joint_status == "disabled"
+        assert "9 vectors" in state.joint_reason and state.decomposed_status == "disabled"
+
+    def test_image_modes_disabled_when_encoder_revision_differs(self, world):
+        bad = FakeEncoder()
+        bad.revision = "otherrev"
+        state = _state(world, image_encoder=bad)
+        assert state.ready and state.joint_status == state.decomposed_status == "disabled"
+        assert "otherrev" in state.joint_reason and "fake2" in state.joint_reason
+
+    def test_an_unknown_encoder_candidate_disables_the_image_modes(self, world):
+        # the production loader: `fake2` is no models.yaml candidate
+        state = _state(world, image_loader=deps._default_encoder)
+        assert state.ready and state.joint_status == "disabled"
+        assert "fake2" in state.joint_reason and "candidate" in state.joint_reason
+
+    def test_decomposed_disabled_when_scores_are_for_another_build(self, world):
+        settings, _, _ = world
+        studies = pl.read_parquet(settings.canonical_dir / "studies.parquet")
+        write_probe_artifact(settings.image_scores_dir, studies, build_id="another_build",
+                             encoder=IMAGE_ENCODER)
+        state = _state(world)
+        assert state.ready and state.joint_status == "ok"
+        assert state.decomposed_status == "disabled" and state.decomposed_scores is None
+        assert "another_build" in state.decomposed_reason
+        assert "cxr build-image-scores" in state.decomposed_reason
+
+    def test_decomposed_disabled_when_scores_name_another_encoder(self, world):
+        settings, _, _ = world
+        studies = pl.read_parquet(settings.canonical_dir / "studies.parquet")
+        write_probe_artifact(settings.image_scores_dir, studies, build_id=IMAGE_BUILD,
+                             encoder={**IMAGE_ENCODER, "name": "fake"})
+        state = _state(world)
+        assert state.joint_status == "ok" and state.decomposed_status == "disabled"
+        assert "fake2" in state.decomposed_reason
+
+    def test_decomposed_disabled_without_scores_but_joint_stays(self, world, tmp_path):
+        settings = world[0].model_copy(update={"image_scores_dir": tmp_path / "nowhere"})
+        state = _state(world, settings=settings)
+        assert state.ready and state.joint_status == "ok"
+        assert state.decomposed_status == "disabled" and "nowhere" in state.decomposed_reason
+
+    def test_health_reports_image_modes(self, world, tmp_path):
+        body = TestClient(create_app(_state(world))).get("/api/v1/health").json()
+        assert body["status"] == "ready" and body["build_id"] == BUILD
+        assert body["image_joint"] == "ok" and body["image_decomposed"] == "ok"
+        assert body["image_encoder"] == {
+            "name": "fake2", "model_id": "fake/model", "revision": "fakerev0",
+            "build_id": IMAGE_BUILD, "collection": "cxr_images_" + IMAGE_BUILD}
+        settings = world[0].model_copy(update={"image_build_manifest": tmp_path / "no.json"})
+        off = TestClient(create_app(_state(world, settings=settings))).get("/api/v1/health")
+        assert off.status_code == 200
+        assert off.json()["image_joint"] == off.json()["image_decomposed"] == "disabled"
+        assert off.json()["image_encoder"] is None
+        assert off.json()["image_probe"] == "ok"          # the probe is a separate artifact
 
 
 class TestHealth:
