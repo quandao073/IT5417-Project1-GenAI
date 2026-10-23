@@ -117,9 +117,13 @@ def _read(path: Path, load):
 
 
 def open_image_probe(
-    probe_dir: Path, *, build_id: str, revision: str, study_ids: Sequence[str]
+    probe_dir: Path, *, build_id: str, revision: str, study_ids: Sequence[str],
+    encoder_name: str | None = None,
 ) -> tuple[ImageScores, dict]:
-    """Load the saved corpus scores, refusing an artifact trained for another build or encoder."""
+    """Load the saved corpus scores, refusing an artifact trained for another build or encoder.
+
+    `encoder_name` is the manifest's adapter name; it is compared only when given and the
+    artifact recorded one (artifacts older than `encoder.name` pass on build and revision)."""
     for name in (probe.PROBE_FILE, probe.SCORES_FILE, probe.META_FILE):
         if not (probe_dir / name).is_file():
             raise ImageProbeError(f"{probe_dir / name} not found; run cxr train-probe")
@@ -141,20 +145,28 @@ def open_image_probe(
             f"image probe was trained on encoder revision {meta_revision}, "
             f"manifest says {revision}; run cxr train-probe"
         )
+    meta_name = meta["encoder"].get("name")
+    if encoder_name is not None and meta_name is not None and meta_name != encoder_name:
+        raise ImageProbeError(
+            f"image scores were built with encoder {meta_name}, manifest says {encoder_name}"
+        )
     scores = _read(probe_dir / probe.SCORES_FILE,
                    lambda path: build_image_scores(pl.read_parquet(path), study_ids))
     return scores, meta
 
 
 def validate_image_probe(
-    probe_dir: Path, *, build_id: str, revision: str, study_ids: Sequence[str]
+    probe_dir: Path, *, build_id: str, revision: str, study_ids: Sequence[str],
+    encoder_name: str | None = None, name: str = "image_probe",
 ) -> Check:
-    """The `cxr validate-indexes` image_probe check; an exception is a FAIL line."""
+    """A `cxr validate-indexes` check (`image_probe`, or `image_scores` for the decomposed
+    artifact); an exception is a FAIL line."""
     try:
         scores, _ = open_image_probe(
-            probe_dir, build_id=build_id, revision=revision, study_ids=study_ids
+            probe_dir, build_id=build_id, revision=revision, study_ids=study_ids,
+            encoder_name=encoder_name,
         )
         n = len(scores.study_ids)
-        return Check("image_probe", True, f"{n} studies scored, build {build_id}")
+        return Check(name, True, f"{n} studies scored, build {build_id}")
     except Exception as exc:
-        return Check("image_probe", False, f"{type(exc).__name__}: {exc}")
+        return Check(name, False, f"{type(exc).__name__}: {exc}")

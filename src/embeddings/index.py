@@ -21,6 +21,9 @@ from src.common.ids import qdrant_point_id
 from src.embeddings import embed
 
 MANIFEST_FILE = "build_manifest.json"
+# The image modes' collection (WORKLOG D34): same schema plus `encoder`, written by
+# `cxr index --role image`, never read by the vector baseline.
+IMAGE_MANIFEST_FILE = "build_manifest_image.json"
 PAYLOAD_FIELDS = ("image_id", "study_id", "patient_id", "projection", "path_to_image")
 UPSERT_BATCH = 500
 
@@ -95,7 +98,10 @@ def run_index(
     dataset: dict,
     library_versions: dict,
     config_scope: Sequence[str] = VECTOR_INDEX_CONFIGS,
+    encoder: str | None = None,
 ) -> dict:
+    """`encoder` names the models.yaml candidate behind the shards; by default the one
+    `cxr embed` recorded in shards.json (None for builds older than that field)."""
     from qdrant_client import models
 
     manifest = embed.load_shards_manifest(shards_dir)
@@ -126,6 +132,7 @@ def run_index(
     return {
         "build_id": manifest["build_id"],
         "collection": name,
+        "encoder": encoder or manifest.get("encoder"),
         "git_commit": git_commit,
         "config_hash": config_hash,
         "config_scope": list(config_scope),

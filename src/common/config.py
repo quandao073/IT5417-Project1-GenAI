@@ -82,6 +82,10 @@ class Settings(BaseSettings):
     fts_db_path: Path = Path("data/indexes/report_search.sqlite")
     indexes_dir: Path = Path("data/indexes")
     image_probe_dir: Path = Path("data/indexes/image_probe")
+    # The image modes (WORKLOG D31, D34): the second collection's manifest, written by
+    # `cxr index --role image`, and the decomposed scores of `cxr build-image-scores`.
+    image_build_manifest: Path = Path("data/indexes/build_manifest_image.json")
+    image_scores_dir: Path = Path("data/indexes/image_scores")
     # Blank in .env.example: the API then reads it from build_manifest.json.
     build_id: str | None = None
 

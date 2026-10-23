@@ -96,6 +96,13 @@ class TestSettings:
         assert config.Settings(_env_file=None).image_probe_dir.as_posix() == (
             "data/indexes/image_probe")
 
+    def test_image_mode_paths_default_next_to_the_vector_index(self):
+        """D34: the image modes read a second manifest and the decomposed scores."""
+        settings = config.Settings(_env_file=None)
+        assert settings.image_build_manifest.as_posix() == (
+            "data/indexes/build_manifest_image.json")
+        assert settings.image_scores_dir.as_posix() == "data/indexes/image_scores"
+
     def test_reads_values_from_the_environment(self, monkeypatch):
         monkeypatch.setenv("QDRANT_URL", "http://qdrant:6333")
         monkeypatch.setenv("BUILD_ID", "20260921_chexpert25k_v1")

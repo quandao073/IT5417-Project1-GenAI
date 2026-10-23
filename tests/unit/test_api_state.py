@@ -46,11 +46,12 @@ def studies_frame(images: pl.DataFrame) -> pl.DataFrame:
     ).sort("study_id")
 
 
-def write_probe_artifact(out_dir, studies, *, build_id=BUILD, drop=0):
+def write_probe_artifact(out_dir, studies, *, build_id=BUILD, drop=0, encoder=None):
     """A probe artifact for `studies` (a studies_frame): zero weights, zero logits,
-    `drop` rows of corpus_scores left out."""
+    `drop` rows of corpus_scores left out; `encoder` replaces the meta's encoder block."""
     meta = {"probe_id": "p1", "build_id": build_id,
-            "encoder": {"model_id": "fake", "revision": FakeEncoder().revision, "dim": 4}}
+            "encoder": encoder or {"model_id": "fake", "revision": FakeEncoder().revision,
+                                   "dim": 4}}
     scores = pl.DataFrame({
         "study_id": studies["study_id"], "image_id": studies["selected_image_id"],
         **{c: pl.Series([0.0] * studies.height, dtype=pl.Float32) for c in CHEXPERT_LABELS},
