@@ -54,3 +54,6 @@ Thumbs.db
 docs/superpowers/
 .superpowers/
 
+
+# --- Package worktrees (V1.1) ---
+.worktrees/
