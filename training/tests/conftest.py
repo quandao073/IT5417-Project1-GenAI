@@ -10,10 +10,58 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 import pytest
+import torch
 from PIL import Image
+from transformers import BertConfig, BertTokenizer, SwinConfig
 
 from src.common.ids import image_id
 from src.data.labels import CHEXPERT_LABELS
+from src.embeddings.cxrclip import CXRClipModule, build_model
+
+# The tiny CXR-CLIP of tests/unit/test_cxrclip.py: two Swin stages (hidden 16), one BERT layer
+# (hidden 16), projection 6. Four tiny Swin stages fail in transformers 4.44.
+MODEL_CFG = {"name": "clip_custom", "temperature": 0.07,
+             "image_encoder": {"name": "tiny-swin", "model_type": "swin"},
+             "text_encoder": {"name": "tiny-bert", "pooling": "eos"},
+             "projection_head": {"name": "linear", "dropout": 0.1, "proj_dim": 6}}
+IMAGE_SIZE = 32
+TEXT_MAX_LENGTH = 16
+VOCAB = ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]", "no", "and", "finding", "cardiomegaly",
+         "lung", "opacity", "lesion", "pulmonary", "edema", "consolidation", "pneumonia",
+         "atelectasis", "pneumothorax", "pleural", "effusion", "fracture", "support", "devices",
+         "an", "image", "with", "but", "without", ".", ","]
+
+
+def tiny_configs() -> tuple[SwinConfig, BertConfig]:
+    swin = SwinConfig(image_size=IMAGE_SIZE, patch_size=4, embed_dim=8, depths=[2, 2],
+                      num_heads=[1, 1], window_size=4)
+    bert = BertConfig(vocab_size=50, hidden_size=16, num_hidden_layers=1, num_attention_heads=2,
+                      intermediate_size=32, max_position_embeddings=32)
+    return swin, bert
+
+
+def tiny_model(seed: int = 0) -> CXRClipModule:
+    torch.manual_seed(seed)
+    return build_model(MODEL_CFG, *tiny_configs()).eval()
+
+
+def write_tiny_checkpoint(root: Path, seed: int = 0) -> tuple[Path, Path, Path, CXRClipModule]:
+    """A converted-checkpoint file plus the Swin/BERT config dirs `load_base` reads.
+
+    Returns (checkpoint, swin_dir, bert_dir, the model whose weights were saved)."""
+    swin, bert = tiny_configs()
+    swin_dir, bert_dir = root / "swin", root / "bert"
+    swin.save_pretrained(swin_dir)
+    bert.save_pretrained(bert_dir)
+    (bert_dir / "vocab.txt").write_text("\n".join(VOCAB) + "\n", encoding="utf-8")
+    BertTokenizer(str(bert_dir / "vocab.txt"), do_lower_case=True).save_pretrained(bert_dir)
+    model = tiny_model(seed)
+    config = {"model": MODEL_CFG,
+              "base": {"image_size": IMAGE_SIZE, "text_max_length": TEXT_MAX_LENGTH}}
+    checkpoint = root / "swint_tiny.pt"
+    torch.save({"model": model.state_dict(), "config": config,
+                "source": {"file": "tiny", "sha256": "0" * 64, "epoch": 0}}, checkpoint)
+    return checkpoint, swin_dir, bert_dir, model
 
 POOL_ROWS = [
     # (patient, study, projection, impression, (height, width))
