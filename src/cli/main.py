@@ -16,7 +16,7 @@ from pathlib import Path
 import polars as pl
 
 from src.common.config import Settings, default_config_dir, load_config
-from src.data import canonical
+from src.data import canonical, probe_pool
 from src.data.audit import CorpusMode, run_audit
 from src.embeddings import embed, index, spike, validate
 from src.evaluation import parser_benchmark as pb
@@ -103,6 +103,32 @@ def _cmd_build_corpus(args: argparse.Namespace) -> int:
     for path in written:
         print(f"wrote            : {path}")
     print(f"report written   : {report_path}")
+    return 0
+
+
+def _cmd_build_probe_pool(args: argparse.Namespace) -> int:
+    chexbert_dir = Path(args.chexbert_dir)
+    chexbert = {source: chexbert_dir / name for source, name in CHEXBERT_FILES.items()}
+    if missing := sorted(str(p) for p in chexbert.values() if not p.is_file()):
+        print(f"CheXbert label files not found: {missing}", file=sys.stderr)
+        return 1
+
+    corpus_path = Path(args.canonical_dir) / "images.parquet"
+    priority = load_config("retrieval")["label_resolution"]["source_priority"]
+    try:
+        images, resolved, meta = probe_pool.build_pool(
+            Path(args.plus_csv), Path(args.small_root), chexbert,
+            pl.read_parquet(corpus_path), priority,
+            corpus_images_path=corpus_path, git_commit=_git_commit(),
+        )
+    except probe_pool.PoolError as exc:
+        print(f"POOL FAILED: {exc}", file=sys.stderr)
+        return 1
+
+    for path in probe_pool.write_pool(images, resolved, meta, Path(args.out)):
+        print(f"wrote      : {path}")
+    print(f"studies : {meta['studies']:,}  patients: {meta['patients']:,}  "
+          f"pool_sha256: {meta['pool_sha256'][:12]}")
     return 0
 
 
@@ -214,7 +240,9 @@ def _selected_encoder(device: str):
 
 
 def _cmd_embed(args: argparse.Namespace) -> int:
-    images = pl.read_parquet(Path(args.canonical_dir) / "images.parquet")
+    images = pl.read_parquet(
+        Path(args.images) if args.images else Path(args.canonical_dir) / "images.parquet"
+    )
     name, encoder = _selected_encoder(args.device)
     build_id = args.build_id or embed.make_build_id(name, date.today())
     out_dir = Path(args.out) / build_id
@@ -600,6 +628,15 @@ def build_parser() -> argparse.ArgumentParser:
     corpus.add_argument("--report", default="artifacts/audit/corpus_report.json")
     corpus.set_defaults(func=_cmd_build_corpus)
 
+    pool = sub.add_parser("build-probe-pool",
+                          help="build the out-of-corpus study pool for the image probes")
+    pool.add_argument("--plus-csv", default="data/raw/chexpert-plus/df_chexpert_plus_240401.csv")
+    pool.add_argument("--small-root", default="data/raw/CheXpert-v1.0-small")
+    pool.add_argument("--chexbert-dir", default="data/raw/chexpert-plus/labels")
+    pool.add_argument("--canonical-dir", default="data/canonical")
+    pool.add_argument("--out", default="data/probe_pool")
+    pool.set_defaults(func=_cmd_build_probe_pool)
+
     spk = sub.add_parser("spike-models", help="Phase 2: embed a sample per VLM, apply the gate")
     spk.add_argument("--models", nargs="+", choices=SPIKE_MODELS, default=SPIKE_MODELS)
     spk.add_argument("--canonical-dir", default="data/canonical")
@@ -616,6 +653,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     emb = sub.add_parser("embed", help="Phase 3: embed the corpus into shard files (resumable)")
     emb.add_argument("--canonical-dir", default="data/canonical")
+    emb.add_argument("--images", default=None,
+                     help="images parquet to embed instead of <canonical-dir>/images.parquet")
     emb.add_argument("--image-root", default="data/raw/CheXpert-v1.0-small")
     emb.add_argument("--out", default="data/indexes/embeddings")
     emb.add_argument("--shard-size", type=int, default=1000)
