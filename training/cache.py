@@ -20,6 +20,10 @@ import sys
 import time
 from pathlib import Path
 
+# `python training/cache.py` puts training/ first on sys.path, not the repo root, and
+# site-packages holds another top-level `training` package (open_clip's). Root first.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import numpy as np
 import polars as pl
 from PIL import Image
@@ -28,12 +32,7 @@ from src.common.config import load_config
 from src.data import join, probe_pool
 from src.embeddings.embed import write_json_atomic
 from src.embeddings.probe import patient_split
-
-try:
-    from training.data import CACHE_META, IMAGES_FILE, INDEX_FILE, preprocess_uint8
-except ModuleNotFoundError:  # `python training/cache.py` puts training/ on sys.path, not the root
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from training.data import CACHE_META, IMAGES_FILE, INDEX_FILE, preprocess_uint8
+from training.data import CACHE_META, IMAGES_FILE, INDEX_FILE, preprocess_uint8
 
 _PROGRESS_EVERY = 5000
 

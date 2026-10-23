@@ -89,7 +89,8 @@ class PoolDataset(Dataset):
 
     def __init__(self, cache_dir: Path, sampler: CaptionSampler, *, train: bool,
                  augment_cfg: dict | None):
-        self.images, self.index, self.meta = load_cache(cache_dir)
+        self.cache_dir = Path(cache_dir)
+        self.images, self.index, self.meta = load_cache(self.cache_dir)
         eligible = sampler.eligible()
         if eligible.shape[0] != self.images.shape[0]:
             raise ValueError("the sampler's statuses must have one row per cached image")
@@ -99,10 +100,17 @@ class PoolDataset(Dataset):
         size = int(self.images.shape[1])
         self.transform = train_transform(augment_cfg, size) if augment_cfg else eval_transform()
 
+    def __getstate__(self) -> dict:
+        # A pickled memmap would copy the whole array into every DataLoader worker; each
+        # worker reopens the file instead.
+        return {**self.__dict__, "images": None}
+
     def __len__(self) -> int:
         return len(self.rows)
 
     def __getitem__(self, i: int) -> tuple[torch.Tensor, str, torch.Tensor]:
+        if self.images is None:
+            self.images = np.load(self.cache_dir / IMAGES_FILE, mmap_mode="r")
         row = int(self.rows[i])
         text, y = self.sampler.sample(row)
         return self.transform(self.images[row]), text, torch.from_numpy(y)
