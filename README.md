@@ -68,7 +68,7 @@ make build-corpus         # canonical Parquet tables + sample manifest
 make embed                # embed 25k ảnh ra shard file, chạy trực tiếp trên CPU, resume được
 make index                # upsert shard vào Qdrant + build_manifest.json (cần `docker compose up -d qdrant`)
 make build-report-index   # SQLite FTS5
-uv run cxr build-probe-pool   # nhánh feat/image-concept-probe (local): pool ngoài corpus -> data/probe_pool/
+uv run cxr build-probe-pool   # image probe: pool ngoài corpus -> data/probe_pool/
 uv run cxr embed --images data/probe_pool/pool_images.parquet --out data/probe_pool/embeddings --build-id 20261023_pool88k_biomedclip_v1
 uv run cxr train-probe        # 14 probe ảnh -> data/indexes/image_probe/ (cần build_manifest.json)
 make validate-indexes     # kiểm tra build_id khớp nhau trước khi phục vụ
@@ -121,8 +121,7 @@ và `warnings`. `POST /api/v1/search` nhận `mode` `vector` (mặc định), `l
 `explicit_absence_required`) và `uncertainty_policy` (`EXCLUDE` | `INCLUDE`). Kết quả mode `label`
 không xếp hạng: trả theo thứ tự giả ngẫu nhiên cố định kèm `total_matches`. Mode `hybrid` lọc nhãn như
 `label` (cùng `total_matches`) rồi xếp hạng trong tập đó bằng RRF của nhánh vector và nhánh report
-(SQLite FTS5, bm25); `score_breakdown` ghi `vector_rank`, `report_rank`, `rrf_score`. Mode `image` (nhánh
-`feat/image-concept-probe`, chỉ ở local) xếp toàn corpus bằng điểm của 14 probe ảnh, không dùng nhãn hay
+(SQLite FTS5, bm25); `score_breakdown` ghi `vector_rank`, `report_rank`, `rrf_score`. Mode `image` xếp toàn corpus bằng điểm của 14 probe ảnh, không dùng nhãn hay
 report; câu không có concept thì lùi về cosine text–ảnh như `vector`; thiếu probe thì câu có concept trả rỗng
 kèm warning, API vẫn ready và `/health` báo `image_probe: "disabled"`. Hybrid có nhánh
 `image` nhưng trọng số 0 (lưới dev không chọn), nên không chạy. Số đo: [docs/image-probe.md](docs/image-probe.md).

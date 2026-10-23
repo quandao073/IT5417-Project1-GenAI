@@ -1,6 +1,6 @@
 # Image concept probe — nhánh ảnh trong truy vấn
 
-**Ngày:** 2026-10-23 · **Nhánh:** `feat/image-concept-probe` (chỉ ở local, chưa merge, chưa push) ·
+**Ngày:** 2026-10-23 · **Nhánh:** `feat/image-concept-probe`, merge vào `main` 2026-10-23 ·
 **Git:** probe train ở `6f774bb`, sinh lại ở `667cafb` chỉ để thêm `selection.n_val` (`probe.npz`,
 `corpus_scores.parquet` trùng từng byte); lưới dev, dev tham chiếu, ablation, heldout và bench chạy ở `6f774bb`
 với `configs/retrieval.yaml` chỉ sửa comment (trọng số không đổi, xem *Lưới dev và ablation*) ·
