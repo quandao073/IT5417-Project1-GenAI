@@ -4,14 +4,24 @@ A six-study toy gallery; every scorer is a fake."""
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import numpy as np
+import polars as pl
 import pytest
 
 from src.common.config import load_config
 from src.data.labels import CHEXPERT_LABELS
+from src.embeddings import embed
+from src.embeddings.probe import Probe, patient_split
 from src.evaluation import template_bench as tb
+from src.retrieval import image_concepts as ic
 from src.retrieval import label_filter as lf
 from src.retrieval import templates as tp
+from tests.unit.fakes import FakeEncoder
+from tests.unit.test_api_state import BUILD, studies_frame
+from tests.unit.test_embed import images_frame
 from tests.unit.test_label_filter import labels_frame
 
 CFG = load_config("concepts")
@@ -230,3 +240,145 @@ def test_query_sets_sizes():
     assert tb.query_sets(CFG, TRAIN)["multi"][0].text == sets["multi"][0].text
     assert tb.study_ids_sha256(["b", "a"]) == tb.study_ids_sha256(np.array(["a", "b"]))
     assert len(tb.study_ids_sha256(["a"])) == 64
+
+
+# --- Task 7: scorers and galleries -------------------------------------------------------
+
+POOL_BUILD = "pool_fake_v1"
+ROOT = Path("root")
+
+
+def bench_world(tmp_path):
+    """A 20-study corpus (Edema PRESENT on odd studies, Pleural Effusion cycling ABSENT /
+    PRESENT / NOT_MENTIONED, Cardiomegaly PRESENT every third) and a 12-study pool, both
+    embedded with FakeEncoder. Returns (canonical, embeddings, pool_dir)."""
+    canonical = tmp_path / "canonical"
+    canonical.mkdir()
+    corpus = images_frame(40)
+    corpus.write_parquet(canonical / "images.parquet")
+    studies = studies_frame(corpus)
+    studies.write_parquet(canonical / "studies.parquet")
+    effusion = ["PRESENT", "ABSENT", "NOT_MENTIONED", "NOT_MENTIONED"]
+    rows = []
+    for i, s in enumerate(studies["study_id"]):
+        rows.append((s, "Edema", "PRESENT" if i % 2 else "ABSENT", "CHEXPERT_V1"))
+        rows.append((s, "Pleural Effusion", effusion[i % 4], "CHEXBERT_IMPRESSION"))
+        if i % 3 == 0:
+            rows.append((s, "Cardiomegaly", "PRESENT", "CHEXPERT_V1"))
+    pl.DataFrame(rows, schema=["study_id", "concept", "status", "source"], orient="row"
+                 ).write_parquet(canonical / "labels.parquet")
+    embeddings = tmp_path / "embeddings"
+    embed.run_embed(corpus, FakeEncoder(), ROOT, embeddings / BUILD, BUILD, shard_size=16,
+                    batch_size=4, library_versions={}, git_commit=None)
+
+    pool_dir = tmp_path / "pool"
+    pool_dir.mkdir()
+    n = 12
+    pool = pl.DataFrame({
+        "image_id": [f"{1000 + i:064x}" for i in range(n)],
+        "study_id": [f"poolpatient{i:05d}/study1" for i in range(n)],
+        "patient_id": [f"poolpatient{i:05d}" for i in range(n)],
+        "path_to_image": [f"train/poolpatient{i:05d}/study1/view1_frontal.jpg" for i in range(n)],
+        "projection": ["AP" if i % 2 else "PA" for i in range(n)],
+    })
+    pool.write_parquet(pool_dir / "pool_images.parquet")
+    pl.DataFrame([(s, "Edema", "PRESENT" if i % 2 else "ABSENT")
+                  for i, s in enumerate(pool["study_id"])],
+                 schema=["study_id", "concept", "status"], orient="row"
+                 ).write_parquet(pool_dir / "pool_labels.parquet")
+    (pool_dir / "pool.json").write_text(json.dumps({"pool_sha256": "p" * 64, "studies": n}))
+    embed.run_embed(pool, FakeEncoder(), ROOT, pool_dir / "embeddings" / POOL_BUILD, POOL_BUILD,
+                    shard_size=5, batch_size=4, library_versions={}, git_commit=None)
+    return canonical, embeddings, pool_dir
+
+
+def fake_vector(path: str) -> np.ndarray:
+    return FakeEncoder().encode_images([ROOT / path])[0]
+
+
+def test_joint_scorer_is_cosine():
+    rng = np.random.default_rng(0)
+    vectors = rng.normal(size=(6, 4)).astype(np.float32) * 3     # not unit norm on purpose
+    encoder = FakeEncoder(dim=4)
+    queries = tp.generate(tp.training_concepts(TRAIN), ["single", "pair"], CFG)   # 67 > one batch
+    got = tb.joint_scorer(encoder, vectors)(queries)
+    texts = encoder.encode_texts([q.text for q in queries])
+    unit = vectors / np.linalg.norm(vectors, axis=1, keepdims=True)
+    assert got.shape == (67, 6)
+    assert np.allclose(got, texts @ unit.T, atol=1e-6)
+    assert np.all(np.abs(got) <= 1.0 + 1e-6)
+    with pytest.raises(ValueError, match="vectors"):
+        tb.joint_scorer(encoder, None)
+
+
+def test_decomposed_scorer_matches_image_score():
+    rng = np.random.default_rng(1)
+    probe = Probe(rng.normal(size=(14, 4)).astype(np.float32),
+                  rng.normal(size=14).astype(np.float32), tuple(CHEXPERT_LABELS))
+    vectors = rng.normal(size=(6, 4)).astype(np.float32)
+    queries = tp.generate(["Edema", "Pleural Effusion", "Cardiomegaly"],
+                          ["single", "pair", "negation"], CFG)
+    got = tb.decomposed_scorer(probe, vectors)(queries)
+    logits = probe.logits(vectors)
+    frame = pl.DataFrame({"study_id": STUDIES, "image_id": STUDIES,
+                          **{c: logits[:, j] for j, c in enumerate(CHEXPERT_LABELS)}})
+    scores = ic.build_image_scores(frame, STUDIES)
+    assert got.shape == (len(queries), 6)
+    for row, q in zip(got, queries, strict=True):
+        assert np.allclose(row, ic.image_score(scores, q.gold.include, q.gold.exclude))
+
+
+def test_corpus_gallery_aligns_vectors_to_selected_images(tmp_path):
+    canonical, embeddings, _ = bench_world(tmp_path)
+    g = tb.corpus_gallery(canonical, embeddings / BUILD, PRIORITY, sample=None, seed=1)
+    studies = pl.read_parquet(canonical / "studies.parquet")
+    images = pl.read_parquet(canonical / "images.parquet")
+    assert g.study_ids.tolist() == studies["study_id"].to_list() and len(g.study_ids) == 20
+    assert g.statuses.shape == (20, 14)
+    assert g.statuses[:, COL["Edema"]].tolist() == ["ABSENT", "PRESENT"] * 10
+    assert g.statuses[0, COL["Pleural Effusion"]] == "PRESENT"
+    assert g.statuses[2, COL["Pleural Effusion"]] == "NOT_MENTIONED"
+    assert g.statuses[1, COL["Cardiomegaly"]] == "NOT_MENTIONED"
+    path_of = dict(zip(images["image_id"], images["path_to_image"], strict=True))
+    for row, image_id in enumerate(studies["selected_image_id"]):
+        assert np.allclose(g.vectors[row], fake_vector(path_of[image_id]))
+    # the selected image of study s is image 2s: PA when 2s % 3 == 0
+    assert g.projections.tolist()[:4] == ["PA", "AP", "AP", "PA"]
+    assert tb.corpus_gallery(canonical, None, PRIORITY, sample=None, seed=1).vectors is None
+
+
+def test_corpus_gallery_sample_is_fixed(tmp_path):
+    canonical, embeddings, _ = bench_world(tmp_path)
+    full = tb.corpus_gallery(canonical, embeddings / BUILD, PRIORITY, sample=None, seed=1)
+    a = tb.corpus_gallery(canonical, embeddings / BUILD, PRIORITY, sample=5, seed=20260101)
+    b = tb.corpus_gallery(canonical, embeddings / BUILD, PRIORITY, sample=5, seed=20260101)
+    c = tb.corpus_gallery(canonical, embeddings / BUILD, PRIORITY, sample=5, seed=1)
+    assert a.study_ids.tolist() == b.study_ids.tolist() and len(a.study_ids) == 5
+    assert a.study_ids.tolist() != c.study_ids.tolist()
+    rows = [full.study_ids.tolist().index(s) for s in a.study_ids]
+    assert rows == sorted(rows)                       # a sub-sequence of the corpus order
+    assert np.array_equal(a.vectors, full.vectors[rows])
+    assert np.array_equal(a.statuses, full.statuses[rows])
+    assert a.projections.tolist() == full.projections[rows].tolist()
+    with pytest.raises(ValueError, match="5000"):
+        tb.corpus_gallery(canonical, None, PRIORITY, sample=5000, seed=1)
+
+
+def test_pool_val_gallery_uses_patient_split(tmp_path):
+    _, _, pool_dir = bench_world(tmp_path)
+    pool = pl.read_parquet(pool_dir / "pool_images.parquet")
+    val = patient_split(pool["patient_id"].to_list(), val_fraction=0.5, seed=20260101)
+    assert 0 < val.sum() < 12
+    g = tb.pool_val_gallery(pool_dir, pool_dir / "embeddings" / POOL_BUILD,
+                            val_fraction=0.5, seed=20260101)
+    expected = pool.filter(pl.Series(val))
+    assert g.study_ids.tolist() == expected["study_id"].to_list()
+    odd = [int(s[11:16]) % 2 == 1 for s in g.study_ids]
+    assert g.statuses[:, COL["Edema"]].tolist() == ["PRESENT" if o else "ABSENT" for o in odd]
+    assert (g.statuses[:, COL["Pneumothorax"]] == "NOT_MENTIONED").all()
+    for row, path in enumerate(expected["path_to_image"]):
+        assert np.allclose(g.vectors[row], fake_vector(path))
+    assert g.projections.tolist() == expected["projection"].to_list()
+    assert tb.pool_val_gallery(pool_dir, None, val_fraction=0.5, seed=20260101).vectors is None
+    with pytest.raises(ValueError, match="validation"):
+        tb.pool_val_gallery(pool_dir, None, val_fraction=0.0, seed=20260101)

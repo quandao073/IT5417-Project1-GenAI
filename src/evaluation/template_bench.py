@@ -22,11 +22,17 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
+import polars as pl
 
+from src.data import probe_pool
 from src.data.labels import CHEXPERT_LABELS
+from src.embeddings import probe, spike
+from src.evaluation import vector_baseline as vb
 from src.evaluation import zero_shot as zs
+from src.retrieval import image_concepts as ic
 from src.retrieval import label_filter as lf
 from src.retrieval import templates as tp
 from src.retrieval.templates import TemplateQuery
@@ -244,3 +250,106 @@ def query_sets(concepts_cfg: dict, training_cfg: dict, *,
 def study_ids_sha256(study_ids: Sequence[str]) -> str:
     """Fingerprint of which studies form the gallery, independent of row order."""
     return hashlib.sha256("\n".join(sorted(str(s) for s in study_ids)).encode()).hexdigest()
+
+
+# --- scorers -----------------------------------------------------------------------------
+
+_TEXT_BATCH = 64
+
+
+def _unit(x: np.ndarray) -> np.ndarray:
+    x = np.asarray(x, dtype=np.float32)
+    return x / np.maximum(np.linalg.norm(x, axis=1, keepdims=True), np.float32(1e-12))
+
+
+def joint_scorer(encoder, vectors: np.ndarray | None) -> Scorer:
+    """cos(encode_texts(q.text), image vector): the operation `image_joint` runs at query
+    time. Both sides are L2-normalised here, so unnormalised shards score the same."""
+    if vectors is None:
+        raise ValueError("the joint scorer needs gallery vectors; build the gallery with shards")
+    images = _unit(vectors)
+
+    def scorer(queries: Sequence[TemplateQuery]) -> np.ndarray:
+        texts = [q.text for q in queries]
+        parts = [encoder.encode_texts(texts[i:i + _TEXT_BATCH])
+                 for i in range(0, len(texts), _TEXT_BATCH)]
+        return _unit(np.concatenate(parts)) @ images.T
+
+    return scorer
+
+
+def decomposed_scorer(probe_: probe.Probe, vectors: np.ndarray | None) -> Scorer:
+    """`image_concepts.image_score` over `probe_.logits(vectors)`: the operation the probe
+    mode `image` and `image_decomposed` run, on any gallery the probe did not see."""
+    if vectors is None:
+        raise ValueError("the decomposed scorer needs gallery vectors; build the gallery with "
+                         "shards")
+    logits = probe_.logits(vectors)
+    ids = np.asarray([str(i) for i in range(len(logits))], dtype=object)
+    scores = ic.ImageScores(study_ids=ids, row_of={s: i for i, s in enumerate(ids)},
+                            concepts=tuple(probe_.concepts),
+                            col_of={c: j for j, c in enumerate(probe_.concepts)}, logits=logits)
+
+    def scorer(queries: Sequence[TemplateQuery]) -> np.ndarray:
+        return np.stack([ic.image_score(scores, q.gold.include, q.gold.exclude) for q in queries])
+
+    return scorer
+
+
+# --- galleries ---------------------------------------------------------------------------
+
+
+def _aligned_vectors(shards_dir: Path, image_ids: Sequence[str]) -> np.ndarray:
+    """Shard vectors in `image_ids` order; every gallery image must have one."""
+    vectors, ids = vb._all_vectors(Path(shards_dir))
+    row_of = {i: r for r, i in enumerate(ids)}
+    if missing := [i for i in image_ids if i not in row_of]:
+        raise ValueError(f"{len(missing)} gallery images have no vector in {shards_dir}")
+    return vectors[[row_of[i] for i in image_ids]]
+
+
+def corpus_gallery(canonical_dir: Path, shards_dir: Path | None, priority: Sequence[str], *,
+                   sample: int | None, seed: int) -> Gallery:
+    """The 25,000 corpus studies (valid/ included: gallery items, never tuned on) or a fixed
+    sample of `sample` of them, rows in studies.parquet order; statuses resolved by `priority`
+    (G1); vectors of each study's selected image from `shards_dir`."""
+    canonical_dir = Path(canonical_dir)
+    studies = pl.read_parquet(canonical_dir / "studies.parquet")
+    images = pl.read_parquet(canonical_dir / "images.parquet")
+    labels = pl.read_parquet(canonical_dir / "labels.parquet")
+    if sample is not None:
+        if sample > studies.height:
+            raise ValueError(f"cannot sample {sample} of {studies.height} corpus studies")
+        rows = np.sort(np.random.default_rng(seed).choice(studies.height, sample, replace=False))
+        studies = studies[rows]
+    study_ids = studies["study_id"].to_list()
+    selected = studies["selected_image_id"].to_list()
+    projection_of = dict(zip(images["image_id"], images["projection"], strict=True))
+    return Gallery(
+        study_ids=np.asarray(study_ids, dtype=object),
+        statuses=spike.status_matrix(labels, study_ids, priority),
+        vectors=None if shards_dir is None else _aligned_vectors(shards_dir, selected),
+        projections=np.asarray([projection_of[i] for i in selected], dtype=object),
+    )
+
+
+def pool_val_gallery(pool_dir: Path, shards_dir: Path | None, *, val_fraction: float,
+                     seed: int) -> Gallery:
+    """The pool studies on the validation side of `probe.patient_split` (the slice that
+    chose the probe's lambda, selects checkpoints and calibrates the decomposed scores),
+    rows in pool_images.parquet order."""
+    pool_dir = Path(pool_dir)
+    images = pl.read_parquet(pool_dir / probe_pool.POOL_IMAGES)
+    resolved = pl.read_parquet(pool_dir / probe_pool.POOL_LABELS)
+    val = probe.patient_split(images["patient_id"].to_list(), val_fraction=val_fraction, seed=seed)
+    images = images.filter(pl.Series(val))
+    if images.is_empty():
+        raise ValueError("no pool study falls on the validation side of the patient split")
+    study_ids = images["study_id"].to_list()
+    return Gallery(
+        study_ids=np.asarray(study_ids, dtype=object),
+        statuses=probe_pool.resolved_status_matrix(resolved, study_ids),
+        vectors=(None if shards_dir is None
+                 else _aligned_vectors(shards_dir, images["image_id"].to_list())),
+        projections=images["projection"].to_numpy().astype(object),
+    )

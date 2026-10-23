@@ -20,10 +20,11 @@ from src.data import canonical, probe_pool
 from src.data.audit import CorpusMode, run_audit
 from src.data.labels import CHEXPERT_LABELS
 from src.embeddings import embed, index, spike, validate
-from src.embeddings.probe import save_probe, train_probe
+from src.embeddings.probe import load_probe, save_probe, train_probe
 from src.evaluation import parser_benchmark as pb
 from src.evaluation import parser_eval as pe
 from src.evaluation import probe_eval
+from src.evaluation import template_bench as tb
 from src.evaluation import vector_baseline as vb
 from src.query.schema import ParseError
 from src.retrieval import label_filter as lf
@@ -741,6 +742,102 @@ def _cmd_eval_retrieval(args: argparse.Namespace) -> int:
     return 0 if v is None or v["passed"] else 1
 
 
+def _encoder_by_name(name: str):
+    """Any image_encoder candidate of configs/models.yaml, on CPU: the bench compares encoders,
+    so it does not go through the pinned `selected` one."""
+    from src.embeddings.base import load_encoder
+
+    candidates = load_config("models")["image_encoder"]["candidates"]
+    if name not in candidates:
+        raise SystemExit(f"configs/models.yaml: no image_encoder candidate {name!r}")
+    return load_encoder(name, candidates[name], "cpu")
+
+
+def _bench_gallery(args: argparse.Namespace) -> tuple[tb.Gallery, Path]:
+    """The gallery named by --gallery and the shard directory its vectors came from."""
+    if args.gallery == "pool-val":
+        if not args.pool_build_id:
+            raise SystemExit("--pool-build-id is required for --gallery pool-val")
+        split = load_config("models")["image_probe"]
+        shards_dir = Path(args.pool_dir) / "embeddings" / args.pool_build_id
+        gallery = tb.pool_val_gallery(Path(args.pool_dir), shards_dir,
+                                      val_fraction=split["val_fraction"], seed=split["seed"])
+        return gallery, shards_dir
+    if not args.build_id:
+        raise SystemExit("--build-id is required for --gallery corpus / corpus5k")
+    shards_dir = Path(args.embeddings) / args.build_id
+    priority = load_config("retrieval")["label_resolution"]["source_priority"]
+    gallery = tb.corpus_gallery(Path(args.canonical_dir), shards_dir, priority,
+                                sample=5000 if args.gallery == "corpus5k" else None,
+                                seed=tb.DEFAULT_SEED)
+    return gallery, shards_dir
+
+
+def _cmd_eval_image_bench(args: argparse.Namespace) -> int:
+    if _report_is_corrupt(Path(args.out)):
+        return 1
+    try:
+        gallery, shards_dir = _bench_gallery(args)
+        shards = embed.load_shards_manifest(shards_dir)
+        if args.scoring == "joint":
+            if not args.encoder:
+                raise SystemExit("--encoder is required for --scoring joint")
+            encoder = _encoder_by_name(args.encoder)
+            encoder_info = {"name": args.encoder, "model_id": encoder.model_id,
+                            "revision": encoder.revision, "dim": encoder.dim}
+            probe_info = None
+            scorer = tb.joint_scorer(encoder, gallery.vectors)
+        else:
+            if not args.scores_dir:
+                raise SystemExit("--scores-dir is required for --scoring decomposed")
+            probe_, meta = load_probe(Path(args.scores_dir))
+            encoder_info = meta.get("encoder")
+            probe_info = {k: meta.get(k) for k in ("probe_id", "source", "build_id")}
+            scorer = tb.decomposed_scorer(probe_, gallery.vectors)
+        if encoder_info is None or encoder_info.get("revision") != shards["revision"]:
+            raise SystemExit(f"ENCODER MISMATCH: shards {shards_dir} were embedded by revision "
+                             f"{shards['revision']}, scorer uses {encoder_info}")
+    except (SystemExit, FileNotFoundError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    sets = tb.query_sets(load_config("concepts"), load_config("training"))
+    queries = {name: sets[name] for name in args.sets}
+    policies = [tb.POLICIES[name] for name in args.policies]
+    report = tb.evaluate(queries, gallery, scorer, policies=policies, n_boot=args.n_boot)
+    payload = {
+        "bench": report,
+        "gallery": {"name": args.gallery, "n": int(len(gallery.study_ids)),
+                    "study_ids_sha256": tb.study_ids_sha256(gallery.study_ids)},
+        "queries": {name: {k: n for k in tb.tp.KINDS if (n := sum(q.kind == k for q in qs))}
+                    for name, qs in queries.items()},
+        "scoring": args.scoring, "encoder": encoder_info, "probe": probe_info,
+        "scores_dir": args.scores_dir, "build_id": shards["build_id"],
+        "shards_dir": str(shards_dir), "git_commit": _git_commit(),
+    }
+    _merge_json(Path(args.out), "bench", payload)
+
+    print(f"gallery    : {args.gallery}  n={payload['gallery']['n']:,}  "
+          f"sha={payload['gallery']['study_ids_sha256'][:12]}")
+    print(f"scoring    : {args.scoring}  encoder={encoder_info.get('name')}  "
+          f"build={shards['build_id']}")
+    print("queries    : " + "  ".join(f"{name} {len(qs)}" for name, qs in queries.items()))
+    print(f"skipped    : {report['skipped_small_relevant']} (query, policy) pairs with fewer "
+          f"than {report['min_relevant']} relevant")
+    print(f"{'set':<11}{'kind':<15}{'policy':<9}{'n':>4}  {'p@5':<22}{'hit@5':<7}{'hnrr@5':<8}"
+          "viol@10")
+    for name, kinds in report["sets"].items():
+        for kind, per_policy in kinds.items():
+            for policy, cells in per_policy.items():
+                p5 = cells["p@5"]
+                ci = "" if p5["ci95"] is None else f" [{p5['ci95'][0]:.3f}, {p5['ci95'][1]:.3f}]"
+                print(f"{name:<11}{kind:<15}{policy:<9}{p5['n']:>4}  {_f(p5['mean']) + ci:<22}"
+                      f"{_f(cells['hit@5']['mean']):<7}{_f(cells['hnrr@5']['mean']):<8}"
+                      f"{_f(cells['exclude_violation@10']['mean'])}")
+    print(f"report     : {args.out}")
+    return 0
+
+
 def _f(value: float | None) -> str:
     return "n/a" if value is None else f"{value:.3f}"
 
@@ -892,6 +989,29 @@ def build_parser() -> argparse.ArgumentParser:
     er.add_argument("--out", default="artifacts/metrics/retrieval_eval.json")
     er.add_argument("--verbose", action="store_true", help="print every per-query row (ASCII)")
     er.set_defaults(func=_cmd_eval_retrieval)
+
+    ib = sub.add_parser("eval-image-bench",
+                        help="V1.1: template benchmark (P@k, hit@k, HNRR@k) of an image-only "
+                             "scoring over a gallery of embedded studies")
+    ib.add_argument("--gallery", choices=["corpus", "corpus5k", "pool-val"], required=True)
+    ib.add_argument("--scoring", choices=["joint", "decomposed"], required=True)
+    ib.add_argument("--encoder", default=None,
+                    help="models.yaml image_encoder candidate; joint only")
+    ib.add_argument("--build-id", default=None, help="corpus shards: <embeddings>/<build-id>")
+    ib.add_argument("--scores-dir", default=None,
+                    help="H6 probe directory (probe.npz + probe.json); decomposed only")
+    ib.add_argument("--pool-dir", default="data/probe_pool")
+    ib.add_argument("--pool-build-id", default=None,
+                    help="pool shards: <pool-dir>/embeddings/<pool-build-id>; pool-val only")
+    ib.add_argument("--embeddings", default="data/indexes/embeddings")
+    ib.add_argument("--canonical-dir", default="data/canonical")
+    ib.add_argument("--sets", nargs="+", choices=["R10", "S12", "paraphrase", "multi"],
+                    default=["R10", "S12", "paraphrase", "multi"])
+    ib.add_argument("--policies", nargs="+", choices=["default", "strict"],
+                    default=["default", "strict"])
+    ib.add_argument("--n-boot", type=int, default=1000)
+    ib.add_argument("--out", required=True, help="artifacts/metrics/image_bench_<...>.json")
+    ib.set_defaults(func=_cmd_eval_image_bench)
 
     return parser
 
