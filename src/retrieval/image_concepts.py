@@ -10,6 +10,7 @@ the probe has no notion of uncertainty, and the pipeline warns about it.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -105,6 +106,16 @@ def rank_studies(
     return [(str(ids[i]), float(values[i])) for i in order]
 
 
+def _read(path: Path, load):
+    """`load(path)`, with any failure to read or parse it reported as an ImageProbeError."""
+    try:
+        return load(path)
+    except ImageProbeError:
+        raise
+    except Exception as exc:
+        raise ImageProbeError(f"{path}: {type(exc).__name__}: {exc}") from exc
+
+
 def open_image_probe(
     probe_dir: Path, *, build_id: str, revision: str, study_ids: Sequence[str]
 ) -> tuple[ImageScores, dict]:
@@ -112,18 +123,26 @@ def open_image_probe(
     for name in (probe.PROBE_FILE, probe.SCORES_FILE, probe.META_FILE):
         if not (probe_dir / name).is_file():
             raise ImageProbeError(f"{probe_dir / name} not found; run cxr train-probe")
-    _, meta = probe.load_probe(probe_dir)
-    if meta["build_id"] != build_id:
+    meta = _read(probe_dir / probe.META_FILE,
+                 lambda path: json.loads(path.read_text(encoding="utf-8")))
+    _read(probe_dir / probe.PROBE_FILE, lambda _: probe.load_probe(probe_dir))
+    try:
+        meta_build, meta_revision = meta["build_id"], meta["encoder"]["revision"]
+    except (KeyError, TypeError) as exc:
         raise ImageProbeError(
-            f"image probe was trained for build {meta['build_id']}, manifest says {build_id}; "
+            f"{probe_dir / probe.META_FILE}: missing key {exc}; run cxr train-probe") from exc
+    if meta_build != build_id:
+        raise ImageProbeError(
+            f"image probe was trained for build {meta_build}, manifest says {build_id}; "
             "run cxr train-probe"
         )
-    if meta["encoder"]["revision"] != revision:
+    if meta_revision != revision:
         raise ImageProbeError(
-            f"image probe was trained on encoder revision {meta['encoder']['revision']}, "
+            f"image probe was trained on encoder revision {meta_revision}, "
             f"manifest says {revision}; run cxr train-probe"
         )
-    scores = build_image_scores(pl.read_parquet(probe_dir / probe.SCORES_FILE), study_ids)
+    scores = _read(probe_dir / probe.SCORES_FILE,
+                   lambda path: build_image_scores(pl.read_parquet(path), study_ids))
     return scores, meta
 
 

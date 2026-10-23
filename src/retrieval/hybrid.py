@@ -1,6 +1,6 @@
-"""Hybrid retrieval (spec 8): reciprocal-rank fusion of the vector and report legs.
+"""Hybrid retrieval (spec 8): reciprocal-rank fusion of the vector, report and image legs.
 
-Pure: the two legs arrive as callables already bound to the query, the label-allowed set and
+Pure: the legs arrive as callables already bound to the query, the label-allowed set and
 the view facet, so this module never touches Qdrant or SQLite. Label constraints are applied
 before it runs (WORKLOG D23): `label_order` is the allowed set in the fixed D18 order, and
 results never leave it because both legs only ever return studies inside it.
@@ -23,6 +23,11 @@ class FusionParams:
     leg_weights: Mapping[str, float]
     vector_top_k: int
     report_top_k: int
+    image_top_k: int = 100
+
+    def weight(self, leg: str) -> float:
+        """A leg missing from `leg_weights` weighs 0, so it is never called."""
+        return self.leg_weights.get(leg, 0.0)
 
     @classmethod
     def from_config(cls, retrieval_cfg: dict) -> FusionParams:
@@ -30,7 +35,8 @@ class FusionParams:
         return cls(rrf_k=int(fusion["rrf_k"]),
                    leg_weights={leg: float(w) for leg, w in fusion["leg_weights"].items()},
                    vector_top_k=int(candidates["vector_top_k"]),
-                   report_top_k=int(candidates["report_top_k"]))
+                   report_top_k=int(candidates["report_top_k"]),
+                   image_top_k=int(candidates.get("image_top_k", 100)))
 
 
 @dataclass(frozen=True)
@@ -40,6 +46,7 @@ class HybridResult:
     vector_rank: int | None
     report_rank: int | None
     rank: int                     # 1-based, final
+    image_rank: int | None = None
 
 
 @dataclass(frozen=True)
@@ -65,9 +72,12 @@ def _vector_ranking(candidates: Sequence[ImageCandidate]) -> list[str]:
     return list(dict.fromkeys(c.study_id for c in candidates))
 
 
-def _order_key(study_id: str, score: float, vector_rank: int | None) -> tuple:
-    """Best score first; ties go to the study the vector leg ranked higher, then to the id."""
-    return (-score, vector_rank is None, vector_rank or 0, study_id)
+def _order_key(study_id: str, score: float, vector_rank: int | None,
+               image_rank: int | None = None) -> tuple:
+    """Best score first; ties go to the study the vector leg ranked higher, then the image
+    leg, then to the id."""
+    return (-score, vector_rank is None, vector_rank or 0, image_rank is None, image_rank or 0,
+            study_id)
 
 
 def search_hybrid(
@@ -75,25 +85,32 @@ def search_hybrid(
     label_order: Sequence[str] | None,
     vector_leg: Callable[[int], list[ImageCandidate]] | None,
     report_leg: Callable[[int], list[ReportCandidate]] | None,
+    image_leg: Callable[[int], list[tuple[str, float]]] | None = None,
     fusion: FusionParams,
 ) -> HybridOutput:
+    """A leg whose weight is 0 is not called: it cannot change the fusion, and the vector
+    leg costs a text encode plus a Qdrant query."""
     warnings: list[str] = []
-    vector = _vector_ranking(vector_leg(fusion.vector_top_k)) if vector_leg else []
+    vector = (_vector_ranking(vector_leg(fusion.vector_top_k))
+              if vector_leg and fusion.weight("vector") > 0 else [])
     report: list[str] = []
-    if report_leg is not None:
+    if report_leg is not None and fusion.weight("report") > 0:
         try:
             report = [c.study_id for c in report_leg(fusion.report_top_k)]
         except ReportSearchError as exc:
             warnings.append(f"report leg failed: {exc}")
+    image = ([s for s, _ in image_leg(fusion.image_top_k)]
+             if image_leg and fusion.weight("image") > 0 else [])
     if label_order is not None:
         # The legs are bound to the allowed set, but nothing here may rely on it.
         allowed = set(label_order)
         vector = [s for s in vector if s in allowed]
         report = [s for s in report if s in allowed]
-    legs = {"vector": len(vector), "report": len(report)}
+        image = [s for s in image if s in allowed]
+    legs = {"vector": len(vector), "report": len(report), "image": len(image)}
     total = None if label_order is None else len(label_order)
 
-    if not vector and not report:
+    if not vector and not report and not image:
         if label_order is None:
             return HybridOutput([], total, warnings, legs)
         warnings.append(_NO_SIGNAL)
@@ -101,10 +118,16 @@ def search_hybrid(
                    for rank, s in enumerate(label_order[:top_k], start=1)]
         return HybridOutput(results, total, warnings, legs)
 
-    scores = rrf({"vector": vector, "report": report}, fusion.leg_weights, fusion.rrf_k)
+    # Only the legs that ran: a leg absent from leg_weights must not reach rrf().
+    ran = {leg: ranked for leg, ranked in
+           (("vector", vector), ("report", report), ("image", image)) if fusion.weight(leg) > 0}
+    scores = rrf(ran, fusion.leg_weights, fusion.rrf_k)
     vector_rank = {s: r for r, s in enumerate(vector, start=1)}
     report_rank = {s: r for r, s in enumerate(report, start=1)}
-    ordered = sorted(scores, key=lambda s: _order_key(s, scores[s], vector_rank.get(s)))
-    results = [HybridResult(s, scores[s], vector_rank.get(s), report_rank.get(s), rank)
+    image_rank = {s: r for r, s in enumerate(image, start=1)}
+    ordered = sorted(scores, key=lambda s: _order_key(s, scores[s], vector_rank.get(s),
+                                                      image_rank.get(s)))
+    results = [HybridResult(s, scores[s], vector_rank.get(s), report_rank.get(s), rank,
+                            image_rank.get(s))
                for rank, s in enumerate(ordered[:top_k], start=1)]
     return HybridOutput(results, total, warnings, legs)

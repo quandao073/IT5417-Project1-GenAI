@@ -1,3 +1,5 @@
+import json
+
 import numpy as np
 import polars as pl
 import pytest
@@ -137,3 +139,26 @@ def test_validate_image_probe_returns_a_check_not_an_exception(tmp_path):
     assert good.ok and good.detail == "3 studies scored, build b1"
     bad = ic.validate_image_probe(path, build_id="zzz", revision="r1", study_ids=IDS)
     assert not bad.ok and bad.detail.startswith("ImageProbeError: ")
+
+
+@pytest.mark.parametrize("name", [pr.PROBE_FILE, pr.SCORES_FILE, pr.META_FILE])
+def test_an_unreadable_artifact_file_is_an_image_probe_error(tmp_path, name):
+    path = _write_artifact(tmp_path)
+    (path / name).write_bytes(b"not a valid file")
+    with pytest.raises(ic.ImageProbeError, match=name):
+        ic.open_image_probe(path, build_id="b1", revision="r1", study_ids=IDS)
+    check = ic.validate_image_probe(path, build_id="b1", revision="r1", study_ids=IDS)
+    assert not check.ok and name in check.detail
+
+
+def test_meta_without_build_id_or_revision_is_an_image_probe_error(tmp_path):
+    path = _write_artifact(tmp_path)
+    meta_path = path / pr.META_FILE
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    del meta["build_id"]
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    with pytest.raises(ic.ImageProbeError, match="build_id"):
+        ic.open_image_probe(path, build_id="b1", revision="r1", study_ids=IDS)
+    meta_path.write_text(json.dumps({**meta, "build_id": "b1", "encoder": {}}), encoding="utf-8")
+    with pytest.raises(ic.ImageProbeError, match="revision"):
+        ic.open_image_probe(path, build_id="b1", revision="r1", study_ids=IDS)
