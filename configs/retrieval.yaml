@@ -5,7 +5,7 @@
 pipeline:
   steps: [parse, retrieve, fuse, rerank, build_evidence]
 
-# One API, three retrieval modes (plan 11.1-11.3). `label` and `vector` are the
+# One API, four retrieval modes (plan 11.1-11.3; `image` added 2026-10-23). `label` and `vector` are the
 # baselines that `hybrid` has to beat; they are not user conveniences.
 modes: [label, vector, image, hybrid]
 
@@ -20,7 +20,9 @@ fusion:
   # Chosen on the dev grid 2026-10-21 (spec section 11.5): gold hybrid ndcg@10 0.657 vs
   # 0.644 for the plan default rrf_k 60, leg_weights (1, 1); gain 0.012 >= the 0.005 rule.
   rrf_k: 10
-  # image: 0.0 until the dev grid of 2026-10-23 picks it (docs/image-probe.md)
+  # Dev grid 2026-10-23 (36 configs, baseline rrf_k 10 / vector 0.5 / report 1.0 / image 0.0
+  # = 0.657): kept the baseline. Best image > 0 was rrf_k 10 / 0.0 / 1.0 / 0.5 = 0.661, gain
+  # 0.0040 < 0.005, so image stays 0.0 and the leg does not run: S3 FAIL (docs/image-probe.md).
   leg_weights: {vector: 0.5, report: 1.0, image: 0.0}
   # `weights` (concept_match_bonus, uncertain_penalty, constraint_violation_penalty) removed:
   # hybrid filters on labels first, so there is nothing left to reward or penalise (D23).
