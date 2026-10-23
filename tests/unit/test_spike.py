@@ -35,9 +35,13 @@ class TestHelpers:
 
 
 class TestModelsConfig:
-    def test_candidates_are_the_three_spike_models(self):
+    def test_candidates_include_the_three_spike_models(self):
+        """The Phase 2 gate ran over these three; V1.1 adds `cxrclip` (WORKLOG D30) for the
+        image modes without re-running the gate, so the set may grow but never shrink."""
         cfg = load_config("models")["image_encoder"]
-        assert set(cfg["candidates"]) == {"biomedclip", "chexzero", "xrayclip"}
+        assert {"biomedclip", "chexzero", "xrayclip"} <= set(cfg["candidates"])
+        assert set(cfg["candidates"]) <= {"biomedclip", "chexzero", "xrayclip", "cxrclip"} | {
+            name for name in cfg["candidates"] if name.startswith("cxrclip_")}
         for c in cfg["candidates"].values():
             assert {"model_id", "framework", "revision", "license"} <= set(c)
 
