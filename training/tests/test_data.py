@@ -86,3 +86,23 @@ def test_dataset_item_shapes_and_no_flip(pool, tmp_path):
 
     with pytest.raises(ValueError, match="flip"):
         train_transform({**REAL_AUG, "horizontal_flip": True}, 32)
+
+
+def test_transforms_and_dataset_pickle_for_spawned_workers(pool, tmp_path):
+    """Windows DataLoader workers are spawned, so the dataset and its transform must pickle
+    (the first real smoke run died on a lambda inside train_transform)."""
+    import pickle
+
+    pool_dir, image_root, plus_csv = pool
+    out = tmp_path / "cache"
+    build_cache(pool_dir, image_root, plus_csv, out, size=32, val_fraction=0.5, seed=3)
+    images, _, _ = load_cache(out)
+    for transform in (eval_transform(), train_transform(IDENTITY_AUG, 32)):
+        back = pickle.loads(pickle.dumps(transform))
+        assert torch.allclose(back(images[0]), transform(images[0]), atol=1e-6)
+    sampler = CaptionSampler(_statuses(), CONCEPTS, CFG, mix=MIX, seed=1)
+    dataset = PoolDataset(out, sampler, train=True, augment_cfg=REAL_AUG)
+    clone = pickle.loads(pickle.dumps(dataset))
+    assert clone.images is None and len(clone) == len(dataset)
+    pixels, _, _ = clone[0]
+    assert pixels.shape == (3, 32, 32)

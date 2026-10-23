@@ -48,9 +48,21 @@ def _normalize(x: torch.Tensor) -> torch.Tensor:
     return x.expand(3, -1, -1).contiguous()
 
 
+class _Pipeline:
+    """uint8 array -> optional augmentation -> normalised tensor. A class, not a lambda:
+    Windows DataLoader workers are spawned and must unpickle the transform."""
+
+    def __init__(self, aug=None):
+        self.aug = aug
+
+    def __call__(self, arr: np.ndarray) -> torch.Tensor:
+        x = _to_tensor(arr)
+        return _normalize(self.aug(x) if self.aug is not None else x)
+
+
 def eval_transform() -> Transform:
     """uint8 [H, W] -> float32 [3, H, W]: ToTensor and Normalize(0.5, 0.5) on three channels."""
-    return lambda arr: _normalize(_to_tensor(arr))
+    return _Pipeline()
 
 
 def train_transform(cfg: dict, size: int = 224) -> Transform:
@@ -66,7 +78,7 @@ def train_transform(cfg: dict, size: int = 224) -> Transform:
                           interpolation=InterpolationMode.BILINEAR),
         v2.ColorJitter(brightness=float(cfg["brightness"]), contrast=float(cfg["contrast"])),
     ])
-    return lambda arr: _normalize(aug(_to_tensor(arr)))
+    return _Pipeline(aug)
 
 
 def load_cache(cache_dir: Path) -> tuple[np.ndarray, pl.DataFrame, dict]:
