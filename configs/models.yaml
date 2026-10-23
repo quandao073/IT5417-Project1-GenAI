@@ -29,6 +29,23 @@ image_encoder:
       framework: transformers
       revision: 0a6f84364e6d76c831daebef31b266c7928db1f0
       license: cc-by-nc-4.0
+    cxrclip:
+      # V1.1 image-mode encoder (WORKLOG D30): CXR-CLIP Swin-Tiny + Bio_ClinicalBERT, the
+      # MIMIC-only ("M") checkpoint of github.com/kakaobrain/cxr-clip. Not on HF: the tar on
+      # Kakao's CDN is converted once to a plain weights file (src/embeddings/cxrclip.py:
+      # convert_checkpoint); `revision` pins that file, `source_sha256` the tar. The Swin and
+      # BERT repos only supply config.json and vocab.txt; every weight comes from the checkpoint.
+      # A LoRA fine-tune is another candidate with the same adapter and its own weights file.
+      model_id: kakaobrain/cxr-clip
+      framework: cxrclip_checkpoint
+      variant: swint_m
+      url: https://twg.kakaocdn.net/brainrepo/models/cxr-clip/a21ef120894e072ae77434daf6b98b72/swint_m.tar
+      source_sha256: sha256:a2e5dec18b80aad726e4e416b99a09d22d7319cfc58323e17130aa4a56b0c13f
+      weights: data/cache/models/cxrclip/swint_m.pt
+      revision: sha256:743e23335c162cf327c73d966cd890c295757ce4da612648543b29fb9231a5d5
+      swin_config: microsoft/swin-tiny-patch4-window7-224@d00d478bfaf1f417d34a1186673ad4b4be264c51
+      text_config: emilyalsentzer/Bio_ClinicalBERT@d5892b39a4adaed74b92212a44081509db72f87b
+      license: cc-by-nc-4.0
   # Filled with configs/concepts.yaml:<concept>.en[0]. Part of the pinned setup:
   # changing it changes every score.
   text_prompt_template: "chest x-ray showing {}"

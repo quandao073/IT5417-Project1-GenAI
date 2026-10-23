@@ -23,8 +23,9 @@ import polars as pl
 SHARDS_FILE = "shards.json"
 
 
-def make_build_id(selected: str, day: date) -> str:
-    return f"{day:%Y%m%d}_chexpert25k_{selected}_v1"
+def make_build_id(selected: str, day: date, scope: str = "chexpert25k") -> str:
+    """`<YYYYMMDD>_<scope>_<encoder>_v1`; `scope` names the gallery (corpus or pool)."""
+    return f"{day:%Y%m%d}_{scope}_{selected}_v1"
 
 
 def shard_bounds(n_images: int, shard_size: int) -> list[tuple[int, int]]:
@@ -137,12 +138,15 @@ def run_embed(
     batch_size: int,
     library_versions: dict,
     git_commit: str | None,
+    encoder_name: str | None = None,
 ) -> dict:
     """Embed every image in `images` (sorted by image_id) into shards under out_dir.
 
     Existing intact shards are skipped. Any image that fails to embed stops the
     run: a corpus with silently missing vectors would fail validate-indexes
-    later, with far less context about what went wrong.
+    later, with far less context about what went wrong. `encoder_name` is the
+    models.yaml candidate the shards came from (default: the adapter's own name),
+    so a build names the weights that produced it, not just the adapter.
     """
     images = images.sort("image_id")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -189,6 +193,7 @@ def run_embed(
 
     manifest = {
         "build_id": build_id,
+        "encoder": encoder_name or encoder.name,
         "model_id": encoder.model_id,
         "revision": encoder.revision,
         "preprocessing": encoder.preprocessing,

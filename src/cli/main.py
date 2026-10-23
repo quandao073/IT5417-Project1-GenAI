@@ -227,28 +227,39 @@ def _library_versions() -> dict[str, str | None]:
     return out
 
 
-def _selected_encoder(device: str):
-    """The pinned encoder from configs/models.yaml, or a clear error."""
+def _encoder_by_name(name: str | None, device: str):
+    """A models.yaml candidate by name (None = `selected`), its revision checked, or a clear
+    error. The selected encoder is checked against `image_encoder.revision` as before; any
+    other candidate against its own pin."""
     from src.embeddings.base import load_encoder
 
     cfg = load_config("models")["image_encoder"]
-    name = cfg["selected"]
+    selected = cfg["selected"]
+    name = name or selected
     if not name:
         raise SystemExit("configs/models.yaml: image_encoder.selected is not set")
+    if name not in cfg["candidates"]:
+        raise SystemExit(f"configs/models.yaml: no image_encoder candidate named {name!r}")
     encoder = load_encoder(name, cfg["candidates"][name], device)
-    if encoder.revision != cfg["revision"]:
+    expected = cfg["revision"] if name == selected else cfg["candidates"][name].get("revision")
+    if encoder.revision != expected:
         raise SystemExit(
-            f"encoder revision {encoder.revision} != models.yaml revision {cfg['revision']}"
+            f"encoder {name} revision {encoder.revision} != models.yaml revision {expected}"
         )
     return name, encoder
+
+
+def _selected_encoder(device: str):
+    """The pinned encoder from configs/models.yaml, or a clear error."""
+    return _encoder_by_name(None, device)
 
 
 def _cmd_embed(args: argparse.Namespace) -> int:
     images = pl.read_parquet(
         Path(args.images) if args.images else Path(args.canonical_dir) / "images.parquet"
     )
-    name, encoder = _selected_encoder(args.device)
-    build_id = args.build_id or embed.make_build_id(name, date.today())
+    name, encoder = _encoder_by_name(args.encoder, args.device)
+    build_id = args.build_id or embed.make_build_id(name, date.today(), scope=args.scope)
     out_dir = Path(args.out) / build_id
     print(f"build_id   : {build_id}")
     print(f"images     : {images.height:,}  shards of {args.shard_size}  -> {out_dir}")
@@ -257,6 +268,7 @@ def _cmd_embed(args: argparse.Namespace) -> int:
             images, encoder, Path(args.image_root), out_dir, build_id,
             shard_size=args.shard_size, batch_size=args.batch_size,
             library_versions=_library_versions(), git_commit=_git_commit(),
+            encoder_name=name,
         )
     except RuntimeError as exc:
         print(f"EMBED FAILED: {exc}", file=sys.stderr)
@@ -439,11 +451,12 @@ def _cmd_score_corpus(args: argparse.Namespace) -> int:
     return 0
 
 
-def _load_pool(args: argparse.Namespace, manifest: dict, corpus_images: pl.DataFrame):
+def _load_pool(args: argparse.Namespace, expect: dict, corpus_images: pl.DataFrame):
     """The pool's vectors, statuses and patient ids in shard order, or an error message.
 
-    Refuses a pool embedded by another encoder, one that shares a patient with the
-    corpus and one that holds a valid/ study.
+    `expect` is the corpus build's encoder (`model_id`, `revision`, `dim`). Refuses a pool
+    embedded by another encoder, one that shares a patient with the corpus and one that
+    holds a valid/ study.
     """
     pool_dir = Path(args.pool_dir)
     images = pl.read_parquet(pool_dir / probe_pool.POOL_IMAGES)
@@ -451,9 +464,8 @@ def _load_pool(args: argparse.Namespace, manifest: dict, corpus_images: pl.DataF
     meta = json.loads((pool_dir / probe_pool.POOL_META).read_text(encoding="utf-8"))
     shards_dir = pool_dir / "embeddings" / args.pool_build_id
     shards = embed.load_shards_manifest(shards_dir)
-    model = manifest["embedding_model"]
     got = (shards["model_id"], shards["revision"], shards["dim"])
-    want = (model["model_id"], model["revision"], model["dimension"])
+    want = (expect["model_id"], expect["revision"], expect["dim"])
     if got != want:
         return f"POOL BUILD MISMATCH: pool {got} != corpus {want}", None
     overlap = set(images["patient_id"]) & set(corpus_images["patient_id"])
@@ -470,29 +482,52 @@ def _load_pool(args: argparse.Namespace, manifest: dict, corpus_images: pl.DataF
     return None, (vectors, statuses, [patient_of[i] for i in image_ids], meta)
 
 
-def _corpus_rows(args: argparse.Namespace, manifest: dict, studies: pl.DataFrame):
+def _corpus_rows(args: argparse.Namespace, build_id: str, studies: pl.DataFrame):
     """Corpus vectors of each study's selected image, in `studies` order."""
-    vectors, image_ids = vb._all_vectors(Path(args.embeddings) / manifest["build_id"])
+    vectors, image_ids = vb._all_vectors(Path(args.embeddings) / build_id)
     row_of = {i: r for r, i in enumerate(image_ids)}
     rows = [row_of[i] for i in studies["selected_image_id"]]
     return vectors[rows]
 
 
+def _corpus_build(args: argparse.Namespace) -> tuple[str, dict]:
+    """(build_id, encoder expectation) of the corpus vectors the probe scores.
+
+    `--corpus-build-id` reads that build's shards.json, so a second encoder's build can be
+    probed without touching Qdrant; without it the served build in build_manifest.json is
+    used, as before.
+    """
+    if args.corpus_build_id:
+        shards = embed.load_shards_manifest(Path(args.embeddings) / args.corpus_build_id)
+        return shards["build_id"], {"model_id": shards["model_id"],
+                                    "revision": shards["revision"], "dim": shards["dim"]}
+    manifest = json.loads(
+        (Path(args.indexes_dir) / index.MANIFEST_FILE).read_text(encoding="utf-8"))
+    model = manifest["embedding_model"]
+    return manifest["build_id"], {"model_id": model["model_id"], "revision": model["revision"],
+                                  "dim": model["dimension"]}
+
+
 def _cmd_train_probe(args: argparse.Namespace) -> int:
     if _report_is_corrupt(Path(args.report)):
         return 1
-    manifest = json.loads(
-        (Path(args.indexes_dir) / index.MANIFEST_FILE).read_text(encoding="utf-8"))
+    build_id, expect = _corpus_build(args)
     canonical_dir = Path(args.canonical_dir)
-    error, pool = _load_pool(args, manifest, pl.read_parquet(canonical_dir / "images.parquet"))
+    error, pool = _load_pool(args, expect, pl.read_parquet(canonical_dir / "images.parquet"))
     if error:
         print(error, file=sys.stderr)
+        return 1
+    # The text rows of the comparison must come from the model that made the vectors.
+    name, encoder = _encoder_by_name(args.encoder, "cpu")
+    if encoder.revision != expect["revision"]:
+        print(f"ENCODER MISMATCH: {name} revision {encoder.revision} != corpus build "
+              f"{build_id} revision {expect['revision']}", file=sys.stderr)
         return 1
     X, pool_statuses, pool_patients, pool_meta = pool
     probe, fit = train_probe(X, pool_statuses, pool_patients, load_config("models")["image_probe"])
 
     studies = pl.read_parquet(canonical_dir / "studies.parquet")
-    corpus_vectors = _corpus_rows(args, manifest, studies)
+    corpus_vectors = _corpus_rows(args, build_id, studies)
     logits = probe.logits(corpus_vectors)
     corpus_scores = pl.DataFrame({
         "study_id": studies["study_id"], "image_id": studies["selected_image_id"],
@@ -500,19 +535,17 @@ def _cmd_train_probe(args: argparse.Namespace) -> int:
     })
 
     template = load_config("models")["image_encoder"]["text_prompt_template"]
-    _, encoder = _selected_encoder("cpu")
     text = probe_eval.text_scores(corpus_vectors, encoder, load_config("concepts"), template)
     priority = load_config("retrieval")["label_resolution"]["source_priority"]
     statuses = spike.status_matrix(
         pl.read_parquet(canonical_dir / "labels.parquet"), studies["study_id"].to_list(), priority)
     comparison = probe_eval.compare({**text, "probe": logits}, statuses, n_boot=args.n_boot)
 
-    model = manifest["embedding_model"]
     meta = {
-        "probe_id": f"{manifest['build_id']}_probe_lam{fit['lambda']}",
-        "build_id": manifest["build_id"],
-        "encoder": {"model_id": model["model_id"], "revision": model["revision"],
-                    "dim": model["dimension"]},
+        "probe_id": f"{build_id}_probe_lam{fit['lambda']}",
+        "build_id": build_id,
+        "encoder": {"name": name, **expect},
+        "source": "probe",
         "pool_sha256": pool_meta["pool_sha256"], "pool_build_id": args.pool_build_id,
         "lambda": fit["lambda"], "selection": fit["selection"], "n_train": fit["n_train"],
         "git_commit": _git_commit(),
@@ -798,7 +831,11 @@ def build_parser() -> argparse.ArgumentParser:
     emb.add_argument("--batch-size", type=int, default=32)
     emb.add_argument("--device", default="cpu")
     emb.add_argument("--build-id", default=None,
-                     help="override the generated <YYYYMMDD>_chexpert25k_<model>_v1")
+                     help="override the generated <YYYYMMDD>_<scope>_<encoder>_v1")
+    emb.add_argument("--encoder", default=None,
+                     help="models.yaml image_encoder candidate (default: the selected one)")
+    emb.add_argument("--scope", default="chexpert25k",
+                     help="gallery name in the generated build_id, e.g. pool88k")
     emb.set_defaults(func=_cmd_embed)
 
     idx = sub.add_parser("index", help="Phase 3: upsert shards into Qdrant, write manifest")
@@ -855,6 +892,12 @@ def build_parser() -> argparse.ArgumentParser:
     tp.add_argument("--out", default="data/indexes/image_probe")
     tp.add_argument("--report", default="artifacts/metrics/image_probe.json")
     tp.add_argument("--n-boot", type=int, default=1000)
+    tp.add_argument("--encoder", default=None,
+                    help="models.yaml candidate that embedded the corpus and the pool "
+                         "(default: the selected one)")
+    tp.add_argument("--corpus-build-id", default=None,
+                    help="score this corpus build's shards instead of the one in "
+                         "build_manifest.json")
     tp.set_defaults(func=_cmd_train_probe)
 
     prs = sub.add_parser("parse", help="Phase 4: parse one request, print the SearchQuery")
