@@ -1,0 +1,41 @@
+# The GPU venv for fine-tuning (WORKLOG D34, T14). The main venv keeps CPU torch; every GPU
+# job runs through `uv run --project training ...`, which installs the main package editable
+# and torch/torchvision from the CUDA 12.4 index.
+#
+#   uv sync --project training
+#   uv run --project training python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+#   uv run --project training pytest training/tests -q
+#
+# No [tool.pytest.ini_options] here on purpose: pytest then uses the root pyproject's.
+
+[project]
+name = "cxr-train"
+version = "0.1.0"
+description = "GPU fine-tuning environment for the label-aware CXR image encoder (V1.1 WP4)"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "cxr-search[api,embed]",
+  "torch==2.4.1",
+  "torchvision==0.19.1",
+  "peft>=0.13,<0.15",
+  "safetensors>=0.4",
+  "tqdm>=4.66",
+  "pytest>=8.2",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+cxr-search = { path = "..", editable = true }
+torch = [
+  { index = "pytorch-cu124", marker = "sys_platform == 'win32' or sys_platform == 'linux'" },
+]
+torchvision = [
+  { index = "pytorch-cu124", marker = "sys_platform == 'win32' or sys_platform == 'linux'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
