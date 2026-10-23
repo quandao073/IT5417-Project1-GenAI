@@ -119,6 +119,16 @@ class SearchResponse(BaseModel):
     latency_ms: int
 
 
+class ImageEncoderInfo(BaseModel):
+    """The image modes' encoder and collection (build_manifest_image.json, WORKLOG D34)."""
+
+    name: str
+    model_id: str
+    revision: str
+    build_id: str
+    collection: str
+
+
 class HealthResponse(BaseModel):
     status: Literal["ready"]
     build_id: str
@@ -132,5 +142,9 @@ class HealthResponse(BaseModel):
     report_studies: int | None
     image_probe: Literal["ok", "disabled"]
     image_probe_id: str | None
+    image_joint: Literal["ok", "disabled"]
+    image_decomposed: Literal["ok", "disabled"]
+    image_encoder: ImageEncoderInfo | None = Field(
+        description="null while image_joint is disabled; both image modes share this encoder")
     llm: Literal["ok", "disabled", "unreachable", "missing_model"]
     llm_model: str

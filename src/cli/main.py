@@ -382,7 +382,8 @@ def _image_mode_checks(args: argparse.Namespace, manifest_path: Path, images: pl
     return [validate.Check(f"image:{c.name}", c.ok, c.detail) for c in checks] + [
         validate_image_probe(scores_dir, build_id=manifest["build_id"],
                              revision=expected_revision, encoder_name=manifest.get("encoder"),
-                             study_ids=study_ids, name="image_scores")]
+                             study_ids=study_ids, name="image_scores",
+                             command="cxr build-image-scores")]
 
 
 def _cmd_build_report_index(args: argparse.Namespace) -> int:

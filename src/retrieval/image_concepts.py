@@ -118,15 +118,16 @@ def _read(path: Path, load):
 
 def open_image_probe(
     probe_dir: Path, *, build_id: str, revision: str, study_ids: Sequence[str],
-    encoder_name: str | None = None,
+    encoder_name: str | None = None, command: str = "cxr train-probe",
 ) -> tuple[ImageScores, dict]:
     """Load the saved corpus scores, refusing an artifact trained for another build or encoder.
 
     `encoder_name` is the manifest's adapter name; it is compared only when given and the
-    artifact recorded one (artifacts older than `encoder.name` pass on build and revision)."""
+    artifact recorded one (artifacts older than `encoder.name` pass on build and revision).
+    `command` is the one that rebuilds this artifact, named in every error."""
     for name in (probe.PROBE_FILE, probe.SCORES_FILE, probe.META_FILE):
         if not (probe_dir / name).is_file():
-            raise ImageProbeError(f"{probe_dir / name} not found; run cxr train-probe")
+            raise ImageProbeError(f"{probe_dir / name} not found; run {command}")
     meta = _read(probe_dir / probe.META_FILE,
                  lambda path: json.loads(path.read_text(encoding="utf-8")))
     _read(probe_dir / probe.PROBE_FILE, lambda _: probe.load_probe(probe_dir))
@@ -134,21 +135,22 @@ def open_image_probe(
         meta_build, meta_revision = meta["build_id"], meta["encoder"]["revision"]
     except (KeyError, TypeError) as exc:
         raise ImageProbeError(
-            f"{probe_dir / probe.META_FILE}: missing key {exc}; run cxr train-probe") from exc
+            f"{probe_dir / probe.META_FILE}: missing key {exc}; run {command}") from exc
     if meta_build != build_id:
         raise ImageProbeError(
             f"image probe was trained for build {meta_build}, manifest says {build_id}; "
-            "run cxr train-probe"
+            f"run {command}"
         )
     if meta_revision != revision:
         raise ImageProbeError(
             f"image probe was trained on encoder revision {meta_revision}, "
-            f"manifest says {revision}; run cxr train-probe"
+            f"manifest says {revision}; run {command}"
         )
     meta_name = meta["encoder"].get("name")
     if encoder_name is not None and meta_name is not None and meta_name != encoder_name:
         raise ImageProbeError(
-            f"image scores were built with encoder {meta_name}, manifest says {encoder_name}"
+            f"image scores were built with encoder {meta_name}, manifest says {encoder_name}; "
+            f"run {command}"
         )
     scores = _read(probe_dir / probe.SCORES_FILE,
                    lambda path: build_image_scores(pl.read_parquet(path), study_ids))
@@ -158,13 +160,14 @@ def open_image_probe(
 def validate_image_probe(
     probe_dir: Path, *, build_id: str, revision: str, study_ids: Sequence[str],
     encoder_name: str | None = None, name: str = "image_probe",
+    command: str = "cxr train-probe",
 ) -> Check:
     """A `cxr validate-indexes` check (`image_probe`, or `image_scores` for the decomposed
     artifact); an exception is a FAIL line."""
     try:
         scores, _ = open_image_probe(
             probe_dir, build_id=build_id, revision=revision, study_ids=study_ids,
-            encoder_name=encoder_name,
+            encoder_name=encoder_name, command=command,
         )
         n = len(scores.study_ids)
         return Check(name, True, f"{n} studies scored, build {build_id}")

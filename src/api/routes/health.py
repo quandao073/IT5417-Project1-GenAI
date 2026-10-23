@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
 from src.api.dependencies import AppState, get_state
-from src.api.schemas.search import HealthResponse
+from src.api.schemas.search import HealthResponse, ImageEncoderInfo
 
 router = APIRouter()
 
@@ -31,5 +31,17 @@ def health(state: Annotated[AppState, Depends(get_state)]):
         image_probe=state.image_status,
         image_probe_id=(state.image_meta.get("probe_id") if state.image_status == "ok"
                         else None),
+        image_joint=state.joint_status, image_decomposed=state.decomposed_status,
+        image_encoder=_image_encoder(state),
         llm=state.llm_status, llm_model=state.settings.llm_model,
     )
+
+
+def _image_encoder(state: AppState) -> ImageEncoderInfo | None:
+    if state.joint_status != "ok":
+        return None
+    manifest = state.joint_manifest
+    return ImageEncoderInfo(
+        name=manifest["encoder"], model_id=manifest["embedding_model"]["model_id"],
+        revision=manifest["embedding_model"]["revision"], build_id=manifest["build_id"],
+        collection=state.joint_collection)
