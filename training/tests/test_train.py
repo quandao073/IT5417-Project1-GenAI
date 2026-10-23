@@ -197,3 +197,15 @@ def test_resume_continues_from_the_last_finished_epoch(tmp_path):
     again = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
     assert [e["epoch"] for e in again["epochs"]] == [1, 2]
 
+
+def test_emulated_bf16_counts_as_no_bf16(monkeypatch):
+    """Colab free's T4: torch says bf16 is supported only through slow emulation."""
+    import pytest
+
+    from training import val
+
+    monkeypatch.setattr(torch.cuda, "is_bf16_supported",
+                        lambda including_emulation=True: including_emulation)
+    with pytest.raises(ValueError, match="no bf16"):
+        train.resolve_precision("bf16", torch.device("cuda"))
+    assert val._amp_dtype(torch.device("cuda")) == torch.float16

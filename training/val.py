@@ -78,7 +78,8 @@ def encode_texts(model, tokenizer, texts: Sequence[str], device: torch.device, *
 def _amp_dtype(device: torch.device) -> torch.dtype:
     """bf16 where the GPU has it (fp32's range, no overflow), else fp16; bf16 on CPU."""
     if device.type == "cuda":
-        return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        native = torch.cuda.is_bf16_supported(including_emulation=False)    # not on a T4
+        return torch.bfloat16 if native else torch.float16
     return torch.bfloat16
 
 

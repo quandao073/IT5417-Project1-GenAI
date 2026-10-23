@@ -92,7 +92,8 @@ def resolve_precision(name: str, device: torch.device) -> tuple[torch.dtype | No
     if name == "fp32":
         return None, False
     if name == "bf16":
-        if device.type == "cuda" and not torch.cuda.is_bf16_supported():
+        # Native only: torch also says True for a T4 (Colab free), through slow emulation.
+        if device.type == "cuda" and not torch.cuda.is_bf16_supported(including_emulation=False):
             raise ValueError("this GPU has no bf16; use --precision fp16")
         return torch.bfloat16, False
     if name == "fp16":
