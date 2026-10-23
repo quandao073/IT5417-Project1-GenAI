@@ -1,0 +1,92 @@
+# Label-aware fine-tuning of the image-mode encoder (V1.1, WORKLOG D30-D34; H2 of the design
+# spec docs/superpowers/specs/2026-10-23-label-aware-image-retrieval-design.md).
+# Read by training/ (captions, cache, train loop), by src/evaluation/template_bench.py
+# (query sets S12 / R10) and by the pipeline (which concepts the encoder was trained on).
+# Nothing here is tuned on the corpus: every choice below was fixed before any measurement.
+
+version: 1
+
+# H2: the concepts the encoder is trained on, in CHEXPERT_LABELS order. 14 minus
+# Enlarged Cardiomediastinum and Pleural Other (rare, ambiguous), No Finding kept for
+# the "no finding" caption of normal studies. Support Devices kept: users ask about tubes.
+concepts:
+  - No Finding
+  - Cardiomegaly
+  - Lung Opacity
+  - Lung Lesion
+  - Edema
+  - Consolidation
+  - Pneumonia
+  - Atelectasis
+  - Pneumothorax
+  - Pleural Effusion
+  - Fracture
+  - Support Devices
+
+# The 10 labels of CXR-RETRIEVE (arXiv 2607.27779), for the R10 benchmark set only.
+paper_concepts:
+  - Atelectasis
+  - Cardiomegaly
+  - Consolidation
+  - Edema
+  - Fracture
+  - Lung Lesion
+  - Lung Opacity
+  - Pleural Effusion
+  - Pneumonia
+  - Pneumothorax
+
+# pool-train / pool-val by patient; identical to models.yaml:image_probe so the slice that
+# chose the probe's lambda is the slice that selects checkpoints and calibrates here.
+split:
+  val_fraction: 0.1
+  seed: 20260101
+
+captions:
+  # FT1 mix, as in the paper: single PRESENT concept / two PRESENT / one PRESENT + one ABSENT.
+  mix: {single: 0.5, pair: 0.25, negation: 0.25}
+  # FT2 only: this fraction of samples uses the study's real impression text instead.
+  impression_fraction_ft2: 0.2
+  # A study with no PRESENT training concept (and not No Finding) has no caption: dropped.
+  drop_without_positive: true
+
+image:
+  # CXR-CLIP test-time preprocessing (cxrclip/data/data_utils.py): Resize(224) on the short
+  # side, CenterCrop(224), ToTensor, Normalize(0.5, 0.5) on three identical channels.
+  size: 224
+  mean: [0.5, 0.5, 0.5]
+  std: [0.5, 0.5, 0.5]
+  cache_dir: data/train_cache/pool_224
+
+augmentation:
+  random_resized_crop_scale: [0.85, 1.0]
+  rotation_degrees: 10
+  brightness: 0.2
+  contrast: 0.2
+  # Never: a flip teaches the wrong side for the heart and for left/right (V1.2).
+  horizontal_flip: false
+
+lora:
+  rank: 12
+  alpha: 24
+  dropout: 0.1
+  # Attention projections of both towers (HF Swin and BERT name them the same way).
+  targets: [query, key, value]
+
+optim:
+  batch_size: 128
+  epochs: 10
+  # Declared before any run (D33); chosen on pool-val P@5, never on the corpus.
+  lr_grid: [1.0e-5, 3.0e-5, 1.0e-4]
+  weight_decay: 0.01
+  warmup_steps: 200
+  amp: true
+  early_stop_patience: 3
+  # Weight of the repel term in the label-aware loss (paper: 0.3).
+  repel_weight: 0.3
+  text_max_length: 64
+
+variants:
+  FT1: {impression_fraction: 0.0, repel_weight: 0.3}
+  FT2: {impression_fraction: 0.2, repel_weight: 0.3}
+  FT3: {impression_fraction: 0.0, repel_weight: 0.0}
