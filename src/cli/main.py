@@ -775,17 +775,6 @@ def _cmd_eval_retrieval(args: argparse.Namespace) -> int:
     return 0 if v is None or v["passed"] else 1
 
 
-def _encoder_by_name(name: str):
-    """Any image_encoder candidate of configs/models.yaml, on CPU: the bench compares encoders,
-    so it does not go through the pinned `selected` one."""
-    from src.embeddings.base import load_encoder
-
-    candidates = load_config("models")["image_encoder"]["candidates"]
-    if name not in candidates:
-        raise SystemExit(f"configs/models.yaml: no image_encoder candidate {name!r}")
-    return load_encoder(name, candidates[name], "cpu")
-
-
 def _bench_gallery(args: argparse.Namespace) -> tuple[tb.Gallery, Path]:
     """The gallery named by --gallery and the shard directory its vectors came from."""
     if args.gallery == "pool-val":
@@ -815,7 +804,7 @@ def _cmd_eval_image_bench(args: argparse.Namespace) -> int:
         if args.scoring == "joint":
             if not args.encoder:
                 raise SystemExit("--encoder is required for --scoring joint")
-            encoder = _encoder_by_name(args.encoder)
+            _, encoder = _encoder_by_name(args.encoder, "cpu")
             encoder_info = {"name": args.encoder, "model_id": encoder.model_id,
                             "revision": encoder.revision, "dim": encoder.dim}
             probe_info = None

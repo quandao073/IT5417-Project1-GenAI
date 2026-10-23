@@ -54,7 +54,8 @@ def _corpus_argv(tmp_path, canonical, embeddings, **overrides):
 
 def test_eval_image_bench_writes_report_with_fake_shards(tmp_path, monkeypatch, capsys):
     canonical, embeddings, _ = bench_world(tmp_path)
-    monkeypatch.setattr("src.cli.main._encoder_by_name", lambda name: FakeEncoder())
+    monkeypatch.setattr("src.cli.main._encoder_by_name",
+                        lambda name, device: (name, FakeEncoder()))
     out = tmp_path / "report.json"
     out.write_text('{"other": {"keep": 1}}')
     argv = _corpus_argv(tmp_path, canonical, embeddings, **{"--sets": "S12 R10",
@@ -98,7 +99,7 @@ def test_eval_image_bench_refuses_an_encoder_that_did_not_embed_the_shards(tmp_p
     class Other(FakeEncoder):
         revision = "otherrev"
 
-    monkeypatch.setattr("src.cli.main._encoder_by_name", lambda name: Other())
+    monkeypatch.setattr("src.cli.main._encoder_by_name", lambda name, device: (name, Other()))
     assert main(_corpus_argv(tmp_path, canonical, embeddings)) == 1
     assert "ENCODER MISMATCH" in capsys.readouterr().err
     assert not (tmp_path / "report.json").exists()
@@ -109,7 +110,8 @@ def test_eval_image_bench_joint_needs_an_encoder_and_corpus5k_needs_the_corpus(
     canonical, embeddings, _ = bench_world(tmp_path)
     assert main(_corpus_argv(tmp_path, canonical, embeddings, **{"--encoder": None})) == 1
     assert "--encoder" in capsys.readouterr().err
-    monkeypatch.setattr("src.cli.main._encoder_by_name", lambda name: FakeEncoder())
+    monkeypatch.setattr("src.cli.main._encoder_by_name",
+                        lambda name, device: (name, FakeEncoder()))
     assert main(_corpus_argv(tmp_path, canonical, embeddings, **{"--gallery": "corpus5k"})) == 1
     assert "5000" in capsys.readouterr().err
     assert not (tmp_path / "report.json").exists()
