@@ -14,12 +14,12 @@ schema, tool interfaces, API và benchmark mà V2 sẽ dùng lại.
 | Data audit và canonical corpus 25.000 study | Join rate đo được 1,0000 |
 | Image embedding và Qdrant vector index | Model do Phase 2 gate chọn |
 | Text-to-image semantic search | |
-| LLM query parser có structured output | Ollama, kèm rule parser fallback |
+| LLM query parser có structured output | OpenAI gpt-5-mini (WORKLOG D22; ban đầu Ollama qwen 3B), kèm rule parser fallback |
 | Mapping truy vấn tiếng Việt/Anh vào 14 pathology | `configs/concepts.yaml` |
 | Include / exclude / explicit absence / uncertainty policies | `NOT_MENTIONED` không bao giờ là `ABSENT` |
 | Report full-text search | SQLite FTS5 |
-| Hybrid ranking | RRF + constraint reranker |
-| Web UI, FastAPI và Docker Compose | Gồm màn so sánh ba mode |
+| Hybrid ranking | Lọc theo nhãn trước rồi RRF (WORKLOG D23) |
+| Web UI, FastAPI và Docker Compose | Gồm màn so sánh các mode |
 | Evaluation định lượng và error analysis | Ba trục, xem [evaluation-design](evaluation-design.md) |
 
 ## V1 — không thực hiện
@@ -27,7 +27,7 @@ schema, tool interfaces, API và benchmark mà V2 sẽ dùng lại.
 Neo4j · RadGraph entity/relation ingestion vào runtime · `LOCATED_AT` /
 `MODIFIES` / `SUGGESTIVE_OF` reasoning · UMLS, SNOMED CT, RadLex ·
 truy vấn theo vị trí giải phẫu chi tiết ("left lower lobe opacity") ·
-graph visualization · fine-tune VLM · tự động chẩn đoán hoặc đề xuất điều trị ·
+graph visualization · fine-tune VLM (V1.1 làm phần này: LoRA cho CXR-CLIP, WORKLOG D30) · tự động chẩn đoán hoặc đề xuất điều trị ·
 PACS/HIS/FHIR integration · cloud deployment.
 
 ## Hoãn sang V2 (đồ án tốt nghiệp)

@@ -45,7 +45,8 @@ benchmark:
 
 query_split:
   # The corpus is NEVER split - every indexed study stays searchable, exactly
-  # as in real use. Nothing is trained, so there is no leakage to prevent at
+  # as in real use. Nothing is fit on the corpus (the image probe and the V1.1
+  # fine-tune train on the out-of-corpus pool), so there is no leakage to prevent at
   # corpus level. What does get fitted by hand is fusion weights, prompts and
   # synonyms, so the queries are what must be held out.
   validation: 150   # tuning
@@ -72,8 +73,8 @@ thresholds:
   evidence_faithfulness_min: 1.00
   hybrid_ndcg10_relative_gain_min: 0.05   # hybrid over vector_only
   vector_warm_p95_seconds_max: 1.0
-  end_to_end_p95_seconds_max: 5.0         # without the local LLM
-  end_to_end_with_llm_seconds_max: 12.0   # with a CPU LLM
+  end_to_end_p95_seconds_max: 5.0         # without the LLM parser
+  end_to_end_with_llm_seconds_max: 12.0   # with the LLM parser (hosted since D22)
   baseline_file: artifacts/metrics/vector_baseline.json
 
 latency:

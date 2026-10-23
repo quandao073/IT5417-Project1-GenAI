@@ -21,14 +21,14 @@ Ba mục đó đủ để không phá vỡ thứ gì. Các mục còn lại tra 
 
 > Cập nhật lại mục này mỗi lần ghi log. Mục này mà cũ thì tệ hơn là không có.
 
-**Cập nhật lần cuối:** 2026-10-23, **V1.1 bắt đầu** trên nhánh `feat/label-aware-image-retrieval` (tách từ `main` 90cd62a): WP0 xong (D30–D34, H1 `src/retrieval/templates.py`, H2 `configs/training.yaml`; P12 đóng, P13 gộp vào dòng đo), checkpoint CXR-CLIP SwinT (M) đã tải và pin (*Sự thật đã đo*, khối *CXR-CLIP*). Trước đó cùng ngày: image probe merge vào `main` (D29), D28, T29
+**Cập nhật lần cuối:** 2026-10-24 (chiều): commit `0e7e10c` FT6, `d355a27` bộ Colab. Notebook dựng venv Python 3.12 từ `training/colab/pylock.colab.toml` (T32), chạy được cả T4 miễn phí lẫn A100; tập dượt trong container Linux GPU khớp laptop từng chữ số. Repo dọn: worktree và nhánh `feat/lair-*` gỡ, file chạy xong xóa, tài liệu sửa theo D22–D36. Trước đó cùng ngày: thí nghiệm thay BiomedCLIP bằng CXR-CLIP zero-shot trong hệ thống V1 (dev + pool-val, heldout không đụng): gần như hòa (`hybrid` nDCG@10 +0,008, `vector`/`image` không khác có ý nghĩa), ít vi phạm exclude hơn, truy vấn nhanh gấp đôi; chưa đổi encoder mặc định (D31). Trước đó: B14 chẩn đoán xong (D36): FT1 đúng công thức bài báo sụp; **FT6** (đích theo nhãn ảnh + `logit_scale` 5) thử ngắn trên laptop không sụp, phủ định +9 điểm P@5 pool-val, câu đơn tụt ở epoch 2. Train chuyển sang Colab Pro: `training/colab/` (README, notebook, kiểm sha256 / zero-shot / cổng), gói `data/colab_bundle/cxr_v11` (4,68 GiB) chờ tải lên Drive. Trước đó, 2026-10-23 tối: embed corpus + pool bằng CXR-CLIP xong (25.000 / 88.853 ảnh), `feat/lair-serve` và `feat/lair-ui` đã merge vào nhánh tích hợp (`ff56ddc`, `7361313`), B14 (dò lr FT1) **dừng sau 2 epoch** của lr 3e-5: loss kẹt ≈ ln 128, val P@5 dưới mức smoke (`notes/lair-status.md`, dòng B14); train chuyển sang Colab Pro sau khi chẩn đoán. Trước đó: **V1.1 bắt đầu** trên nhánh `feat/label-aware-image-retrieval` (tách từ `main` 90cd62a): WP0 xong (D30–D34, H1 `src/retrieval/templates.py`, H2 `configs/training.yaml`; P12 đóng, P13 gộp vào dòng đo), checkpoint CXR-CLIP SwinT (M) đã tải và pin (*Sự thật đã đo*, khối *CXR-CLIP*). Trước đó cùng ngày: image probe merge vào `main` (D29), D28, T29
 
 | | |
 |---|---|
 | Đã xong | Part A · Phase 0a · Phase 1 (canonical corpus 25.000 study) · Phase 2 (model gate: BiomedCLIP) · Phase 3 (vector baseline) · Phase 4 (parser + label mode) — parser mặc định OpenAI gpt-5-mini PASS heldout (D22, Phase 4c); qwen 3B cũ FAIL (Phase 4) · **Phase 5 (report FTS + hybrid)** — heldout, gold: nDCG@10 hybrid / vector / label **0,607 / 0,235 / 0,531**, p@10 1,000 / 0,359 / 1,000, exclude_violation@10 vector 0,319 so với hybrid 0; verdict **PASS** (gain 1,579) · Image probe (D29, merge vào `main` 2026-10-23): S1/S2/S3/S4 = PASS/PASS/FAIL/PASS; heldout gold nDCG@10 mode `image` 0,299, vi phạm exclude 0,165; hybrid trùng từng bit → `docs/image-probe.md` |
-| **V1.1 (đang làm)** | Câu hỏi nghiên cứu đổi (D30): chỉ từ ảnh, tìm đúng câu đơn / ghép / phủ định đến đâu sau khi fine-tune encoder theo nhãn (CXR-CLIP SwinT M + LoRA, loss CXR-RETRIEVE). Thiết kế: `docs/superpowers/specs/2026-10-23-label-aware-image-retrieval-design.md`; kế hoạch: `docs/superpowers/plans/2026-10-23-label-aware-image-retrieval.md`; lộ trình gốc của người dùng: `docs/superpowers/specs/2026-10-23-lo-trinh-v1.1-nguoi-dung.md`. Gói song song trên worktree `.worktrees/<gói>` nhánh `feat/lair-<gói>`: WP1 bench, WP3 dữ liệu train, WP4 code train, WP5 phục vụ, WP8 UI (Phase 6), WP9 chuẩn bị Phase 7; WP2 (adapter, gỡ gắn cứng), WP6 (chạy), WP7 (đánh giá) ở cây chính. Mốc: **M1** = hệ thống chạy `image_joint`/`image_decomposed` với CXR-CLIP zero-shot; **M2** = heldout một lần với mọi mode |
-| Tiếp theo | **Bảng trạng thái từng bước: `notes/lair-status.md`** (bước nào xong, đang chạy nền ở đâu, lệnh tiếp tục; cập nhật trước và sau mỗi bước). Tóm tắt: WP2 xong → embed corpus và pool bằng CXR-CLIP (CPU, đang chạy) → merge WP5 → M1 → WP4 train (venv `training/`, GPU) → WP6b → M2 |
-| Chặn | Không chặn cứng. `pnpm`/`corepack` chưa có trên PATH (T5; WP8 tự cài). P4, P5, P8, P11 còn mở, không chặn (P5 chốt ở WP9: trọng số mount qua volume) |
+| **V1.1 (đang làm)** | Câu hỏi nghiên cứu đổi (D30): chỉ từ ảnh, tìm đúng câu đơn / ghép / phủ định đến đâu sau khi fine-tune encoder theo nhãn (CXR-CLIP SwinT M + LoRA, loss CXR-RETRIEVE). Thiết kế: `docs/superpowers/specs/2026-10-23-label-aware-image-retrieval-design.md`; kế hoạch: `docs/superpowers/plans/2026-10-23-label-aware-image-retrieval.md`; lộ trình gốc của người dùng: `docs/superpowers/specs/2026-10-23-lo-trinh-v1.1-nguoi-dung.md`. Gói song song từng chạy trên worktree `.worktrees/<gói>` nhánh `feat/lair-<gói>` (đã merge hết; worktree và nhánh gỡ 2026-10-24): WP1 bench, WP3 dữ liệu train, WP4 code train, WP5 phục vụ, WP8 UI (Phase 6), WP9 chuẩn bị Phase 7; WP2 (adapter, gỡ gắn cứng), WP6 (chạy), WP7 (đánh giá) ở cây chính. Mốc: **M1** = hệ thống chạy `image_joint`/`image_decomposed` với CXR-CLIP zero-shot; **M2** = heldout một lần với mọi mode |
+| Tiếp theo | **Bảng trạng thái từng bước: `notes/lair-status.md`**. Tóm tắt: người dùng tải gói lên Drive và chạy `training/colab/train_colab.ipynb` (cổng FT6 → dò lr FT6 → FT1 đối chứng); song song WP5 Task 15 (kèm CORS) và B10 zero-shot → M1 → B16 → M2 |
+| Chặn | Không chặn cứng. pnpm 12 đã cài toàn cục (T5); `web/node_modules` chưa cài ở cây chính (`pnpm install` trong `web/`). P4, P5, P8, P11 còn mở, không chặn (P5 chốt ở WP9: trọng số mount qua volume) |
 
 Nhánh thêm `src/data/probe_pool.py`, `src/embeddings/probe.py`, `src/evaluation/probe_eval.py`,
 `src/retrieval/image_concepts.py` (mode `image` và nhánh ảnh của hybrid nằm trong `pipeline.py`/`hybrid.py`)
@@ -53,7 +53,8 @@ Dữ liệu, chỉ mục và artifact đều gitignored; lệnh dựng lại n�
 Lệnh kiểm tra sau mỗi thay đổi:
 
 ```bash
-uv run pytest -q                 # 912 tests trên nhánh (4 `model` + 4 `integration` + 3 `llm` bị bỏ chọn mặc định)
+uv run pytest -q                 # 978 tests trên nhánh tích hợp V1.1, 2026-10-24 (13 `model`/`integration`/`llm` bị bỏ chọn mặc định)
+uv run --project training pytest training/tests -q   # 49 test của gói fine-tune (venv GPU riêng)
 uv run pytest -m llm             # 3 test parse thật qua LLM đang cấu hình (mặc định OpenAI, đọc .env): 2 passed, 1 xpassed
 uv run pytest -m model           # 4 smoke test adapter thật, cần weights đã tải
 uv run pytest -m integration     # 4 test: 50 ảnh vector, 50 ảnh hybrid, evidence trên 1.000 report thật,
@@ -457,6 +458,97 @@ overlay tạm `uv run --with omegaconf` (config pickle là `DictConfig`; venv ch
 | Cách lấy vector (đọc `clip.py`) | ảnh: `last_hidden_state[:, 0]` của Swin (token 0, **không** pooler) → linear; chữ: token ở `attention_mask.sum(-1) − 1` (= `[SEP]`, **không** `[CLS]` như lộ trình viết) → linear; chuẩn hóa L2 sau chiếu. Normalize ảnh mean/std 0,5 cả ba kênh (`data_utils.transform_image`, nhánh "huggingface") |
 | HF revision pin | Swin config `d00d478bfaf1f417d34a1186673ad4b4be264c51`; Bio_ClinicalBERT `d5892b39a4adaed74b92212a44081509db72f87b` (chỉ cần `config.json`, `vocab.txt`; không có `tokenizer_config.json`) |
 
+### FT1 (công thức bài báo) kẹt ở ln 128 (đo 2026-10-23, B14)
+
+**Cách đo:** `runs/ft1_lr3e-5` (FT1, lr 3e-5, batch 128, bf16, commit `313f4ea`) dừng sau 2 epoch. Chẩn đoán trên CPU:
+512 hàng pool-train (`rng` seed 0), 4 batch × 128, transform eval, caption rút bằng `CaptionSampler` seed 7;
+cùng ảnh và caption cho mô hình gốc và adapter epoch 1, 2; loss tính đúng như `training/loss.py`.
+
+| Đại lượng | Gốc | Epoch 1 | Epoch 2 |
+|---|---|---|---|
+| val P@5 pool-val mean (single) — log train | ≈ 0,363 (0,617), smoke 39 bước | 0,215 (0,333) | 0,255 (0,417) |
+| attract / repel / tổng | **6,865** / 2,786 / 7,700 | 5,112 / 0,538 / 5,274 | 5,002 / 0,210 / 5,065 |
+| cosine chữ–chữ giữa các caption | 0,531 | **0,949** | **0,943** |
+| cosine ảnh–ảnh | 0,247 | 0,535 | 0,595 |
+| cosine ảnh–chữ: dương / âm / mâu thuẫn | 0,104 / 0,105 / 0,105 | 0,021 / 0,008 / 0,008 | −0,002 / −0,016 / −0,017 |
+| độ lệch chuẩn logit mỗi hàng | 2,23 | 0,59 | 0,67 |
+
+- `logit_scale.exp()` của checkpoint = **24,16** (học trong CXR-CLIP, không phải 1/0,07 = 14,3).
+- Đáy attract (entropy trung bình của T) **3,21**; đều tuyệt đối ln 128 = 4,852. Mô hình gốc **tệ hơn đều**.
+- Đích chỉ lấy từ caption: **33,8 %** cặp bị coi là âm thật ra khớp ảnh (mọi ý khẳng định PRESENT, mọi ý phủ định
+  không PRESENT theo nhãn đầy đủ của ảnh); cặp mâu thuẫn (repel) khớp thật **0,0 %**.
+- Đọc: tháp chữ sụp (mọi caption gần trùng nhau) → logit gần đều → attract về ≈ ln 128, repel về ≈ 0 khi mọi cosine ≈ 0.
+  Repel không phải nguyên nhân chính; lối tắt là làm phẳng logit vì điểm xuất phát tệ hơn đều, còn tín hiệu học bị
+  nhiễu bởi 34 % âm giả.
+
+### Sửa B14: FT6 (đo 2026-10-23, laptop)
+
+**Cách đo:** cùng một giao thức ngắn `train.py --lr 3e-5 --subset 20000 --epochs 2` (312 bước, warmup 200, cosine
+về 0), bf16, 6 worker, seed mặc định; val = pool-val 9.037 ảnh (P@5 S12, policy mặc định). Zero-shot:
+`training/zero_shot_val.py` (GPU, 24 s; ghi `runs/zero_shot_val.json`). Cột cosine và độ chênh: script chẩn đoán CPU
+của khối trên, đích theo nhãn ảnh (`training/loss.py:image_targets`), lưu ở `notes/b14_diag_loss.py`.
+
+| Pool-val P@5 | Đơn | Ghép | Phủ định | TB | cos chữ–chữ (caption train) | chênh cos liên quan − không |
+|---|---|---|---|---|---|---|
+| Zero-shot | 0,667 | 0,196 | 0,267 | **0,377** | 0,531 | 0,027 |
+| Đích ảnh, scale 24,16, epoch 2 | 0,367 | 0,164 | 0,238 | 0,256 | 0,892 (sụp) | 0,019 |
+| **FT6** = đích ảnh + scale 5, epoch 1 | 0,650 | 0,218 | 0,289 | **0,386** | 0,465 | 0,052 |
+| **FT6**, epoch 2 | 0,583 | 0,200 | **0,358** | 0,381 | 0,507 | **0,081** |
+
+- Đích ảnh một mình chưa đủ: ở scale 24,16 mô hình gốc vẫn tệ hơn đều (attract 6,66 > 4,85) nên vẫn sụp. Ở scale 5
+  attract gốc 4,86 ≈ đều: hết lối tắt; loss FT6 xuống 4,79 bằng cách tách cặp (chênh ×3), không sụp.
+- Đích chỉ từ caption có 33,8 % âm giả; đích ảnh đưa về 0 % (định nghĩa = bench). `cos chữ–chữ` trên 177 mẫu S12 của
+  mô hình gốc là 0,468 (`val_text_cos`, giờ ghi mỗi epoch).
+- So với K1/K2 trên pool-val (lượt ngắn, chưa phải phép đo nghiệm thu): phủ định +9,1 điểm, ghép +0,4, đơn −1,7
+  (epoch 1) / −8,4 (epoch 2).
+- Laptop: 1,10–1,13 s/bước, GPU tối đa 72 °C; quy trình Colab chạy thử trọn trên laptop (setup sha256 khớp,
+  check-env trùng từng chữ số, cổng từ chối lượt 15 bước 0,374 < 0,377).
+
+### Thí nghiệm: CXR-CLIP zero-shot thay BiomedCLIP trong hệ thống V1 (đo 2026-10-24)
+
+**Cách đo:** script `exp_cxrclip.sh` (scratchpad), log `notes/exp_cxrclip_v1.log`. Bản BiomedCLIP đang phục vụ không bị ghi:
+CXR-CLIP chạy với `CONFIG_DIR=data/exp_cxrclip/configs` (bản chép `configs/`, chỉ đổi `selected: cxrclip`),
+`INDEXES_DIR=data/exp_cxrclip/indexes`, `IMAGE_PROBE_DIR=data/exp_cxrclip/indexes/image_probe`, collection Qdrant mới
+`cxr_images_20261023_chexpert25k_cxrclip_v1` (25.000 vector, `cxr index` role vector). Probe 14 concept train lại trên
+embedding pool CXR-CLIP (`train-probe --encoder cxrclip`, λ chọn trên pool-val). Dev: `eval-retrieval --split dev --parsers
+gold` cho cả bốn mode, cả hai encoder trong cùng phiên (parser cố định để chỉ so encoder); CI 95 % = bootstrap ghép cặp theo
+câu, 10.000 lần, seed 20260101. Pool-val: `eval-image-bench --gallery pool-val --scoring joint`. Heldout không chạy.
+
+| Dev, parser gold (n = 38; exclude: 9 câu `vector`, 12 câu `image`) | BiomedCLIP | CXR-CLIP | Δ [CI 95 %] |
+|---|---|---|---|
+| `vector` nDCG@10 / P@10 | 0,302 / 0,447 | 0,286 / 0,439 | −0,016 [−0,075; +0,038] / −0,008 [−0,068; +0,055] |
+| `vector` exclude_violation@10 | 0,511 | 0,422 | −0,089 [−0,233; +0,044] |
+| `image` (probe) nDCG@10 / P@10 | 0,367 / 0,626 | 0,357 / 0,595 | −0,010 [−0,045; +0,029] / −0,032 [−0,076; +0,016] |
+| `image` exclude_violation@10 | 0,217 | 0,133 | **−0,083 [−0,125; −0,050]** |
+| `hybrid` nDCG@10 (P@10 1,000 và vi phạm 0 ở cả hai) | 0,657 | 0,664 | **+0,008 [+0,002; +0,014]** |
+| p95 latency `vector` / `hybrid` | 180 / 286 ms | 76 / 148 ms | — |
+
+| Pool-val, mức encoder | BiomedCLIP | CXR-CLIP |
+|---|---|---|
+| Probe: macro AUROC pool-val ở λ đã chọn (13 concept đủ mẫu) | 0,620 (λ 0,1) | **0,661** (λ 1) |
+| Bench joint S12, policy mặc định: P@5 đơn / ghép / phủ định | 0,517 / 0,204 / 0,298 | **0,650** / 0,196 / 0,267 |
+| S12 phủ định: HNRR@5 / viol@10 (thấp hơn là tốt) | 0,165 / 0,390 | **0,125 / 0,271** |
+| Paraphrase: P@5 / HNRR@5 | 0,216 / 0,116 | **0,264 / 0,071** |
+| AUROC zero-shot bằng prompt nhãn, cả corpus (chỉ để đo, có ca `valid/`) | 0,599 | 0,528 |
+
+- Đọc: ảnh của CXR-CLIP tốt hơn (probe +0,041 trên pool-val, câu đơn +0,13), tháp chữ của nó kém hơn khi zero-shot với prompt
+  nhãn (0,528 so với 0,599), nên `vector` không lên. `hybrid` lọc theo nhãn trước (D23), encoder chỉ xếp lại trong tập cho phép:
+  hai encoder gần như hòa. Trọng số fusion của `hybrid` được tune trên dev cho BiomedCLIP, CXR-CLIP chưa tune lại.
+- Không đổi encoder mặc định của V1 (D31 vẫn giữ); CXR-CLIP đi vào bảng heldout M2 qua `image_joint`/`image_decomposed`.
+
+### Colab: môi trường tái lập (đo 2026-10-24, tập dượt trên laptop)
+
+**Cách đo:** container `python:3.13` (Python hệ thống 3.13.17, như Colab), `docker run --gpus all --shm-size=8g`,
+gói `data/colab_bundle/cxr_v11` gắn vào `/content/drive/MyDrive/cxr_v11`; chạy đúng lệnh ô 2–4 của notebook rồi
+`colab_run.py train --subset 2000 --epochs 1`.
+
+| Hạng mục | Giá trị |
+|---|---|
+| venv | Python 3.12.15, torch 2.4.1+cu124, transformers 4.44.2, peft 0.14.0 (Colab có sẵn: torch 2.11.0+cu130, transformers 5.20.2, peft 0.21.2 — người dùng báo) |
+| Cài (`uv pip sync pylock.colab.toml`, ~3 GB) | 1.310 s qua mạng nhà; trên Colab chưa đo |
+| Ô 3 / ô 4 | 8/8 sha256 khớp; P@5 zero-shot pool-val trùng laptop đến 4 chữ số (TB 0,3768) |
+| Train 15 bước FT6, bf16, 8 worker | 1,069 s/bước, không bước lỗi, val TB 0,380 |
+
 ---
 
 ## Quyết định đang có hiệu lực
@@ -502,6 +594,8 @@ overlay tạm `uv run --with omegaconf` (config pickle là `DictConfig`; venv ch
 | D32 | **Khái niệm train (H2, `configs/training.yaml:concepts`):** 12 nhãn = `CHEXPERT_LABELS` trừ Enlarged Cardiomediastinum và Pleural Other, **gồm** No Finding, thứ tự `CHEXPERT_LABELS`. Câu `no finding` cho ảnh No Finding PRESENT; ảnh không có PRESENT nào trong 12 nhãn → bỏ khỏi sampling. UNCERTAIN không vào câu train, `y` = 0 (C5); lúc truy vấn include UNCERTAIN vẫn vào phần khẳng định kèm warning. No Finding không bao giờ bị phủ định (`templates.render` raise; pipeline bỏ khỏi exclude kèm warning). Mọi chuỗi vào encoder mới (train, bench, truy vấn) đi qua `templates.render`/`render_paraphrase`: `"cardiomegaly and pulmonary edema and no pleural effusion"`, khái niệm theo `en[0]`, **sắp theo `CHEXPERT_LABELS`**, không tiền tố | lộ trình H2 ("12 nhãn + No finding") | 14 − 2 = 12 đã gồm No Finding. Sắp canonical để "A and B" == "B and A": thứ tự nhắc trong câu hỏi không còn là biến nhiễu. Không tiền tố vì template giống bài báo và giống câu impression |
 | D33 | **Tiêu chí và luật chọn chốt trước khi đo:** K1–K7 nguyên văn lộ trình §8. Lưới lr FT1 **{1e-5, 3e-5, 1e-4}**, chọn theo P@5 trung bình ba nhóm S12 trên pool-val (policy mặc định), tối đa 10 epoch, dừng sớm sau 3 epoch không tăng. **Joint so với decomposed:** trên pool-val so P@5 trung bình của (a) ba nhóm S12 và (b) bộ nhiều ý; thắng cả hai thì chọn; chia đôi thì kết luận luật lai theo số ý (joint ≤ 2 ràng buộc, decomposed ≥ 3) và báo cáo cả ba. Không thêm MedSigLIP; CheXzero zero-shot là dòng tùy chọn, cắt trước nếu chậm | — | Lộ trình để Q2/Q7 mở; chốt trước để số đo không kéo luật theo (như gate Phase 2) |
 | D34 | **Đường ống nhiều encoder:** `cxr embed --encoder <tên> --scope <gallery>`, `build_id` = `<YYYYMMDD>_<scope>_<encoder>_v1` (mặc định `chexpert25k` + `selected` → trùng tên cũ); `shards.json` ghi thêm `encoder`. `cxr index --role image` ghi `build_manifest_image.json` (cùng schema + `encoder`); `Settings.image_build_manifest`, `Settings.image_scores_dir`. **GPU chỉ dùng qua venv `training/`** (`uv run --project training …`, torch `+cu124`, peft); venv chính giữ `+cpu` (T14). Trọng số fine-tune xuất `torch.save({"model", "config", "finetune"})` cùng khóa với checkpoint gốc; adapter `cxrclip` nạp cả hai | — | Lộ trình không nói cách tránh T14 khi vừa train GPU vừa embed; một venv phụ nạp package chính dạng editable giải quyết cả hai |
+| D35 | **Mục tiêu fine-tune là vượt CXR-RETRIEVE, không tái lập nó** (người dùng, 2026-10-23). FT1 (đúng công thức bài báo: LoRA rank 12 trên `query/key/value`, chỉ câu ≤ 2 ý, đầu chiếu và `logit_scale` đóng băng) giữ làm **mốc tái lập**, dò lr như D33. Cải tiến là các biến thể thêm, chạy ở lr đã chọn, **chọn trên pool-val** theo cùng luật D33 (P@5 trung bình S12, và bộ nhiều ý): **FT4** = LoRA rộng (thêm mọi lớp `dense` của attention-output và MLP ở hai tháp) + train đầu chiếu và `logit_scale`; **FT5** = FT4 + câu 3 ý trong train (`triple`, `pair_negation`); FT2 (câu impression) ghép lên biến thể thắng. Biến thể chỉ được giữ nếu hơn FT1 trên pool-val; corpus và `valid/` không tham gia chọn | D32 ("không thêm câu 3 ý vào train"), lộ trình §4 | Bài báo chỉ train tới câu hai ý, LoRA hẹp (0,7% tham số theo đo trên model này, lộ trình ước 2%), không có decomposed. Giữ FT1 làm mốc để mọi cải tiến có thể quy về một thay đổi đo được |
+| D36 | **FT6 = đích theo nhãn của ảnh + nhiệt độ cố định (`logit_scale` 5)** (2026-10-23, sau chẩn đoán B14; người dùng duyệt hướng A). FT1 giữ nguyên công thức bài báo làm dòng đối chứng, kể cả khi nó sụp: đó là kết quả trung thực. Mọi biến thể cải tiến sau (FT2–FT5) dựng trên FT6. Lưới lr D33 {1e-5, 3e-5, 1e-4} chạy cho FT6; FT1 chạy ở lr FT6 chọn (lệch D33: không dò lr riêng cho một công thức đã biết là sụp). Train chạy trên Colab Pro (máy laptop nóng), laptop đóng gói và đánh giá; Colab phải tái lập P@5 zero-shot pool-val và qua cổng FT6 ngắn trước lượt đầy đủ (`training/colab/`). |
 | — | **Lệch nhỏ của Phase 5:** `blocked_phrases` cho T20; mode mặc định của request giữ `vector`; report index gắn corpus canonical, không gắn `build_id`; `validate-indexes` 7 check; `cxr eval-retrieval` thay cho `cxr evaluate` của §20 (lệnh `evaluate`/`benchmark` của Makefile vẫn trỏ tới `cxr evaluate` chưa tồn tại — ghi nhận, để Phase 7); `per_query` của JSON là dict theo id với các metric, không phải list kèm id đã xếp hạng như spec Phase 5 §11.6 (danh sách xếp hạng cho error analysis để Phase 7); `cxr eval-retrieval` không có `--indexes-dir`/`--qdrant-url` (lấy từ `Settings`); `--report-index` của `validate-indexes` mặc định là `<indexes-dir>/report_search.sqlite`; `evidence_faithful` của spec Phase 5 §11.4 không vào JSON (thay bằng tính đúng theo cấu trúc và round trip 50 ảnh của integration test, xem T26); khối `retrieval.yaml:constraints` (`include_accepts`, `exclude_requires`, `not_mentioned_satisfies_exclude`, `strictness_default`) là dead config, không module nào đọc, và `exclude_requires: [ABSENT]` nói ngược D9. Cũng dead: `report_search.tokenizer` (index hardcode `report_index.TOKENIZER`), `explanation.verify_spans_against_report` (pipeline luôn kiểm, không đọc key), `degradation.on_report_index_unavailable` (`vector_and_label_only` nói sai: thiếu index thì hybrid vẫn chạy, chỉ không có report leg). Giữ nguyên, dọn khi có dịp | — | — |
 
 **D29, quyết định C1–C10 của thiết kế** (spec `docs/superpowers/specs/2026-10-23-image-concept-probe-design.md` §2.2):
@@ -574,7 +668,7 @@ Kế hoạch không quyết những điểm này, nhưng chúng âm thầm quy�
 | T1 | **Hai CSV viết path khác nhau.** `train.csv`/`valid.csv` cột `Path` **có** prefix `CheXpert-v1.0-small/`; Plus `path_to_image` **không có**. `artifacts/audit/data_audit.json` báo `exact`=1.0 chỉ vì `audit.py` duyệt filesystem, **không** đọc CSV. | Luôn đi qua `src/common/ids.py:normalize_image_path()`. Đã có 23 test + kiểm chứng trên CSV thật |
 | T2 | **Plus CSV có newline nhúng** trong `report`/`section_*`: 48 dòng vật lý / record. | **Bắt buộc dùng CSV parser thật.** Đọc theo dòng sẽ sai ~48×, và sai âm thầm |
 | T3 | **`labels/*_fixed.json` là JSONL**, không phải JSON, dù đuôi `.json`. Path bên trong cũng **không** có prefix dataset root. | Đọc từng dòng một object; chuẩn hóa path qua `ids.py` |
-| T5 | **`pnpm` chưa cài** trên máy dev. Chỉ chặn phần web. | `corepack enable` |
+| T5 | **`pnpm` không có sẵn, và Node 25 không kèm corepack.** Chỉ chặn phần web. | Đã cài pnpm 12 bằng `npm i -g pnpm` (2026-10-23); `web/` dùng `nodeLinker: hoisted` vì symlink trên Windows (`notes/lair-ui.md`) |
 | T6 | **`findings` chỉ có ở 26,6% dòng.** Không bao giờ được đặt làm điều kiện bắt buộc. | `search_text` = impression làm chính, nối findings khi có |
 | T7 | **`NOT_MENTIONED` không bao giờ là `ABSENT`.** Đây là semantics mà toàn bộ luận điểm của đồ án dựa vào. | `contracts.py` chặn ở mức schema; Phase 4 phải có test parametrized 4 status × 4 policy |
 | T8 | **Console Windows là cp1252**, in tiếng Việt từ script Python sẽ `UnicodeEncodeError`. | In ASCII trong script kiểm tra, hoặc ghi ra file UTF-8 |
@@ -599,6 +693,10 @@ Kế hoạch không quyết những điểm này, nhưng chúng âm thầm quy�
 | T27 | **Một connection SQLite read-only dùng chung giữa các thread của API.** Endpoint sync chạy trên threadpool, nên các request song song (test dùng 8 thread) cùng dùng một connection. Thử bỏ lock 5 lần thì hỏng cả 5 (4 lần exception như `TypeError: float() argument must be ... not 'NoneType'`, 1 lần hit thiếu `report_rank`/evidence mà không lỗi). Test song song bản đầu chỉ kiểm status 200 nên **pass cả khi bỏ lock**: lỗi sqlite bị pipeline đổi thành warning + 200, vì report index không bao giờ được làm sập search. | `open_report_index` mở `mode=ro`, `check_same_thread=False`; mọi truy cập qua `state.report_lock` (như `encode_lock`). `test_parallel_hybrid_requests_share_the_connection` kiểm **body** (không warning `report leg failed`, mọi hit có `report_rank` và evidence). Test cho một đường degrade thì phải kiểm nội dung, không chỉ status. Phụ: probe lọc Qdrant để lại payload index `study_id` KEYWORD trên collection local; vô hại (idempotent), code không dùng |
 | T28 | **Dựng lại report index trong khi file đang mở.** Trên Windows, `cxr build-report-index` raise `PermissionError [WinError 5]` ở `os.replace` khi bất kỳ tiến trình nào đang mở `report_search.sqlite` (vd một uvicorn native), và để lại `report_search.sqlite.part`. Tái hiện 2026-10-21: mở connection `mode=ro` bằng `open_report_index` rồi gọi `build_report_index` trên cùng path → `PermissionError` 5, `.part` còn; đóng connection rồi dựng lại thì thành công. Trên Docker (Linux) `os.replace` thành công nhưng container api đang chạy vẫn đọc inode cũ tới khi khởi động lại (chưa thử) | Dừng API trước khi dựng lại; Docker: khởi động lại api sau khi dựng. `.part` còn sót thì xóa (lần dựng sau cũng tự xóa nó trước khi ghi) |
 | T29 | **RadGraph-XL không có khóa ảnh và thứ tự bị xáo.** Mỗi bản ghi chỉ có `{"0": {text, entities, data_source, data_split}}`, không có `path_to_image`. Số bản ghi lệch số dòng có section (findings 57.805 so với 59.441; impression 223.292 so với 223.296). Khớp theo vị trí (bản ghi thứ k ↔ dòng có section thứ k) ra **0 / 2.000** text khớp: mọi thống kê theo study từ phép khớp đó là rác (đã xảy ra 2026-10-22). Text RadGraph đã tách token ("LEFT - SIDED", "1 ."), khác chuỗi CSV | Join theo text chuẩn hóa (`re.sub(r"[^a-z0-9]", "", text.lower())`) của đúng section: khớp 100% bản ghi. Text trùng thì graph trùng, nên trùng nhiều dòng không gây nhập nhằng. Script: `artifacts/metrics/radgraph_align_probe.py` |
+| T30 | **Code train lấy `src/` từ cây làm việc chính.** Venv `training/` cài `cxr-search` editable trỏ vào repo gốc, và `configs/` đọc theo cwd. Merge hay sửa `src/`/`configs/` trong lúc một sweep nhiều lượt đang chạy thì lượt sau khởi động trên code khác (hoặc đang dở conflict). | Chạy sweep từ worktree tách `git worktree add --detach .worktrees/sweep <commit>`, junction `data/{train_cache,probe_pool,cache}` về `data/` gốc, gọi thẳng `training/.venv/Scripts/python.exe` với `PYTHONPATH=<worktree>` (đứng trước đường dẫn editable); kiểm `src.__file__` trước khi chạy |
+| T31 | **`TaskStop` một vòng lặp bash không giết tiến trình Python con trên Windows**; giết python trước thì vòng lặp chạy luôn lượt kế (B14: lr 1e-4 rồi 1e-5 tự khởi động sau khi lr 3e-5 bị giết). | Giết cả cây từ bash ngoài cùng: tìm `Win32_Process` có `CommandLine` chứa tên script, `taskkill /PID <bash> /T /F`, rồi kiểm lại không còn `train.py`/`spawn_main` |
+| T32 | **Colab không cài được thư viện của laptop vào Python có sẵn.** Python của Colab mới hơn 3.12; tokenizers 0.19.1 và torch 2.4.1 không có wheel cho nó, pip build tokenizers từ Rust và hỏng, cả lệnh `pip install` bị hủy, nên Colab vẫn chạy torch 2.11 / transformers 5.20 của nó mà không báo gì thêm. Thêm `--extra-index-url` của PyTorch thì uv lấy cả `nvidia-*` qua `pypi.nvidia.com` (quá thời gian trong lần dượt). | Venv riêng `uv venv --python 3.12`, rồi `uv pip sync training/colab/pylock.colab.toml` (lock xuất dạng PEP 751: URL + sha256 từng file, không resolve gì trên Colab). Mọi ô gọi `{PY}` của venv; test `training/tests/test_colab.py` khóa cả hai điều. Xuất lại pylock khi `training/uv.lock` đổi |
+| T32 | **Đổi `image_encoder.selected` mà quên `image_encoder.revision`** (bản ghim của encoder đang `selected`): `build_state` vẫn chạy vì so với manifest, nhưng mọi lệnh dùng encoder mặc định (`score-corpus`, `embed` không `--encoder`) thoát `encoder … revision … != models.yaml revision …`. | Đổi cả hai; CXR-CLIP là `sha256:743e2333…a5d5` (khóa `revision` của candidate) |
 
 T4 (`make setup` thiếu Pillow) đã xử lý 2026-09-22 — `setup` giờ dùng
 `uv sync --all-extras`. Số được giữ nguyên, không đánh lại, để tham chiếu cũ không lệch.

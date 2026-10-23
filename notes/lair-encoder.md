@@ -23,7 +23,7 @@ Nhánh tích hợp `feat/label-aware-image-retrieval`, commit `b71e587` (adapter
 - `cxr embed --encoder <tên> --scope <gallery>`; `shards.json` ghi `encoder` (tên candidate, không phải tên adapter, để bản fine-tune `cxrclip_ft1` phân biệt được với `cxrclip`).
 - `cxr train-probe --encoder --corpus-build-id`: không cờ → đọc `build_manifest.json` như cũ; có cờ → đọc `shards.json` của build chỉ định. Thêm kiểm `ENCODER MISMATCH` (revision encoder ≠ revision build) trước khi train. `probe.json` thêm `encoder.name`, `source: "probe"`.
 - `tests/unit/test_spike.py::test_candidates_include_the_three_spike_models`: nới từ "đúng ba" thành "ba model gate ⊆ candidates ⊆ ba model + cxrclip*".
-- Bit-identity của đường mặc định: chạy trong `notes/wp2_chain.log` (`train-probe --out data/indexes/image_probe_check …` rồi `cmp` với `data/indexes/image_probe/`). Kết quả: xem log, chép vào đây khi xong.
+- Bit-identity của đường mặc định: chạy trong `notes/wp2_chain.log` (`train-probe --out data/indexes/image_probe_check …` rồi `cmp` với `data/indexes/image_probe/`). Kết quả: **IDENTICAL** cả `probe.npz` lẫn `corpus_scores.parquet`; thư mục kiểm `data/indexes/image_probe_check` đã xóa 2026-10-24.
 
 ## Chuỗi nền (bắt đầu 2026-10-23 ~20:50 giờ máy, `notes/wp2_chain.log`)
 

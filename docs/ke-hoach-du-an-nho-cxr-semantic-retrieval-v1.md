@@ -1,5 +1,8 @@
 # Kế hoạch chi tiết V1: Hệ thống truy vấn ngữ nghĩa ảnh X-quang ngực sử dụng VLM và LLM
 
+> **Lưu ý (2026-10-24):** đây là kế hoạch gốc, viết trước khi đo dữ liệu. `WORKLOG.md` (*Quyết định đang có
+> hiệu lực*) ghi đè kế hoạch này ở nhiều điểm; khi hai bên khác nhau, theo WORKLOG.
+
 > **Tên tiếng Anh:** Semantic Chest X-ray Retrieval using Vision-Language Models and LLM-based Query Understanding  
 > **Phiên bản tài liệu:** 1.0  
 > **Mục tiêu:** Xây dựng POC hoàn chỉnh, chạy local bằng Docker, làm nền móng cho đồ án tốt nghiệp có Knowledge Graph  

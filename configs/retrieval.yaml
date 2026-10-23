@@ -1,6 +1,6 @@
-# Query pipeline: parse -> three legs -> RRF fusion -> constraint rerank -> evidence.
-# See plan sections 11 and 12. Weights are tuned on the 150 validation queries
-# only, never on test.
+# Query pipeline: parse -> label filter -> vector and report legs inside the allowed set -> RRF
+# -> evidence (WORKLOG D23; plan sections 11-12 describe the older rerank design). Weights are
+# tuned on the 40 dev queries only, never on heldout (D24).
 
 pipeline:
   steps: [parse, retrieve, fuse, rerank, build_evidence]

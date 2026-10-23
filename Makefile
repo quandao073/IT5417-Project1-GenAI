@@ -64,7 +64,7 @@ smoke: ## Smoke test against the running stack
 evaluate: ## Run the three-axis benchmark
 	$(PY) cxr evaluate
 benchmark: evaluate ## Alias for evaluate
-eval-parser: ## Score rule / llm / auto parsers on the held-out benchmark (needs Ollama)
+eval-parser: ## Score rule / llm / auto parsers on the held-out benchmark (needs an OpenAI key for llm/auto)
 	$(PY) cxr eval-parser
 eval-retrieval: ## Score label / vector / hybrid on the held-out benchmark (needs Qdrant, report index; OpenAI key in .env for auto)
 	$(PY) cxr eval-retrieval

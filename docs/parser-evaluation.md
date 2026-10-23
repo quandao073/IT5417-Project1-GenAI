@@ -16,6 +16,9 @@ từ việc nó dùng chung lexicon mà benchmark được viết theo (xem *Cá
 người dùng chọn:
 nhánh 7B (`qwen2.5:7b-instruct-q4_K_M`, pull 4,7 GB; WORKLOG P6).
 
+> Cập nhật: nhánh 7B không làm. Parser mặc định chuyển sang OpenAI gpt-5-mini và PASS heldout
+> (WORKLOG D22, mục *Phase 4c*); số đo dưới đây là của qwen 3B.
+
 ## Cách đo
 
 - **Benchmark** `benchmarks/parser_queries_v1.jsonl`, sha256

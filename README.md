@@ -21,7 +21,7 @@ vài yêu cầu đã bị override; WORKLOG là nguồn đúng.
 ```
 web (Next.js) → api (FastAPI) → qdrant     (image vectors)
                               → SQLite FTS (reports)
-                              → ollama     (query parser, có rule fallback)
+                              → OpenAI     (query parser gpt-5-mini, có rule fallback)
 ```
 
 Corpus build và embedding chạy trực tiếp ngoài Docker (`make build-corpus`, `make embed`);
@@ -45,8 +45,8 @@ Cả hai dataset đều yêu cầu đăng ký và chấp nhận điều khoản.
 - `uv` (Python) và `pnpm` (Node) nếu chạy ngoài Docker
 - ~25 GB trống ngoài raw data (raw data chiếm 12,1 GB)
 - GPU NVIDIA — không bắt buộc; embedding chạy được trên CPU, GPU chỉ để nhanh hơn
-- Ollama 0.40+ (native) với model qwen2.5:3b-instruct-q4_K_M — chỉ cần cho LLM parser; không có thì API dùng rule parser.
-  Cài: `winget install Ollama.Ollama` rồi `ollama pull qwen2.5:3b-instruct-q4_K_M`
+- Key OpenAI (`OPENAI_API_KEY` hoặc `LLM_API_KEY` trong `.env`) cho LLM parser mặc định gpt-5-mini (WORKLOG D22);
+  không có key thì API dùng rule parser. Ollama chỉ cần khi chọn `LLM_PROVIDER=ollama` (xem `.env.example`).
 - `make` (Git Bash hoặc WSL)
 
 ## Chạy nhanh
@@ -54,11 +54,11 @@ Cả hai dataset đều yêu cầu đăng ký và chấp nhận điều khoản.
 ```bash
 make setup               # tạo .env + thư mục data/artifacts + cài deps
 make up                  # web + api + qdrant
-make seed                # nạp fixture tổng hợp, không cần dataset
-make smoke               # kiểm tra end-to-end
 ```
 
-Mở http://localhost:3000.
+Mở http://localhost:3000. API chưa bật CORS nên trình duyệt chưa gọi được API từ cổng 3000
+(sửa ở WP5 Task 15 của V1.1). `make seed`, `make smoke`, `make evaluate` còn trỏ tới lệnh chưa viết
+(`cxr seed`, `scripts/smoke_test.sh`, `cxr evaluate`; để Phase 7).
 
 ## Pipeline đầy đủ (cần dataset)
 
@@ -72,10 +72,9 @@ uv run cxr build-probe-pool   # image probe: pool ngoài corpus -> data/probe_po
 uv run cxr embed --images data/probe_pool/pool_images.parquet --out data/probe_pool/embeddings --build-id 20261023_pool88k_biomedclip_v1
 uv run cxr train-probe        # 14 probe ảnh -> data/indexes/image_probe/ (cần build_manifest.json)
 make validate-indexes     # kiểm tra build_id khớp nhau trước khi phục vụ
-make eval-parser          # chấm parser trên benchmark held-out (cần Ollama)
+make eval-parser          # chấm parser trên benchmark held-out (cần key OpenAI cho `llm`/`auto`)
 make eval-retrieval       # chấm label / vector / hybrid trên benchmark held-out (cần Qdrant + report index; key OpenAI cho `auto`)
 make up                   # web + api + qdrant
-make evaluate             # benchmark ba trục
 ```
 
 `make embed` không cần Docker hay GPU, mất ≈34 phút (đo từ mtime shard của lần chạy CPU dở,
@@ -101,15 +100,16 @@ muốn chấm nó thì gọi thẳng `uv run cxr eval-retrieval` và truyền `-
 hoặc có `auto` mà LLM không `ok`, thì lệnh thoát mã 1. Số đo: [docs/retrieval-evaluation.md](docs/retrieval-evaluation.md).
 
 Chạy native (không qua Docker): `make setup` chép `.env.example` thành `.env` với
-`QDRANT_URL=http://qdrant:6333`, `LLM_BASE_URL=http://host.docker.internal:11434` và đường dẫn
+`QDRANT_URL=http://qdrant:6333` và đường dẫn
 `/app/...`, chỉ đúng trong container. Các lệnh native (`cxr index`, `validate-indexes`,
 `bench-vector`, `cxr parse`, `cxr eval-parser`, `cxr eval-retrieval`, uvicorn) cần hoặc không có `.env`,
-hoặc ghi đè: `QDRANT_URL=http://localhost:6333`, `LLM_BASE_URL=http://localhost:11434`,
+hoặc ghi đè: `QDRANT_URL=http://localhost:6333`,
 `IMAGE_ROOT=data/raw/CheXpert-v1.0-small`, `CANONICAL_DIR=data/canonical`, `INDEXES_DIR=data/indexes`,
 `FTS_DB_PATH=data/indexes/report_search.sqlite` (thiếu dòng này thì API và `eval-retrieval` không thấy
 report index).
-Không ghi đè `LLM_BASE_URL` thì `cxr parse` và API chỉ chạy rule parser (chỉ có warning báo), còn
-`cxr eval-parser` với `llm`/`auto` thoát mã 1.
+Không có key OpenAI thì `cxr parse` và API chỉ chạy rule parser (chỉ có warning báo), còn
+`cxr eval-parser` với `llm`/`auto` thoát mã 1. Dùng Ollama native thì đặt `LLM_PROVIDER=ollama`,
+`LLM_BASE_URL=http://localhost:11434`, `LLM_MODEL=qwen2.5:3b-instruct-q4_K_M`.
 
 `make help` liệt kê toàn bộ target.
 
@@ -138,7 +138,8 @@ phát hiện, chỉ `uv run cxr validate-indexes` bắt được (so `corpus_sha
 
 | Thư mục | Nội dung |
 |---|---|
-| `src/` | Package Python duy nhất: data, embeddings, query, retrieval, api, evaluation |
+| `src/` | Package Python chính: data, embeddings, query, retrieval, api, evaluation |
+| `training/` | Fine-tune CXR-CLIP của V1.1 (LoRA, loss theo nhãn): venv GPU riêng `training/pyproject.toml`, chạy trên Colab qua `training/colab/` |
 | `web/` | Next.js UI |
 | `docker/` | Dockerfile và cấu hình service |
 | `configs/` | data, models, retrieval, concepts, evaluation, logging |

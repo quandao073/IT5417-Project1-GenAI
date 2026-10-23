@@ -1,6 +1,6 @@
 # WP3 + WP4 (`training/`): pool cache, captions, LoRA fine-tune
 
-Branch `feat/lair-train`. Everything lives under `training/` and runs in its own uv venv
+Built on `feat/lair-train` (merged `7c94d63`, branch deleted 2026-10-24). Everything lives under `training/` and runs in its own uv venv
 (`training/pyproject.toml`, lock `training/uv.lock`): torch `2.4.1+cu124`, torchvision
 `0.19.1+cu124`, peft 0.14, the main package editable from `..`. The main venv stays `+cpu`
 (WORKLOG T14, D34). No compat shim: `training/model.py` imports `src.embeddings.cxrclip`
@@ -14,14 +14,16 @@ torch.cuda.is_available())"` -> `2.4.1+cu124 True` (RTX 2000 Ada 8 GB);
 
 | File | Public names |
 |---|---|
-| `captions.py` | `CaptionSampler(statuses, concepts, concepts_cfg, *, mix, impressions=None, impression_fraction=0.0, seed)`, `.eligible() -> bool[N]`, `.sample(row) -> (text, y int8[L])`, `.sample_kind(row) -> single/pair/negation/impression` (kind drawn, before fallback), `.reseed(seed)`; `label_vector(statuses_row, concepts) -> int8[L]` |
-| `data.py` | `preprocess_uint8(img, size=224) -> uint8[size,size]`, `eval_transform()`, `train_transform(aug_cfg, size=224)`, `load_cache(dir) -> (images memmap, index DataFrame, cache.json)`, `PoolDataset(cache_dir, sampler, *, train, augment_cfg)`, `reseed_worker` (DataLoader `worker_init_fn`) |
+| `captions.py` | `CaptionSampler(statuses, concepts, concepts_cfg, *, mix, impressions=None, impression_fraction=0.0, seed)`, `.eligible() -> bool[N]`, `.sample(row) -> (text, y int8[L])`, `.sample_kind(row) -> single/pair/negation/impression` (kind drawn, before fallback), `.reseed(seed)`, `.image_codes(row) -> int8[L]`; `label_vector(statuses_row, concepts) -> int8[L]`, `status_codes(statuses_row, concepts) -> int8[L]` (`CODE_PRESENT` 1 / `CODE_ABSENT` -1 / `CODE_UNCERTAIN` 2, NOT_MENTIONED 0) |
+| `data.py` | `preprocess_uint8(img, size=224) -> uint8[size,size]`, `eval_transform()`, `train_transform(aug_cfg, size=224)`, `load_cache(dir) -> (images memmap, index DataFrame, cache.json)`, `PoolDataset(cache_dir, sampler, *, train, augment_cfg)` (items: pixels, caption, caption `y`, image codes), `reseed_worker` (DataLoader `worker_init_fn`) |
 | `cache.py` | `build_cache(pool_dir, image_root, plus_csv, out_dir, *, size=224, val_fraction, seed) -> dict`; CLI `--pool-dir --image-root --plus-csv --out --size --val-fraction --seed` (defaults from `training.yaml`) |
-| `loss.py` | `label_aware_loss(zi, zt, y, logit_scale, lam=0.3)` (roadmap code verbatim), `clip_loss(zi, zt, logit_scale)` |
+| `loss.py` | `label_aware_loss(zi, zt, y, logit_scale, lam=0.3)` (roadmap code verbatim, FT1-FT3), `image_targets(y, codes) -> (relevant, conflict)` and `image_label_loss(..., *, codes)` (FT6, D36), `clip_loss(zi, zt, logit_scale)` |
 | `model.py` | `load_base(checkpoint, swin_cfg_dir, bert_cfg_dir) -> (CXRClipModule in eval mode, tokenizer, ckpt_config)`, `resolve_config_dir(spec)` (local dir or `<repo>@<sha>` via the HF cache) |
 | `lora.py` | `apply_lora(module, *, rank, alpha, dropout, targets=("query","key","value")) -> PeftModel`, `unwrap(peft_model) -> CXRClipModule`, `trainable_fraction(model)`, `export_merged(peft_model, ckpt_config, out, meta) -> sha256` |
-| `val.py` | `val_p5(model, tokenizer, images_uint8, statuses, concepts, concepts_cfg, device, *, text_max_length=64, batch_size=256, amp=False, min_relevant=5) -> dict`, `p_at_5_by_kind(scores, queries, statuses, *, min_relevant)`, `embed_images`, `encode_texts` |
-| `train.py` | CLI, see below; `warmup_cosine(warmup_steps, total_steps)` |
+| `val.py` | `val_p5(model, tokenizer, images_uint8, statuses, concepts, concepts_cfg, device, *, text_max_length=64, batch_size=256, amp=False, min_relevant=5) -> dict` (P@5 per kind + `text_cos`, the collapse monitor), `p_at_5_by_kind(scores, queries, statuses, *, min_relevant)`, `embed_images`, `encode_texts` |
+| `train.py` | CLI, see below; `warmup_cosine(warmup_steps, total_steps)`; `LOSSES` by `variants.<v>.targets`; `variants.<v>.logit_scale` fixes the temperature |
+| `zero_shot_val.py` | pool-val P@5 of the un-tuned checkpoint (the line to beat; Colab must reproduce it) |
+| `colab/` | `pack.py` (Drive bundle + sha256 manifest), `colab_run.py` (setup / check-env / train / gate / summary), `train_colab.ipynb`, `README.md` |
 
 `val.py` computes only P@5 (no bootstrap, no other k) because it runs after every epoch.
 Relevance is `template_bench.relevant_mask(statuses, query, DEFAULT_POLICY)` (WP1, merged at
@@ -49,23 +51,19 @@ uv run --project training python training/cache.py --pool-dir data/probe_pool \
 uv run --project training python training/train.py --variant FT1 --lr 3e-5 --epochs 1 \
     --subset 5000 --out runs/smoke_ft1 --num-workers 4
 
-# 3. lr sweep FT1 (D33), then FT2 / FT3 at the chosen lr
-for lr in 1e-5 3e-5 1e-4; do
-  uv run --project training python training/train.py --variant FT1 --lr $lr --out runs/ft1_lr$lr --num-workers 4
-done
-uv run --project training python training/train.py --variant FT2 --lr <best> --out runs/ft2
-uv run --project training python training/train.py --variant FT3 --lr <best> --out runs/ft3
+# 3. full runs: on Colab (D36), training/colab/README.md. The FT6 lr sweep (D33 grid), then FT1
+#    (the paper's recipe, reference row) at the lr FT6 chose; later variants build on FT6.
 ```
 
 Defaults come from `configs/training.yaml` (batch 128, 10 epochs, AdamW wd 0.01, warmup 200,
-AMP on, patience 3, text max length 64, LoRA 12/24/0.1 on q/k/v) and from
+bf16 autocast, patience 3, text max length 64, LoRA 12/24/0.1 on q/k/v) and from
 `configs/models.yaml:image_encoder.candidates.cxrclip` (`--checkpoint`, `--swin-config`,
 `--bert-config`). `--device` defaults to `cuda` when available. `--precision` (bf16 default, fp16, fp32) and `--grad-checkpointing` come from `training.yaml:optim`; autocast is off on CPU. `--resume` continues from `state_last.pt` after the last finished epoch; `--max-steps` caps an epoch for timing runs.
 `--seed` defaults to `training.yaml:split.seed` (20260101) and drives torch, the caption
 sampler, the subset and the loader order.
 
 Outputs under `--out`: `metrics.json` (rewritten after every epoch: `steps` losses,
-`epochs[]` with `train_loss`, `val_p5_single/pair/negation/mean`, `val_n_queries`, `seconds`,
+`epochs[]` with `train_loss`, `val_p5_single/pair/negation/mean`, `val_text_cos`, `val_n_queries`, `seconds`,
 `vram_mib`; `best_epoch`, `stopped_early`, `trainable_fraction`, `n_train`, `n_val`,
 `cache_meta`, `library_versions`, `git_commit`, `model_sha256`), `adapter_epoch{k}/` (peft),
 `model.pt` (merged export of the best epoch, `{"model", "config", "finetune"}` with the
@@ -73,17 +71,13 @@ original key names) and `model.sha256`. To serve it, add a candidate next to `cx
 `models.yaml` with `weights: runs/<name>/model.pt` and `revision: sha256:<model.sha256>`
 (WP6/WP5).
 
-## Expectations (estimates, not measurements)
+## Measured (B13c, B14; WORKLOG *Sửa B14*)
 
-Nothing below was measured: no GPU run has happened on this branch. Trainable parameters are
-about 1.0 M of 136.6 M (0.7 %). Activations dominate memory: Swin-T at 224 px, batch 128,
-fp16 autocast with the backward pass through the frozen towers should land around 5-7 GB on
-the 8 GB card. If it OOMs, use `--batch-size 64` and record it: the contrastive batch is part
-of the method. Throughput: BiomedCLIP ViT-B/16 embedded at 0.0117 s/img on this GPU
-(WORKLOG Phase 3); Swin-T is roughly 4x lighter, training is roughly 3x a forward, so expect
-about 0.01 s/img, i.e. 13-15 min per epoch over ~80 k pool-train rows plus under a minute to
-embed the ~9 k pool-val images. Ten epochs: about 2.5 h per lr, 7-8 h for the FT1 sweep.
-Replace these with the numbers from `metrics.json` (`seconds`, `vram_mib`) in WORKLOG.
+Trainable parameters: about 1.0 M of 136.6 M (0.71 %). Laptop RTX 2000 Ada 8 GB, batch 128, bf16 +
+gradient checkpointing: 4,616 MiB train / 2,327 MiB val, 1.10-1.13 s/step (B13c smoke: 1.33), a full
+epoch (618 steps + pool-val) about 12.6 min, about 2.1 h per 10-epoch run. Without checkpointing, fp32
+peaked at 8,661 MiB (B13 smoke). The fp16 + GradScaler path (Colab's T4) ran clean on the laptop GPU.
+Full runs moved to Colab (D36): the laptop ran hot.
 
 Trap: both venvs' site-packages contain another top-level package named `training`
 (shipped by open_clip_torch 2.24.0; its `data.py` imports `braceexpand`, which is not
@@ -99,8 +93,8 @@ prints are ASCII.
 
 ## Resume
 
-There is no `--resume`: a run is at most ten epochs and restarting is cheaper than
-checkpointing the optimizer. What survives a crash: `metrics.json` after every finished epoch
+`--resume` continues from `state_last.pt` (optimizer, scheduler, scaler, best epoch, patience)
+after the last finished epoch; the Colab driver always passes it. What survives a crash: `metrics.json` after every finished epoch
 and `adapter_epoch{k}/` for every finished epoch. To export a specific epoch by hand:
 
 ```python
@@ -129,7 +123,8 @@ export_merged(p, cfg, "runs/ft1_lr3e-5/model.pt", {"variant": "FT1", "best_epoch
 - `RandomResizedCrop` uses `ratio=(1, 1)`: only the scale is jittered, as the config says.
   Rotation is bilinear, fill 0. Order: crop, rotate, brightness/contrast, normalise.
 - `logit_scale` and both projection heads stay frozen (LoRA only); the loss uses
-  `logit_scale.exp().clamp(max=100)`. The loss is computed in fp32 outside autocast.
+  `logit_scale.exp().clamp(max=100)`. The checkpoint's value is 24.16; FT6 sets it to 5
+  (`training.yaml:variants.FT6.logit_scale`, D36), FT1-FT3 keep 24.16. The loss is computed in fp32 outside autocast.
 - `load_base` returns the model in eval mode (dropout and drop-path off); the loop calls
   `.train()` per epoch and `val.py` restores the mode it found.
 - Checkpoint selection falls back to `-train_loss` only when pool-val cannot score a single
