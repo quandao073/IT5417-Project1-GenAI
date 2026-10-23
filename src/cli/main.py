@@ -10,21 +10,25 @@ import json
 import subprocess
 import sys
 import time
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import polars as pl
 
 from src.common.config import Settings, default_config_dir, load_config
-from src.data import canonical
+from src.data import canonical, probe_pool
 from src.data.audit import CorpusMode, run_audit
+from src.data.labels import CHEXPERT_LABELS
 from src.embeddings import embed, index, spike, validate
+from src.embeddings.probe import save_probe, train_probe
 from src.evaluation import parser_benchmark as pb
 from src.evaluation import parser_eval as pe
+from src.evaluation import probe_eval
 from src.evaluation import vector_baseline as vb
 from src.query.schema import ParseError
 from src.retrieval import label_filter as lf
 from src.retrieval import report_index
+from src.retrieval.image_concepts import validate_image_probe
 
 
 def _cmd_audit(args: argparse.Namespace) -> int:
@@ -103,6 +107,32 @@ def _cmd_build_corpus(args: argparse.Namespace) -> int:
     for path in written:
         print(f"wrote            : {path}")
     print(f"report written   : {report_path}")
+    return 0
+
+
+def _cmd_build_probe_pool(args: argparse.Namespace) -> int:
+    chexbert_dir = Path(args.chexbert_dir)
+    chexbert = {source: chexbert_dir / name for source, name in CHEXBERT_FILES.items()}
+    if missing := sorted(str(p) for p in chexbert.values() if not p.is_file()):
+        print(f"CheXbert label files not found: {missing}", file=sys.stderr)
+        return 1
+
+    corpus_path = Path(args.canonical_dir) / "images.parquet"
+    priority = load_config("retrieval")["label_resolution"]["source_priority"]
+    try:
+        images, resolved, meta = probe_pool.build_pool(
+            Path(args.plus_csv), Path(args.small_root), chexbert,
+            pl.read_parquet(corpus_path), priority,
+            corpus_images_path=corpus_path, git_commit=_git_commit(),
+        )
+    except probe_pool.PoolError as exc:
+        print(f"POOL FAILED: {exc}", file=sys.stderr)
+        return 1
+
+    for path in probe_pool.write_pool(images, resolved, meta, Path(args.out)):
+        print(f"wrote      : {path}")
+    print(f"studies : {meta['studies']:,}  patients: {meta['patients']:,}  "
+          f"pool_sha256: {meta['pool_sha256'][:12]}")
     return 0
 
 
@@ -214,7 +244,9 @@ def _selected_encoder(device: str):
 
 
 def _cmd_embed(args: argparse.Namespace) -> int:
-    images = pl.read_parquet(Path(args.canonical_dir) / "images.parquet")
+    images = pl.read_parquet(
+        Path(args.images) if args.images else Path(args.canonical_dir) / "images.parquet"
+    )
     name, encoder = _selected_encoder(args.device)
     build_id = args.build_id or embed.make_build_id(name, date.today())
     out_dir = Path(args.out) / build_id
@@ -303,6 +335,12 @@ def _cmd_validate_indexes(args: argparse.Namespace) -> int:
                   else Path(args.indexes_dir) / "report_search.sqlite")
     checks.append(report_index.validate_report_index(
         index_path, pl.read_parquet(Path(args.canonical_dir) / "reports.parquet")))
+    probe_dir = (Path(args.image_probe_dir) if args.image_probe_dir
+                 else Path(args.indexes_dir) / "image_probe")
+    checks.append(validate_image_probe(
+        probe_dir, build_id=manifest["build_id"], revision=expected_revision,
+        study_ids=pl.read_parquet(Path(args.canonical_dir) / "studies.parquet")
+        ["study_id"].to_list()))
     for c in checks:
         print(f"{'PASS' if c.ok else 'FAIL'} {c.name:<12}: {c.detail}")
     return 0 if all(c.ok for c in checks) else 1
@@ -376,9 +414,9 @@ def _cmd_score_corpus(args: argparse.Namespace) -> int:
     if _report_is_corrupt(Path(args.out)):
         return 1
     shards_dir = _resolve_build_dir(Path(args.embeddings), args.build_id)
-    canonical = Path(args.canonical_dir)
-    images = pl.read_parquet(canonical / "images.parquet")
-    labels = pl.read_parquet(canonical / "labels.parquet")
+    canonical_dir = Path(args.canonical_dir)
+    images = pl.read_parquet(canonical_dir / "images.parquet")
+    labels = pl.read_parquet(canonical_dir / "labels.parquet")
     cfg = load_config("models")["image_encoder"]
     _, encoder = _selected_encoder("cpu")
     prompts = spike.build_prompts(load_config("concepts"), cfg["text_prompt_template"])
@@ -398,6 +436,100 @@ def _cmd_score_corpus(args: argparse.Namespace) -> int:
         print(f"  {c:<28} {'  n/a' if a is None else f'{a:.3f}'}  pos={v['n_pos']:<5} "
               f"neg={v['n_neg_strict']}")
     print(f"report     : {args.out}")
+    return 0
+
+
+def _load_pool(args: argparse.Namespace, manifest: dict, corpus_images: pl.DataFrame):
+    """The pool's vectors, statuses and patient ids in shard order, or an error message.
+
+    Refuses a pool embedded by another encoder, one that shares a patient with the
+    corpus and one that holds a valid/ study.
+    """
+    pool_dir = Path(args.pool_dir)
+    images = pl.read_parquet(pool_dir / probe_pool.POOL_IMAGES)
+    resolved = pl.read_parquet(pool_dir / probe_pool.POOL_LABELS)
+    meta = json.loads((pool_dir / probe_pool.POOL_META).read_text(encoding="utf-8"))
+    shards_dir = pool_dir / "embeddings" / args.pool_build_id
+    shards = embed.load_shards_manifest(shards_dir)
+    model = manifest["embedding_model"]
+    got = (shards["model_id"], shards["revision"], shards["dim"])
+    want = (model["model_id"], model["revision"], model["dimension"])
+    if got != want:
+        return f"POOL BUILD MISMATCH: pool {got} != corpus {want}", None
+    overlap = set(images["patient_id"]) & set(corpus_images["patient_id"])
+    if overlap:
+        return f"POOL OVERLAPS CORPUS: {len(overlap)} patients", None
+    if images.filter(pl.col("path_to_image").str.starts_with("valid/")).height:
+        return "POOL CONTAINS valid/ STUDIES", None
+
+    vectors, image_ids = vb._all_vectors(shards_dir)
+    study_of = dict(zip(images["image_id"], images["study_id"], strict=True))
+    patient_of = dict(zip(images["image_id"], images["patient_id"], strict=True))
+    studies = [study_of[i] for i in image_ids]
+    statuses = probe_pool.resolved_status_matrix(resolved, studies)
+    return None, (vectors, statuses, [patient_of[i] for i in image_ids], meta)
+
+
+def _corpus_rows(args: argparse.Namespace, manifest: dict, studies: pl.DataFrame):
+    """Corpus vectors of each study's selected image, in `studies` order."""
+    vectors, image_ids = vb._all_vectors(Path(args.embeddings) / manifest["build_id"])
+    row_of = {i: r for r, i in enumerate(image_ids)}
+    rows = [row_of[i] for i in studies["selected_image_id"]]
+    return vectors[rows]
+
+
+def _cmd_train_probe(args: argparse.Namespace) -> int:
+    if _report_is_corrupt(Path(args.report)):
+        return 1
+    manifest = json.loads(
+        (Path(args.indexes_dir) / index.MANIFEST_FILE).read_text(encoding="utf-8"))
+    canonical_dir = Path(args.canonical_dir)
+    error, pool = _load_pool(args, manifest, pl.read_parquet(canonical_dir / "images.parquet"))
+    if error:
+        print(error, file=sys.stderr)
+        return 1
+    X, pool_statuses, pool_patients, pool_meta = pool
+    probe, fit = train_probe(X, pool_statuses, pool_patients, load_config("models")["image_probe"])
+
+    studies = pl.read_parquet(canonical_dir / "studies.parquet")
+    corpus_vectors = _corpus_rows(args, manifest, studies)
+    logits = probe.logits(corpus_vectors)
+    corpus_scores = pl.DataFrame({
+        "study_id": studies["study_id"], "image_id": studies["selected_image_id"],
+        **{c: logits[:, j] for j, c in enumerate(CHEXPERT_LABELS)},
+    })
+
+    template = load_config("models")["image_encoder"]["text_prompt_template"]
+    _, encoder = _selected_encoder("cpu")
+    text = probe_eval.text_scores(corpus_vectors, encoder, load_config("concepts"), template)
+    priority = load_config("retrieval")["label_resolution"]["source_priority"]
+    statuses = spike.status_matrix(
+        pl.read_parquet(canonical_dir / "labels.parquet"), studies["study_id"].to_list(), priority)
+    comparison = probe_eval.compare({**text, "probe": logits}, statuses, n_boot=args.n_boot)
+
+    model = manifest["embedding_model"]
+    meta = {
+        "probe_id": f"{manifest['build_id']}_probe_lam{fit['lambda']}",
+        "build_id": manifest["build_id"],
+        "encoder": {"model_id": model["model_id"], "revision": model["revision"],
+                    "dim": model["dimension"]},
+        "pool_sha256": pool_meta["pool_sha256"], "pool_build_id": args.pool_build_id,
+        "lambda": fit["lambda"], "selection": fit["selection"], "n_train": fit["n_train"],
+        "git_commit": _git_commit(),
+        "trained_at": datetime.now(UTC).isoformat(timespec="seconds"),
+    }
+    save_probe(Path(args.out), probe, meta, corpus_scores)
+    _merge_json(Path(args.report), "probe", {**meta, "comparison": comparison, "pool": pool_meta})
+
+    print(f"lambda : {fit['lambda']}  (macro val AUROC per lambda: "
+          f"{json.dumps(fit['selection']['per_lambda'])})")
+    print("  ".join(f"{name} {comparison[name]['macro_auroc_strict']:.3f}"
+                    for name in (*text, "probe")))
+    diff = comparison["probe_minus_zero_shot"]
+    print(f"probe - zero_shot: {diff['mean']:.3f} "
+          f"[{diff['ci95'][0]:.3f}, {diff['ci95'][1]:.3f}] -> "
+          f"S1 {'PASS' if comparison['s1_passed'] else 'FAIL'}")
+    print(f"report : {args.report}")
     return 0
 
 
@@ -464,11 +596,11 @@ def _cmd_eval_parser(args: argparse.Namespace) -> int:
           f"{'PASS' if v['passed'] else 'FAIL'} {json.dumps(v)}")
 
     if args.label_filter:
-        canonical = Path(args.canonical_dir)
-        studies = pl.read_parquet(canonical / "studies.parquet")
+        canonical_dir = Path(args.canonical_dir)
+        studies = pl.read_parquet(canonical_dir / "studies.parquet")
         cfg = load_config("retrieval")
         matrix = lf.build_label_matrix(
-            pl.read_parquet(canonical / "labels.parquet"), studies["study_id"].to_list(),
+            pl.read_parquet(canonical_dir / "labels.parquet"), studies["study_id"].to_list(),
             cfg["label_resolution"]["source_priority"], seed=cfg["results"]["label_order_seed"])
         counts = pe.label_filter_counts(rows, matrix)
         _merge_json(Path(args.out), "label_filter", {**counts, "benchmark": report["benchmark"]})
@@ -504,9 +636,20 @@ def _print_grid(grid: dict) -> None:
     for c in grid["configs"]:
         w = c["leg_weights"]
         print(f"rrf_k={c['rrf_k']:<3} vector={w['vector']} report={w['report']} "
-              f"ndcg={c['ndcg@10']:.3f} p@10={c['p@10']:.3f}")
+              f"image={w['image']} ndcg={c['ndcg@10']:.3f} p@10={c['p@10']:.3f}")
     print(f"chosen: {json.dumps(grid['chosen'], ensure_ascii=True)} "
-          f"default_ndcg={grid['default_ndcg']:.3f}")
+          f"baseline_ndcg={grid['baseline_ndcg']:.3f}")
+
+
+def _print_image_vs_vector(result: dict | None) -> None:
+    if result is None:
+        print("image_vs_vector: n/a")
+        return
+    m = result["ndcg@10"]
+    print(f"image_vs_vector: n={result['n_common']} ndcg image={_f(m['image'])} "
+          f"vector={_f(m['vector'])} wins/ties/losses="
+          f"{result['wins']}/{result['ties']}/{result['losses']} "
+          f"s2={'PASS' if result['s2_passed'] else 'FAIL'}")
 
 
 def _cmd_eval_retrieval(args: argparse.Namespace) -> int:
@@ -525,7 +668,10 @@ def _cmd_eval_retrieval(args: argparse.Namespace) -> int:
     if args.grid and args.split != "dev":
         print("grid runs on dev only", file=sys.stderr)
         return 1
-    need_llm = "auto" in args.parsers and not args.grid
+    if args.ablation and args.split != "dev":
+        print("ablation runs on dev only", file=sys.stderr)
+        return 1
+    need_llm = "auto" in args.parsers and not (args.grid or args.ablation)
     parser, status = _build_parser_or_exit(need_llm)
     if need_llm and status == "ok":
         with contextlib.suppress(ParseError):      # pay the cold start outside the scored rows
@@ -539,6 +685,12 @@ def _cmd_eval_retrieval(args: argparse.Namespace) -> int:
         print(f"report index disabled: {state.report_reason}; run cxr build-report-index",
               file=sys.stderr)
         return 1
+    # The state stays ready without the probe, so image mode would score 0 and hybrid would
+    # drop the image leg without a word; refuse rather than record numbers that never ran.
+    if ("image" in args.modes or args.grid or args.ablation) and state.image_status != "ok":
+        print(f"image probe disabled: {state.image_reason}; run cxr train-probe",
+              file=sys.stderr)
+        return 1
     agreement = rev.build_agreement_matrix(
         pl.read_parquet(Path(args.canonical_dir) / "labels.parquet"), state.labels.study_ids)
     shared = {"state": state, "parser": parser, "matrix": state.labels, "agreement": agreement,
@@ -549,11 +701,19 @@ def _cmd_eval_retrieval(args: argparse.Namespace) -> int:
               "build_id": state.manifest["build_id"]}
     fusion = dataclasses.asdict(state.fusion)
     if args.grid:
-        grid = rev.grid_search(rows, **shared)
+        grid = rev.grid_search(rows, baseline=state.fusion, **shared)
         _merge_json(out, "grid", {**grid, **extras,
                                   "fusion_default": dataclasses.asdict(rev.DEFAULT_FUSION),
                                   "fusion_current": fusion})
         _print_grid(grid)
+        print(f"report     : {args.out}")
+        return 0
+    if args.ablation:
+        result = rev.ablation(rows, fusion=state.fusion, **shared)
+        _merge_json(out, "ablation", {**result, **extras, "fusion_current": fusion})
+        for name, m in result["configs"].items():
+            print(f"{name:<14} ndcg={_f(m['ndcg@10'])} p@10={_f(m['p@10'])} "
+                  f"viol={_f(m['exclude_violation@10'])}")
         print(f"report     : {args.out}")
         return 0
     policies = [rev.DEFAULT_POLICY] + ([rev.NEGATION_POLICY]
@@ -567,11 +727,16 @@ def _cmd_eval_retrieval(args: argparse.Namespace) -> int:
     judged = "gold" in args.parsers and {"vector", "hybrid"} <= set(args.modes)
     v = rev.verdict(report, load_config("evaluation")["thresholds"]) if judged else None
     report["verdict"] = v
+    compared = "gold" in args.parsers and {"image", "vector"} <= set(args.modes)
+    if compared:
+        report["image_vs_vector"] = rev.image_vs_vector(report)
     _merge_json(out, "eval", report)
 
     _print_eval_table(report, args.verbose)
     print("verdict: n/a (needs gold + vector + hybrid)" if v is None else
           f"verdict: {'PASS' if v['passed'] else 'FAIL'} {json.dumps(v, ensure_ascii=True)}")
+    if compared:
+        _print_image_vs_vector(report["image_vs_vector"])
     print(f"report     : {args.out}")
     return 0 if v is None or v["passed"] else 1
 
@@ -600,6 +765,15 @@ def build_parser() -> argparse.ArgumentParser:
     corpus.add_argument("--report", default="artifacts/audit/corpus_report.json")
     corpus.set_defaults(func=_cmd_build_corpus)
 
+    pool = sub.add_parser("build-probe-pool",
+                          help="build the out-of-corpus study pool for the image probes")
+    pool.add_argument("--plus-csv", default="data/raw/chexpert-plus/df_chexpert_plus_240401.csv")
+    pool.add_argument("--small-root", default="data/raw/CheXpert-v1.0-small")
+    pool.add_argument("--chexbert-dir", default="data/raw/chexpert-plus/labels")
+    pool.add_argument("--canonical-dir", default="data/canonical")
+    pool.add_argument("--out", default="data/probe_pool")
+    pool.set_defaults(func=_cmd_build_probe_pool)
+
     spk = sub.add_parser("spike-models", help="Phase 2: embed a sample per VLM, apply the gate")
     spk.add_argument("--models", nargs="+", choices=SPIKE_MODELS, default=SPIKE_MODELS)
     spk.add_argument("--canonical-dir", default="data/canonical")
@@ -616,6 +790,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     emb = sub.add_parser("embed", help="Phase 3: embed the corpus into shard files (resumable)")
     emb.add_argument("--canonical-dir", default="data/canonical")
+    emb.add_argument("--images", default=None,
+                     help="images parquet to embed instead of <canonical-dir>/images.parquet")
     emb.add_argument("--image-root", default="data/raw/CheXpert-v1.0-small")
     emb.add_argument("--out", default="data/indexes/embeddings")
     emb.add_argument("--shard-size", type=int, default=1000)
@@ -641,6 +817,8 @@ def build_parser() -> argparse.ArgumentParser:
     val.add_argument("--qdrant-url", default=None)
     val.add_argument("--report-index", default=None,
                      help="default: <indexes-dir>/report_search.sqlite")
+    val.add_argument("--image-probe-dir", default=None,
+                     help="default: <indexes-dir>/image_probe")
     val.set_defaults(func=_cmd_validate_indexes)
 
     rep = sub.add_parser("build-report-index", help="Phase 5: build the SQLite FTS5 report index")
@@ -652,7 +830,7 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--queries", type=int, default=30)
     bench.add_argument("--repeats", type=int, default=5)
     bench.add_argument("--api-url", default=None, help="also time POST /api/v1/search over HTTP")
-    bench.add_argument("--mode", choices=["vector", "hybrid"], default="vector",
+    bench.add_argument("--mode", choices=["vector", "hybrid", "image"], default="vector",
                        help="search mode posted to --api-url")
     bench.add_argument("--out", default="artifacts/metrics/vector_baseline.json")
     bench.set_defaults(func=_cmd_bench_vector)
@@ -665,6 +843,19 @@ def build_parser() -> argparse.ArgumentParser:
     score.add_argument("--n-boot", type=int, default=1000)
     score.add_argument("--out", default="artifacts/metrics/vector_baseline.json")
     score.set_defaults(func=_cmd_score_corpus)
+
+    tp = sub.add_parser("train-probe",
+                        help="train the image concept probe on the pool and compare it with "
+                             "zero-shot prompting on the corpus")
+    tp.add_argument("--pool-dir", default="data/probe_pool")
+    tp.add_argument("--pool-build-id", default="20261023_pool88k_biomedclip_v1")
+    tp.add_argument("--embeddings", default="data/indexes/embeddings")
+    tp.add_argument("--indexes-dir", default="data/indexes")
+    tp.add_argument("--canonical-dir", default="data/canonical")
+    tp.add_argument("--out", default="data/indexes/image_probe")
+    tp.add_argument("--report", default="artifacts/metrics/image_probe.json")
+    tp.add_argument("--n-boot", type=int, default=1000)
+    tp.set_defaults(func=_cmd_train_probe)
 
     prs = sub.add_parser("parse", help="Phase 4: parse one request, print the SearchQuery")
     prs.add_argument("text")
@@ -683,16 +874,20 @@ def build_parser() -> argparse.ArgumentParser:
     ev.add_argument("--verbose", action="store_true", help="print every mismatch (ASCII)")
     ev.set_defaults(func=_cmd_eval_parser)
 
-    er = sub.add_parser("eval-retrieval", help="Phase 5: score label / vector / hybrid search")
+    er = sub.add_parser("eval-retrieval",
+                        help="Phase 5: score label / vector / image / hybrid search")
     er.add_argument("--benchmark", default="benchmarks/parser_queries_v1.jsonl")
     er.add_argument("--split", choices=["heldout", "dev", "all"], default="heldout")
-    er.add_argument("--modes", nargs="+", choices=["label", "vector", "hybrid"],
+    er.add_argument("--modes", nargs="+", choices=["label", "vector", "image", "hybrid"],
                     default=["label", "vector", "hybrid"])
     er.add_argument("--parsers", nargs="+", choices=["gold", "rule", "auto"],
                     default=["gold", "rule", "auto"])
     er.add_argument("--policies", choices=["default", "negation_both"], default="negation_both")
-    er.add_argument("--grid", action="store_true",
-                    help="fusion grid on gold + hybrid; dev split only")
+    only = er.add_mutually_exclusive_group()
+    only.add_argument("--grid", action="store_true",
+                      help="fusion grid on gold + hybrid; dev split only")
+    only.add_argument("--ablation", action="store_true",
+                      help="leg ablation on gold queries; dev split only")
     er.add_argument("--canonical-dir", default="data/canonical")
     er.add_argument("--out", default="artifacts/metrics/retrieval_eval.json")
     er.add_argument("--verbose", action="store_true", help="print every per-query row (ASCII)")

@@ -81,6 +81,7 @@ class Settings(BaseSettings):
     canonical_dir: Path = Path("data/canonical")
     fts_db_path: Path = Path("data/indexes/report_search.sqlite")
     indexes_dir: Path = Path("data/indexes")
+    image_probe_dir: Path = Path("data/indexes/image_probe")
     # Blank in .env.example: the API then reads it from build_manifest.json.
     build_id: str | None = None
 

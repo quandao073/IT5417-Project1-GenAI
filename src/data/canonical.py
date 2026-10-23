@@ -67,7 +67,7 @@ def build_corpus(
     eligible = join.filter_eligible(plus_rows, available)
     per_study = join.select_one_image_per_study(eligible)
 
-    assertions = _read_all_labels(small_root, chexbert, per_study)
+    assertions = read_all_labels(small_root, chexbert, per_study)
     resolved = labels.resolve(assertions, priority)
 
     stratum_priority = sample.stratum_priority(resolved)
@@ -114,7 +114,7 @@ def build_corpus(
     )
 
 
-def _read_all_labels(
+def read_all_labels(
     small_root: Path,
     chexbert: Mapping[str, Path],
     per_study: pl.DataFrame,

@@ -1,11 +1,12 @@
-"""The search behind /api/v1/search (spec 8.2, 9.2): rank in one of three modes, then quote.
+"""The search behind /api/v1/search (spec 8.2, 9.2): rank in one of four modes, then quote.
 
 `label` and `vector` keep their Phase 4 ranking, because they are the baselines `hybrid` has
 to beat: `label` returns the label-filtered studies in the fixed D18 order, `vector` ranks
 images by cosine with only the view facet (G3) and now flags each hit's constraint violations.
-`hybrid` filters on labels first (D23) and fuses the vector and report legs inside the allowed
-set (`hybrid.search_hybrid`). Every mode then quotes report sentences as evidence; without the
-report index search still answers, with a warning instead of evidence.
+`image` ranks the whole corpus by per-concept probe logits (`image_concepts`), no labels, no
+reports. `hybrid` filters on labels first (D23) and fuses the vector, report and image legs
+inside the allowed set (`hybrid.search_hybrid`). Every mode then quotes report sentences as
+evidence; without the report index search still answers, with a warning instead of evidence.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from typing import TYPE_CHECKING, Literal
 from src.query.schema import SearchQuery
 from src.retrieval.evidence import Evidence
 from src.retrieval.hybrid import FusionParams, search_hybrid
+from src.retrieval.image_concepts import rank_studies
 from src.retrieval.image_search import ImageCandidate, search_image_embeddings
 from src.retrieval.label_filter import (
     filter_studies_by_labels,
@@ -38,6 +40,7 @@ if TYPE_CHECKING:
 
 _VECTOR_SKIPPED = "semantic query is empty; vector leg skipped"
 _NO_EVIDENCE = "report index unavailable; no evidence"
+_UNCERTAIN_AS_PRESENT = "image score treats UNCERTAIN as PRESENT"
 
 
 class VectorLegError(RuntimeError):
@@ -49,9 +52,10 @@ class Hit:
     rank: int
     study_id: str
     image_id: str
-    score: float | None = None      # vector: cosine; hybrid: RRF; label: None
+    score: float | None = None      # vector: cosine; image: probe score; hybrid: RRF; label: None
     vector_rank: int | None = None
     report_rank: int | None = None
+    image_rank: int | None = None
     rrf_score: float | None = None
     label_match: bool | None = None
     constraints_satisfied: bool | None = None
@@ -66,13 +70,16 @@ class SearchOutcome:
     warnings: list[str]
 
 
-def run_search(state: AppState, query: SearchQuery, mode: Literal["label", "vector", "hybrid"],
-               *, top_k: int, views: Sequence[str], absence_policy: str,
-               uncertainty_policy: str, fusion: FusionParams | None = None) -> SearchOutcome:
+def run_search(state: AppState, query: SearchQuery,
+               mode: Literal["label", "vector", "image", "hybrid"], *, top_k: int,
+               views: Sequence[str], absence_policy: str, uncertainty_policy: str,
+               fusion: FusionParams | None = None) -> SearchOutcome:
     policies = {"absence_policy": absence_policy, "uncertainty_policy": uncertainty_policy}
     warnings: list[str] = []
     if mode == "vector":
         hits, total = _vector_hits(state, query, views, top_k, policies, warnings), None
+    elif mode == "image":
+        hits, total = _image_hits(state, query, views, top_k, policies, warnings), None
     elif mode == "label":
         hits, total = _label_hits(state, query, views, top_k, policies, warnings)
     else:
@@ -122,6 +129,28 @@ def _vector_hits(state: AppState, query: SearchQuery, views: Sequence[str], top_
     ]
 
 
+def _image_hits(state: AppState, query: SearchQuery, views: Sequence[str], top_k: int,
+                policies: dict, warnings: list[str]) -> list[Hit]:
+    if not (query.include or query.exclude):
+        if query.semantic_query:
+            warnings.append("no concept; ranked by text-image cosine")
+        return _vector_hits(state, query, views, top_k, policies, warnings)
+    if state.image_status != "ok":
+        warnings.append("image probe unavailable")
+        return []
+    if any(c.status == "UNCERTAIN" for c in query.include):
+        warnings.append(_UNCERTAIN_AS_PRESENT)
+    wanted = set(views)
+    allowed = [s for s, image_id in state.study_image.items()
+               if state.images[image_id].projection in wanted] if views else None
+    ranked = rank_studies(state.image_scores, query.include, query.exclude,
+                          allowed=allowed, limit=top_k)
+    return [Hit(rank, study, state.study_image[study], score, image_rank=rank,
+                constraints_satisfied=satisfies(state.labels, study, query.include,
+                                                query.exclude, **policies))
+            for rank, (study, score) in enumerate(ranked, start=1)]
+
+
 def _label_hits(state: AppState, query: SearchQuery, views: Sequence[str], top_k: int,
                 policies: dict, warnings: list[str]) -> tuple[list[Hit], int]:
     if not query.include and not query.exclude:
@@ -167,11 +196,24 @@ def _hybrid_hits(state: AppState, query: SearchQuery, views: Sequence[str], top_
         report_leg = partial(search_reports, state.report_db, state.report_lock, match,
                              report_allowed)
 
+    image_leg = None
+    if constrained and fusion.weight("image") > 0:   # at weight 0 the leg is silent, like main
+        if state.image_status != "ok":
+            warnings.append("image probe unavailable; hybrid ran without the image leg")
+        else:
+            if any(c.status == "UNCERTAIN" for c in query.include):
+                warnings.append(_UNCERTAIN_AS_PRESENT)
+
+            def image_leg(k: int) -> list[tuple[str, float]]:
+                return rank_studies(state.image_scores, query.include, query.exclude,
+                                    allowed=label_order, limit=k)
+
     out = search_hybrid(top_k=top_k, label_order=label_order, vector_leg=vector_leg,
-                        report_leg=report_leg, fusion=fusion)
+                        report_leg=report_leg, image_leg=image_leg, fusion=fusion)
     warnings.extend(out.warnings)
     hits = [Hit(r.rank, r.study_id, state.study_image[r.study_id], r.score,
-                vector_rank=r.vector_rank, report_rank=r.report_rank, rrf_score=r.score,
+                vector_rank=r.vector_rank, report_rank=r.report_rank, image_rank=r.image_rank,
+                rrf_score=r.score,
                 label_match=True if constrained else None,   # None: no label filter ran
                 constraints_satisfied=True if constrained else None)
             for r in out.results]

@@ -1,21 +1,18 @@
-"""CLI wiring for Phase 5: build-report-index and the seventh validate-indexes check."""
+"""CLI wiring for Phase 5: build-report-index and eval-retrieval."""
 
 from __future__ import annotations
 
 import json
 from types import SimpleNamespace
 
-import polars as pl
 import pytest
 
 from src.cli.main import build_parser, main
 from src.common.config import load_config
-from src.embeddings.validate import Check
 from src.query.parser import QueryParser
 from src.query.rule_parser import RuleParser
 from src.retrieval.hybrid import FusionParams
-from src.retrieval.report_index import build_report_index, open_report_index, read_meta
-from tests.unit.test_embed import images_frame
+from src.retrieval.report_index import open_report_index, read_meta
 from tests.unit.test_label_filter import labels_frame
 from tests.unit.test_parser_benchmark import row, write
 from tests.unit.test_report_index import ROWS, reports_frame
@@ -39,25 +36,6 @@ def test_build_report_index_writes_the_file_and_prints_ascii(tmp_path, capsys):
     assert "rows=4 sha=" in text
 
 
-def test_validate_indexes_prints_seven_checks(tmp_path, capsys, monkeypatch):
-    canonical = _canonical(tmp_path)
-    indexes = tmp_path / "indexes"
-    indexes.mkdir()
-    (indexes / "build_manifest.json").write_text(json.dumps({"build_id": "b"}), encoding="utf-8")
-    images_frame(8).write_parquet(canonical / "images.parquet")
-    build_report_index(pl.read_parquet(canonical / "reports.parquet"),
-                       indexes / "report_search.sqlite", concepts_sha256="c" * 64,
-                       git_commit=None)
-    six = [Check(f"check{i}", True, "ok") for i in range(6)]
-    monkeypatch.setattr("src.cli.main.validate.validate_indexes", lambda *a, **k: six)
-    monkeypatch.setattr("src.cli.main.validate.expected_config_hash", lambda *a, **k: "x")
-    monkeypatch.setattr("src.cli.main._qdrant_client", lambda *a, **k: None)
-    assert main(["validate-indexes", "--indexes-dir", str(indexes),
-                 "--canonical-dir", str(canonical), "--embeddings", str(tmp_path / "emb")]) == 0
-    lines = capsys.readouterr().out.splitlines()
-    assert len(lines) == 7 and lines[-1].startswith("PASS report_index")
-
-
 def test_eval_retrieval_defaults():
     a = build_parser().parse_args(["eval-retrieval"])
     assert (a.split, a.parsers, a.modes, a.policies, a.grid, a.out) == (
@@ -75,7 +53,7 @@ METRICS = {"p@10": 0.5, "ndcg@10": 0.6, "mrr": 0.7, "exclude_violation@10": None
 LATENCY = {"p50": 12.0, "p95": 30.0, "n": 1}
 PASSING = {"single_p10": {"passed": True}, "passed": True}
 FUSION = {"rrf_k": 60, "leg_weights": {"vector": 1.0, "report": 1.0},
-          "vector_top_k": 100, "report_top_k": 100}
+          "vector_top_k": 100, "report_top_k": 100, "image_top_k": 100}
 
 
 def canned(parsers, modes):
@@ -95,7 +73,8 @@ def world(tmp_path, monkeypatch):
                         lambda settings: (parser, status["value"]))
     state = SimpleNamespace(
         ready=True, not_ready_reason=None, report_status="ok", report_reason=None,
-        report_meta={"studies": "1"}, labels=SimpleNamespace(study_ids=["s1"]),
+        report_meta={"studies": "1"}, image_status="ok", image_reason=None,
+        labels=SimpleNamespace(study_ids=["s1"]),
         images={"i1": SimpleNamespace(projection="PA")}, study_image={"s1": "i1"},
         manifest={"build_id": "b1"}, parser=parser,
         fusion=FusionParams(60, {"vector": 1.0, "report": 1.0}, 100, 100))
@@ -218,11 +197,18 @@ def test_eval_retrieval_builds_the_state_from_the_canonical_dir_flag(world, monk
 def test_eval_retrieval_grid_writes_the_grid_section(world, monkeypatch, capsys):
     # the state runs the chosen fusion; the grid section records it next to the plan default
     world.state.fusion = FusionParams(10, {"vector": 0.5, "report": 1.0}, 100, 100)
-    config = {"rrf_k": 60, "leg_weights": {"vector": 1.0, "report": 1.0},
+    config = {"rrf_k": 60, "leg_weights": {"vector": 1.0, "report": 1.0, "image": 0.5},
               "ndcg@10": 0.5, "p@10": 0.4}
-    grid = {"configs": [config] * 9, "chosen": config, "default_ndcg": 0.5}
-    monkeypatch.setattr("src.evaluation.retrieval_eval.grid_search", lambda rows, **kw: grid)
+    grid = {"configs": [config] * 9, "chosen": config, "baseline_ndcg": 0.5}
+    seen = {}
+
+    def fake_grid(rows, **kw):
+        seen.update(kw)
+        return grid
+
+    monkeypatch.setattr("src.evaluation.retrieval_eval.grid_search", fake_grid)
     assert run(world, "--split", "dev", "--grid") == 0
+    assert seen["baseline"] is world.state.fusion
     data = json.loads(world.out.read_text(encoding="utf-8"))
     assert "eval" not in data and data["grid"]["chosen"] == config
     assert data["grid"]["build_id"] == "b1" and data["grid"]["benchmark"]["split"] == "dev"
@@ -231,4 +217,80 @@ def test_eval_retrieval_grid_writes_the_grid_section(world, monkeypatch, capsys)
                                               "leg_weights": {"vector": 0.5, "report": 1.0}}
     out = capsys.readouterr().out
     out.encode("ascii")
-    assert out.count("rrf_k=60 ") == 9 and "chosen: " in out
+    assert out.count("rrf_k=60 ") == 9 and out.count("image=0.5 ") == 9
+    assert "chosen: " in out and "baseline_ndcg=0.500" in out
+
+
+def test_eval_retrieval_ablation_writes_its_section_and_prints_one_line_per_config(
+        world, monkeypatch, capsys):
+    metrics = {"ndcg@10": 0.4, "p@10": 0.3, "exclude_violation@10": None, "n": 1}
+    result = {"n": 1, "policy": "exclude_present/EXCLUDE",
+              "configs": {"label": metrics, "image": metrics}, "per_query": {}}
+    seen = {}
+
+    def fake_ablation(rows, **kw):
+        seen.update(kw)
+        return result
+
+    monkeypatch.setattr("src.evaluation.retrieval_eval.ablation", fake_ablation)
+    assert run(world, "--split", "dev", "--ablation") == 0
+    assert seen["fusion"] is world.state.fusion
+    data = json.loads(world.out.read_text(encoding="utf-8"))
+    assert "eval" not in data and data["ablation"]["configs"]["image"] == metrics
+    assert data["ablation"]["build_id"] == "b1"
+    out = capsys.readouterr().out
+    out.encode("ascii")
+    assert "label          ndcg=0.400 p@10=0.300 viol=n/a" in out
+
+
+def test_eval_retrieval_refuses_ablation_on_heldout(world, capsys):
+    assert run(world, "--split", "heldout", "--ablation") == 1
+    assert "ablation runs on dev only" in capsys.readouterr().err
+    assert not world.out.exists()
+
+
+def test_eval_retrieval_prints_image_vs_vector_after_the_verdict(world, monkeypatch, capsys):
+    monkeypatch.setattr("src.evaluation.retrieval_eval.evaluate_retrieval",
+                        lambda rows, **kw: canned(kw["parsers"], kw["modes"]))
+    monkeypatch.setattr("src.evaluation.retrieval_eval.verdict", lambda report, t: PASSING)
+    comparison = {"n_common": 2, "ndcg@10": {"image": 0.6, "vector": 0.5}, "wins": 1,
+                  "ties": 1, "losses": 0, "s2_passed": True}
+    monkeypatch.setattr("src.evaluation.retrieval_eval.image_vs_vector",
+                        lambda report: comparison)
+    assert run(world, "--split", "dev", "--parsers", "gold", "--modes", "vector", "image",
+               "hybrid") == 0
+    saved = json.loads(world.out.read_text(encoding="utf-8"))["eval"]
+    assert saved["image_vs_vector"] == comparison
+    assert ("image_vs_vector: n=2 ndcg image=0.600 vector=0.500 wins/ties/losses=1/1/0 s2=PASS"
+            in capsys.readouterr().out)
+    # without the image mode there is nothing to compare, and no line
+    assert run(world, "--split", "dev", "--parsers", "gold", "--modes", "vector", "hybrid") == 0
+    assert "image_vs_vector" not in capsys.readouterr().out
+    assert "image_vs_vector" not in json.loads(world.out.read_text(encoding="utf-8"))["eval"]
+
+
+@pytest.mark.parametrize("extra", [("--modes", "label", "vector", "image"), ("--grid",),
+                                   ("--ablation",)])
+def test_eval_retrieval_refuses_image_dependent_runs_without_the_probe(
+        world, monkeypatch, capsys, extra):
+    world.state.image_status, world.state.image_reason = "disabled", "probe artifact missing"
+
+    def boom(*a, **kw):
+        raise AssertionError("nothing may be evaluated")
+
+    for name in ("evaluate_retrieval", "grid_search", "ablation"):
+        monkeypatch.setattr(f"src.evaluation.retrieval_eval.{name}", boom)
+    assert run(world, "--split", "dev", "--parsers", "gold", *extra) == 1
+    err = capsys.readouterr().err
+    assert "image probe disabled: probe artifact missing" in err and "train-probe" in err
+    assert not world.out.exists()
+
+
+def test_eval_retrieval_without_image_still_runs_when_the_probe_is_disabled(world, monkeypatch):
+    world.state.image_status = "disabled"
+    monkeypatch.setattr("src.evaluation.retrieval_eval.evaluate_retrieval",
+                        lambda rows, **kw: canned(kw["parsers"], kw["modes"]))
+    monkeypatch.setattr("src.evaluation.retrieval_eval.verdict", lambda report, t: PASSING)
+    assert run(world, "--split", "dev", "--parsers", "gold", "--modes", "label", "vector",
+               "hybrid") == 0
+    assert world.out.exists()

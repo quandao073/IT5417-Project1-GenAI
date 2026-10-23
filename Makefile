@@ -8,7 +8,8 @@ PY := uv run
 
 .DEFAULT_GOAL := help
 .PHONY: help setup up down logs ps seed smoke test lint typecheck \
-        audit-data build-corpus embed index build-report-index validate-indexes \
+        audit-data build-corpus build-probe-pool train-probe embed index \
+        build-report-index validate-indexes \
         evaluate benchmark eval-parser eval-retrieval clean
 
 help: ## List targets
@@ -46,6 +47,10 @@ embed: ## Embed the corpus into shard files (CPU, native, ~35 min, resumable)
 #   $(COMPOSE_GPU) --profile worker run --rm worker embed
 index: ## Upsert the shards into Qdrant and write build_manifest.json (needs `make up` or `docker compose up -d qdrant`)
 	$(PY) cxr index
+build-probe-pool: ## Pool of studies outside the corpus for the image probe
+	$(PY) cxr build-probe-pool
+train-probe: ## Train the image concept probe (needs the pool embedded)
+	$(PY) cxr train-probe
 build-report-index: ## Build the SQLite FTS5 report index
 	$(PY) cxr build-report-index
 validate-indexes: ## Check canonical tables, Qdrant and the report index agree

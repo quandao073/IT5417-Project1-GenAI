@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
+import numpy as np
 import polars as pl
 import pytest
 from fastapi.testclient import TestClient
@@ -13,7 +15,8 @@ from src.api import dependencies as deps
 from src.api.main import create_app
 from src.common.config import Settings, load_config
 from src.common.ids import qdrant_point_id
-from src.embeddings import embed, index
+from src.data.labels import CHEXPERT_LABELS
+from src.embeddings import embed, index, probe
 from src.retrieval.hybrid import FusionParams
 from src.retrieval.report_index import build_report_index
 from tests.unit.fakes import FakeEncoder, FakeOllama
@@ -43,15 +46,31 @@ def studies_frame(images: pl.DataFrame) -> pl.DataFrame:
     ).sort("study_id")
 
 
+def write_probe_artifact(out_dir, studies, *, build_id=BUILD, drop=0):
+    """A probe artifact for `studies` (a studies_frame): zero weights, zero logits,
+    `drop` rows of corpus_scores left out."""
+    meta = {"probe_id": "p1", "build_id": build_id,
+            "encoder": {"model_id": "fake", "revision": FakeEncoder().revision, "dim": 4}}
+    scores = pl.DataFrame({
+        "study_id": studies["study_id"], "image_id": studies["selected_image_id"],
+        **{c: pl.Series([0.0] * studies.height, dtype=pl.Float32) for c in CHEXPERT_LABELS},
+    })
+    probe.save_probe(
+        out_dir, probe.Probe(np.zeros((14, 4), np.float32), np.zeros(14, np.float32),
+                             tuple(CHEXPERT_LABELS)),
+        meta, scores.head(studies.height - drop))
+
+
 @pytest.fixture
 def world(tmp_path):
-    """Canonical dir, shards, an in-memory Qdrant with the collection, a manifest and the
-    report index (ROWS are keyed by the same four studies)."""
+    """Canonical dir, shards, an in-memory Qdrant with the collection, a manifest, the
+    report index (ROWS are keyed by the same four studies) and an image probe."""
     images = images_frame(8)
     canonical = tmp_path / "canonical"
     canonical.mkdir()
     images.write_parquet(canonical / "images.parquet")
-    studies_frame(images).write_parquet(canonical / "studies.parquet")
+    studies = studies_frame(images)
+    studies.write_parquet(canonical / "studies.parquet")
     labels_frame(WORLD_LABELS).write_parquet(canonical / "labels.parquet")
     reports_frame(ROWS).write_parquet(canonical / "reports.parquet")
     out = tmp_path / "embeddings" / BUILD
@@ -64,9 +83,10 @@ def world(tmp_path):
     index.write_manifest(indexes / index.MANIFEST_FILE, manifest)
     settings = Settings(_env_file=None, canonical_dir=canonical, image_root=tmp_path / "root",
                         fts_db_path=indexes / "x.sqlite", indexes_dir=indexes,
-                        llm_disabled=True)
+                        image_probe_dir=indexes / "image_probe", llm_disabled=True)
     build_report_index(reports_frame(ROWS), settings.fts_db_path, concepts_sha256="x",
                        git_commit=None)
+    write_probe_artifact(settings.image_probe_dir, studies)
     return settings, client, manifest
 
 
@@ -193,6 +213,64 @@ class TestReportIndex:
         assert state.report_min_token_chars == 3
 
 
+class TestImageProbe:
+    def test_state_loads_the_image_probe(self, world):
+        state = _state(world)
+        assert state.image_status == "ok" and state.image_reason is None
+        assert state.image_meta["probe_id"] == "p1"
+        assert state.image_scores.logits.shape == (4, 14)
+        # aligned to the label matrix, which is what the pipeline indexes both by
+        assert state.image_scores.row_of == {s: i for i, s in enumerate(state.labels.study_ids)}
+
+    def test_state_is_ready_without_the_probe(self, world, tmp_path):
+        settings = world[0].model_copy(update={"image_probe_dir": tmp_path / "nowhere"})
+        state = _state(world, settings=settings)
+        assert state.ready and state.image_status == "disabled" and state.image_scores is None
+        assert "not found" in state.image_reason
+
+    def test_state_disables_the_probe_on_build_id_mismatch(self, world):
+        settings = world[0]
+        write_probe_artifact(settings.image_probe_dir,
+                             pl.read_parquet(settings.canonical_dir / "studies.parquet"),
+                             build_id="another_build")
+        state = _state(world)
+        assert state.ready and state.image_status == "disabled"
+        assert "another_build" in state.image_reason and "run cxr train-probe" in state.image_reason
+
+    def test_state_disables_the_probe_when_a_corpus_study_has_no_score(self, world, tmp_path):
+        settings = world[0]
+        short = tmp_path / "short_probe"
+        write_probe_artifact(short, pl.read_parquet(settings.canonical_dir / "studies.parquet"),
+                             drop=1)
+        state = _state(world, settings=settings.model_copy(update={"image_probe_dir": short}))
+        assert state.ready and state.image_status == "disabled"
+        assert "1 corpus studies" in state.image_reason
+
+    def test_a_mismatched_encoder_revision_disables_the_probe_only(self, world):
+        settings = world[0]
+        meta_path = settings.image_probe_dir / probe.META_FILE
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta["encoder"]["revision"] = "oldrev"
+        meta_path.write_text(json.dumps(meta), encoding="utf-8")
+        state = _state(world)
+        assert state.ready and state.image_status == "disabled" and "oldrev" in state.image_reason
+
+    def test_a_corrupt_probe_file_disables_the_probe_only(self, world):
+        (world[0].image_probe_dir / probe.PROBE_FILE).write_bytes(b"not an npz")
+        state = _state(world)
+        assert state.ready is True and state.image_status == "disabled"
+        assert "probe.npz" in state.image_reason
+
+    def test_probe_meta_without_build_id_disables_the_probe_only(self, world):
+        meta_path = world[0].image_probe_dir / probe.META_FILE
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        del meta["build_id"]
+        meta_path.write_text(json.dumps(meta), encoding="utf-8")
+        state = _state(world)
+        assert state.ready is True and state.image_status == "disabled"
+        assert "build_id" in state.image_reason
+
+
 class TestHealth:
     def test_ready_health_reports_the_build(self, world):
         client = TestClient(create_app(_state(world)))
@@ -201,6 +279,7 @@ class TestHealth:
         assert body["dimension"] == 4 and body["vectors"] == 8
         assert body["report_index"] == "ok" and body["report_studies"] == 4
         assert body["llm"] == "disabled"
+        assert body["image_probe"] == "ok" and body["image_probe_id"] == "p1"
         assert body["studies"] == 4 and body["llm_model"] == "gpt-5-mini-2025-08-07"
 
     def test_not_ready_health_is_503_with_reason(self, world, tmp_path):
