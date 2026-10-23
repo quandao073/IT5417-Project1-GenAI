@@ -58,3 +58,6 @@ docs/superpowers/
 # --- Package worktrees (V1.1) ---
 .worktrees/
 notes/*.log
+
+# --- Fine-tuning runs (V1.1): adapters and merged weights, CC BY-NC, never committed ---
+runs/
