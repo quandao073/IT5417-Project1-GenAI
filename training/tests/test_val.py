@@ -78,6 +78,8 @@ def test_val_p5_runs_the_tiny_model_end_to_end(tmp_path):
     assert (out["n_single"], out["n_pair"], out["n_negation"]) == (2, 1, 2)
     for kind in ("single", "pair", "negation", "mean"):
         assert 0.0 <= out[kind] <= 1.0
+    # Collapse monitor: mean cosine between distinct template texts (FT1 reached 0.94).
+    assert -1.0 <= out["text_cos"] < 1.0
     again = val_p5(model, tokenizer, images, _statuses(), CONCEPTS, CFG, torch.device("cpu"),
                    text_max_length=16, batch_size=7)
     assert again == out

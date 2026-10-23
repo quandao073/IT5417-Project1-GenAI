@@ -66,7 +66,8 @@ def test_train_smoke_on_tiny_model_cpu(tmp_path):
     for e in epochs:
         assert math.isfinite(e["train_loss"]) and e["seconds"] >= 0
         assert math.isfinite(e["val_p5_mean"]) and 0.0 <= e["val_p5_mean"] <= 1.0
-        assert set(e) >= {"val_p5_single", "val_p5_pair", "val_p5_negation", "vram_mib",
+        assert set(e) >= {"val_p5_single", "val_p5_pair", "val_p5_negation", "val_text_cos",
+                          "vram_mib",
                           "train_seconds", "val_seconds", "s_per_step", "data_wait_seconds",
                           "skipped_steps"}
         assert e["skipped_steps"] == 0
@@ -100,6 +101,15 @@ def test_train_ft2_uses_impressions_and_ft3_drops_repel(tmp_path):
     ft3 = json.loads((tmp_path / "ft3" / "metrics.json").read_text(encoding="utf-8"))
     assert ft3["config"]["impression_fraction"] == 0.0 and ft3["config"]["repel_weight"] == 0.0
     assert ft3["best_epoch"] == 1 and (tmp_path / "ft3" / "model.pt").is_file()
+    assert ft2["config"]["targets"] == ft3["config"]["targets"] == "caption"
+    assert train.main(["--variant", "FT6", "--out", str(tmp_path / "ft6"), *common]) == 0
+    ft6 = json.loads((tmp_path / "ft6" / "metrics.json").read_text(encoding="utf-8"))
+    assert ft6["config"]["targets"] == "image" and ft6["config"]["repel_weight"] == 0.3
+    assert all(math.isfinite(s) for s in ft6["steps"])
+    # FT6 fixes the temperature at 5 (WORKLOG "FT1 kẹt ở ln 128"); the export carries it.
+    assert ft6["config"]["logit_scale"] == 5.0 and ft2["config"]["logit_scale"] is None
+    payload = torch.load(tmp_path / "ft6" / "model.pt", map_location="cpu", weights_only=True)
+    assert math.isclose(float(payload["model"]["logit_scale"].exp()), 5.0, rel_tol=1e-5)
 
 
 def _tiny_lora(seed: int = 0):
@@ -186,3 +196,4 @@ def test_resume_continues_from_the_last_finished_epoch(tmp_path):
     assert train.main([*common, "--epochs", "2", "--resume"]) == 0
     again = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
     assert [e["epoch"] for e in again["epochs"]] == [1, 2]
+

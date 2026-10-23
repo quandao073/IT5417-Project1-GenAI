@@ -8,7 +8,8 @@ import math
 import torch
 import torch.nn.functional as fn
 
-from training.loss import clip_loss, label_aware_loss
+from training.captions import CODE_ABSENT, CODE_PRESENT, CODE_UNCERTAIN
+from training.loss import clip_loss, image_label_loss, image_targets, label_aware_loss
 
 SCALE = torch.tensor(1 / 0.07)
 
@@ -83,3 +84,62 @@ def test_shared_labels_spread_the_target():
     assert label_aware_loss(zi, zt, shared, SCALE, lam=0.0) != clip_loss(zi, zt, SCALE)
     loss = label_aware_loss(zi, zt, shared, SCALE, lam=0.0)
     assert loss.requires_grad is False and math.isfinite(loss.item())
+
+
+# --- image-label targets (FT6; WORKLOG "FT1 kẹt ở ln 128") -------------------------------------
+P, A, U = CODE_PRESENT, CODE_ABSENT, CODE_UNCERTAIN
+
+
+def _codes(rows: list[list[int]]) -> torch.Tensor:
+    return torch.tensor(rows, dtype=torch.int8)
+
+
+def test_image_targets_match_clip_when_each_image_has_only_its_caption_concept():
+    zi, zt = _batch(6)
+    y = torch.eye(6, dtype=torch.int8)
+    codes = torch.eye(6, dtype=torch.int8) * P
+    assert torch.allclose(image_label_loss(zi, zt, y, SCALE, lam=0.3, codes=codes),
+                          clip_loss(zi, zt, SCALE), atol=1e-6)
+
+
+def test_a_caption_the_image_satisfies_is_a_positive_even_if_drawn_elsewhere():
+    # Image 0 has concepts 0 and 1; its caption this time is "0". Caption 1 ("1") comes from
+    # image 1, which has only concept 1. The paper's targets call (image 0, caption 1) a negative.
+    y = torch.tensor([[1, 0], [0, 1]], dtype=torch.int8)
+    codes = _codes([[P, P], [0, P]])
+    relevant, conflict = image_targets(y, codes)
+    assert relevant.tolist() == [[True, True], [False, True]]
+    assert not conflict.any()
+
+
+def test_negated_concept_must_be_absent_or_not_mentioned():
+    # Caption 0 is "a and no b"; four images that all have a PRESENT and b in each status.
+    y = torch.tensor([[1, -1]] * 4, dtype=torch.int8)
+    codes = _codes([[P, A], [P, 0], [P, U], [P, P]])
+    relevant, conflict = image_targets(y, codes)
+    assert relevant[:, 0].tolist() == [True, True, False, False]
+    assert conflict[:, 0].tolist() == [False, False, False, True]
+
+
+def test_affirmed_concept_absent_in_the_image_conflicts_not_mentioned_does_not():
+    y = torch.tensor([[1, 0], [0, 1], [0, 1]], dtype=torch.int8)
+    codes = _codes([[P, 0], [A, P], [0, P]])
+    relevant, conflict = image_targets(y, codes)
+    assert not relevant[1, 0] and conflict[1, 0]          # "a" for an image with a ABSENT
+    assert not relevant[2, 0] and not conflict[2, 0]      # "a" for an image that never mentions a
+    assert relevant.diagonal().all()
+
+
+def test_image_targets_repel_only_conflicts_and_never_nan():
+    zi, zt = _batch(7)
+    y = torch.tensor([[1, 0, 0], [-1, 1, 0], [0, 1, 0], [0, 0, 1], [1, 1, 0], [0, -1, 1]],
+                     dtype=torch.int8)
+    codes = _codes([[P, 0, A], [A, P, 0], [U, P, 0], [0, 0, P], [P, P, 0], [0, A, P]])
+    _, conflict = image_targets(y, codes)
+    assert conflict.any()
+    logits = SCALE * zi @ zt.T
+    repel = logits[conflict].clamp(min=0).mean()
+    with_repel = image_label_loss(zi, zt, y, SCALE, lam=0.3, codes=codes)
+    without = image_label_loss(zi, zt, y, SCALE, lam=0.0, codes=codes)
+    assert math.isfinite(with_repel.item())
+    assert torch.allclose(with_repel - without, 0.3 * repel, atol=1e-6)

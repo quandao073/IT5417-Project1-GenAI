@@ -93,7 +93,8 @@ def load_cache(cache_dir: Path) -> tuple[np.ndarray, pl.DataFrame, dict]:
 
 
 class PoolDataset(Dataset):
-    """(pixels float32 [3, size, size], caption, y int8 [L]) over the eligible rows of one split.
+    """(pixels float32 [3, size, size], caption, y int8 [L], image codes int8 [L]) over the
+    eligible rows of one split; `y` is the caption's label vector, the codes the image's own.
 
     `train` picks pool-train (True) or pool-val (False) by the cache's `is_val`; rows without a
     PRESENT training concept are dropped (D32). `augment_cfg` None means the eval transform.
@@ -120,12 +121,13 @@ class PoolDataset(Dataset):
     def __len__(self) -> int:
         return len(self.rows)
 
-    def __getitem__(self, i: int) -> tuple[torch.Tensor, str, torch.Tensor]:
+    def __getitem__(self, i: int) -> tuple[torch.Tensor, str, torch.Tensor, torch.Tensor]:
         if self.images is None:
             self.images = np.load(self.cache_dir / IMAGES_FILE, mmap_mode="r")
         row = int(self.rows[i])
         text, y = self.sampler.sample(row)
-        return self.transform(self.images[row]), text, torch.from_numpy(y)
+        return (self.transform(self.images[row]), text, torch.from_numpy(y),
+                torch.from_numpy(self.sampler.image_codes(row)))
 
 
 def reseed_worker(worker_id: int) -> None:

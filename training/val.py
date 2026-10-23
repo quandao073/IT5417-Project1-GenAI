@@ -86,10 +86,17 @@ def val_p5(model, tokenizer, images_uint8: np.ndarray, statuses: np.ndarray,
            concepts: Sequence[str], concepts_cfg: dict, device: torch.device, *,
            text_max_length: int = 64, batch_size: int = 256, amp: bool = False,
            min_relevant: int = 5) -> dict[str, float]:
-    """P@5 of the S12 single / pair / negation templates on the given images (pool-val)."""
+    """P@5 of the S12 single / pair / negation templates on the given images (pool-val), plus
+    "text_cos": the mean cosine between distinct templates."""
     queries = generate(concepts, KINDS, concepts_cfg)
     image_vecs = embed_images(model, images_uint8, device, batch_size=batch_size, amp=amp)
     text_vecs = encode_texts(model, tokenizer, [q.text for q in queries], device,
                              text_max_length=text_max_length, amp=amp)
     scores = (text_vecs @ image_vecs.T).numpy()
-    return p_at_5_by_kind(scores, queries, statuses, min_relevant=min_relevant)
+    out = p_at_5_by_kind(scores, queries, statuses, min_relevant=min_relevant)
+    # Collapse monitor: when the text tower maps every template to one point this nears 1
+    # (FT1 of B14: 0.53 -> 0.94 in two epochs while P@5 fell below zero-shot).
+    sims = text_vecs @ text_vecs.T
+    off = ~torch.eye(len(sims), dtype=torch.bool)
+    out["text_cos"] = float(sims[off].mean())
+    return out

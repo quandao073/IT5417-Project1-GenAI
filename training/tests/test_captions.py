@@ -8,7 +8,14 @@ import pytest
 from src.common.config import load_config
 from src.data.labels import CHEXPERT_LABELS
 from src.retrieval.templates import training_concepts
-from training.captions import CaptionSampler, label_vector
+from training.captions import (
+    CODE_ABSENT,
+    CODE_PRESENT,
+    CODE_UNCERTAIN,
+    CaptionSampler,
+    label_vector,
+    status_codes,
+)
 
 CFG = load_config("concepts")
 CONCEPTS = training_concepts(load_config("training"))
@@ -147,3 +154,15 @@ def test_rejects_bad_mix_and_missing_impressions():
         sampler([row({"Edema": "PRESENT"})], impression_fraction=0.2)
     with pytest.raises(ValueError):
         sampler([row({"Edema": "UNCERTAIN"})]).sample(0)
+
+
+def test_status_codes_keep_uncertain_apart_from_not_mentioned():
+    labels = row({"Edema": "PRESENT", "Pleural Effusion": "ABSENT", "Pneumonia": "UNCERTAIN",
+                  "Enlarged Cardiomediastinum": "PRESENT"})
+    codes = status_codes(labels, CONCEPTS)
+    assert codes.dtype == np.int8 and codes.shape == (len(CONCEPTS),)
+    assert codes[J["Edema"]] == CODE_PRESENT == 1
+    assert codes[J["Pleural Effusion"]] == CODE_ABSENT == -1
+    assert codes[J["Pneumonia"]] == CODE_UNCERTAIN == 2
+    assert codes[J["Cardiomegaly"]] == 0
+    assert sampler([labels]).image_codes(0).tolist() == codes.tolist()

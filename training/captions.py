@@ -23,6 +23,11 @@ from src.retrieval.templates import NO_FINDING, render
 KINDS = ("single", "pair", "negation")
 IMPRESSION = "impression"
 _COL = {name: i for i, name in enumerate(CHEXPERT_LABELS)}
+# The image's own labels for the image-target loss (FT6). NOT_MENTIONED is 0; UNCERTAIN keeps
+# its own code because it blocks a negation ("no a" never matches an uncertain a), which the
+# caption's label vector cannot express.
+CODE_PRESENT, CODE_ABSENT, CODE_UNCERTAIN = 1, -1, 2
+_CODES = {"PRESENT": CODE_PRESENT, "ABSENT": CODE_ABSENT, "UNCERTAIN": CODE_UNCERTAIN}
 
 
 def label_vector(statuses_row: np.ndarray, concepts: Sequence[str]) -> np.ndarray:
@@ -35,6 +40,11 @@ def label_vector(statuses_row: np.ndarray, concepts: Sequence[str]) -> np.ndarra
         elif status == "ABSENT":
             y[j] = -1
     return y
+
+
+def status_codes(statuses_row: np.ndarray, concepts: Sequence[str]) -> np.ndarray:
+    """int8 [L]: CODE_PRESENT / CODE_ABSENT / CODE_UNCERTAIN, 0 for NOT_MENTIONED."""
+    return np.array([_CODES.get(statuses_row[_COL[c]], 0) for c in concepts], dtype=np.int8)
 
 
 class CaptionSampler:
@@ -79,12 +89,19 @@ class CaptionSampler:
         sub = statuses[:, [_COL[c] for c in self.concepts]]
         self._present = sub == "PRESENT"
         self._absent = sub == "ABSENT"
+        self._codes = np.zeros(sub.shape, dtype=np.int8)
+        for status, code in _CODES.items():
+            self._codes[sub == status] = code
         self._no_finding = self.concepts.index(NO_FINDING) if NO_FINDING in self.concepts else -1
         self._rng = np.random.default_rng(seed)
 
     def reseed(self, seed: int) -> None:
         """Fresh stream, so DataLoader workers do not replay one another's draws."""
         self._rng = np.random.default_rng(seed)
+
+    def image_codes(self, row: int) -> np.ndarray:
+        """The row's own labels as `status_codes` (a copy)."""
+        return self._codes[row].copy()
 
     def eligible(self) -> np.ndarray:
         """bool [N]: the row has a PRESENT training concept (No Finding counts as one)."""

@@ -11,7 +11,7 @@ from torchvision import transforms as T
 from src.common.config import load_config
 from src.retrieval.templates import training_concepts
 from training.cache import build_cache
-from training.captions import CaptionSampler
+from training.captions import CaptionSampler, status_codes
 from training.data import (
     PoolDataset,
     eval_transform,
@@ -68,10 +68,12 @@ def test_dataset_item_shapes_and_no_flip(pool, tmp_path):
     assert len(val) == int((is_val & eligible).sum())
     assert len(train) + len(val) == 5
 
-    pixels, text, y = train[0]
+    pixels, text, y, codes = train[0]
     assert pixels.dtype == torch.float32 and pixels.shape == (3, 32, 32)
     assert isinstance(text, str) and text
     assert y.dtype == torch.int8 and tuple(y.shape) == (len(CONCEPTS),)
+    assert codes.dtype == torch.int8
+    assert codes.tolist() == status_codes(statuses[train.rows[0]], CONCEPTS).tolist()
     # Identity augmentation reproduces the eval transform of the same cached image.
     assert torch.allclose(pixels, eval_transform()(images[train.rows[0]]), atol=1e-5)
 
@@ -104,5 +106,5 @@ def test_transforms_and_dataset_pickle_for_spawned_workers(pool, tmp_path):
     dataset = PoolDataset(out, sampler, train=True, augment_cfg=REAL_AUG)
     clone = pickle.loads(pickle.dumps(dataset))
     assert clone.images is None and len(clone) == len(dataset)
-    pixels, _, _ = clone[0]
+    pixels, *_ = clone[0]
     assert pixels.shape == (3, 32, 32)

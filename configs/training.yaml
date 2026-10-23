@@ -1,4 +1,4 @@
-# Label-aware fine-tuning of the image-mode encoder (V1.1, WORKLOG D30-D34; H2 of the design
+# Label-aware fine-tuning of the image-mode encoder (V1.1, WORKLOG D30-D36; H2 of the design
 # spec docs/superpowers/specs/2026-10-23-label-aware-image-retrieval-design.md).
 # Read by training/ (captions, cache, train loop), by src/evaluation/template_bench.py
 # (query sets S12 / R10) and by the pipeline (which concepts the encoder was trained on).
@@ -93,7 +93,15 @@ optim:
   repel_weight: 0.3
   text_max_length: 64
 
+# targets: caption = the paper's soft targets, K = y yT over the captions' label vectors;
+# image = caption j is a positive of image i when image i's own labels satisfy it (bench default
+# policy). FT1 stays the paper's row; FT6 is the fix for FT1 stalling at ln 128 (WORKLOG
+# "FT1 kẹt ở ln 128": caption-only targets call 33.8 % of true matches negatives).
+# logit_scale: a fixed temperature in place of the checkpoint's 24.16, which CXR-CLIP learned
+# for reports and which makes the un-tuned model worse than uniform on template captions
+# (attract 6.66 vs ln 128 = 4.85), so the loss falls fastest by collapsing the text tower.
 variants:
-  FT1: {impression_fraction: 0.0, repel_weight: 0.3}
-  FT2: {impression_fraction: 0.2, repel_weight: 0.3}
-  FT3: {impression_fraction: 0.0, repel_weight: 0.0}
+  FT1: {impression_fraction: 0.0, repel_weight: 0.3, targets: caption}
+  FT2: {impression_fraction: 0.2, repel_weight: 0.3, targets: caption}
+  FT3: {impression_fraction: 0.0, repel_weight: 0.0, targets: caption}
+  FT6: {impression_fraction: 0.0, repel_weight: 0.3, targets: image, logit_scale: 5.0}

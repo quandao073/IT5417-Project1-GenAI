@@ -48,6 +48,8 @@ from training import captions, data, lora, loss, val
 from training.model import load_base, resolve_config_dir
 
 ADAPTER_FILE = "adapter_model.safetensors"
+# training.yaml:variants.<v>.targets -> the loss; "caption" is the paper's K = y yT.
+LOSSES = {"caption": loss.label_aware_loss, "image": loss.image_label_loss}
 STATE_FILE = "state_last.pt"
 PRECISIONS = ("bf16", "fp16", "fp32")
 _LOG_EVERY = 100
@@ -110,7 +112,7 @@ def enable_gradient_checkpointing(net) -> None:
 
 def train_step(net, pixels, input_ids, attention_mask, y, *, optimizer, scheduler, scaler,
                autocast_dtype, lam: float, max_grad_norm: float | None,
-               loss_fn=loss.label_aware_loss) -> float | None:
+               loss_fn=loss.label_aware_loss, codes=None) -> float | None:
     """One optimisation step; returns the loss, or None when it was not finite (no update)."""
     device = pixels.device
     with torch.autocast(device.type, dtype=autocast_dtype or torch.float32,
@@ -120,7 +122,7 @@ def train_step(net, pixels, input_ids, attention_mask, y, *, optimizer, schedule
     # The loss runs in fp32 whatever autocast did inside the towers.
     zi, zt = normalize(zi.float(), dim=-1), normalize(zt.float(), dim=-1)
     scale = net.logit_scale.exp().clamp(max=100.0)
-    step_loss = loss_fn(zi, zt, y, scale, lam)
+    step_loss = loss_fn(zi, zt, y, scale, lam, **({} if codes is None else {"codes": codes}))
     optimizer.zero_grad(set_to_none=True)
     if not torch.isfinite(step_loss):
         return None
@@ -250,6 +252,11 @@ def _run(args: argparse.Namespace, cfg: dict) -> int:
                                  dropout=lora_cfg["dropout"], targets=lora_cfg["targets"])
     peft_model.to(device)
     net = lora.unwrap(peft_model)
+    fixed_scale = variant.get("logit_scale")
+    if fixed_scale is not None:
+        # Stays frozen; only its value changes (the cosine ranking does not depend on it).
+        with torch.no_grad():
+            net.logit_scale.fill_(math.log(float(fixed_scale)))
     if args.grad_checkpointing:
         enable_gradient_checkpointing(net)
     params = [p for p in peft_model.parameters() if p.requires_grad]
@@ -260,12 +267,15 @@ def _run(args: argparse.Namespace, cfg: dict) -> int:
     scaler = torch.amp.GradScaler("cuda") if needs_scaler else None
     text_max_length = int(optim["text_max_length"])
     lam = float(variant["repel_weight"])
+    targets = variant.get("targets", "caption")
+    loss_fn = LOSSES[targets]
 
     metrics: dict = {
         "config": {
             "variant": args.variant, "lr": args.lr, "epochs": args.epochs,
             "batch_size": args.batch_size, "subset": args.subset, "seed": args.seed,
-            "repel_weight": lam, "impression_fraction": impression_fraction,
+            "repel_weight": lam, "targets": targets, "logit_scale": fixed_scale,
+            "impression_fraction": impression_fraction,
             "mix": cfg["captions"]["mix"], "lora": lora_cfg, "augmentation": cfg["augmentation"],
             "weight_decay": optim["weight_decay"], "warmup_steps": optim["warmup_steps"],
             "early_stop_patience": optim["early_stop_patience"],
@@ -329,7 +339,7 @@ def _run(args: argparse.Namespace, cfg: dict) -> int:
         data_wait, skipped = 0.0, 0
         n_steps = len(loader) if args.max_steps is None else min(len(loader), args.max_steps)
         fetched = time.perf_counter()
-        for step, (pixels, texts, y) in enumerate(loader, 1):
+        for step, (pixels, texts, y, codes) in enumerate(loader, 1):
             started = time.perf_counter()
             data_wait += started - fetched
             tokens = tokenizer(list(texts), padding="longest", truncation=True,
@@ -338,7 +348,8 @@ def _run(args: argparse.Namespace, cfg: dict) -> int:
                 net, pixels.to(device, non_blocking=True), tokens["input_ids"].to(device),
                 tokens["attention_mask"].to(device), y.to(device), optimizer=optimizer,
                 scheduler=scheduler, scaler=scaler, autocast_dtype=autocast_dtype, lam=lam,
-                max_grad_norm=args.max_grad_norm)
+                max_grad_norm=args.max_grad_norm, loss_fn=loss_fn,
+                codes=codes.to(device) if targets == "image" else None)
             if device.type == "cuda":
                 torch.cuda.synchronize(device)
             fetched = time.perf_counter()
@@ -380,6 +391,7 @@ def _run(args: argparse.Namespace, cfg: dict) -> int:
             "epoch": epoch, "train_loss": float(np.mean(losses)) if losses else float("nan"),
             "val_p5_single": p5["single"], "val_p5_pair": p5["pair"],
             "val_p5_negation": p5["negation"], "val_p5_mean": p5["mean"],
+            "val_text_cos": p5["text_cos"],
             "val_n_queries": {k: p5[f"n_{k}"] for k in val.KINDS},
             "seconds": round(time.perf_counter() - tick, 1),
             "train_seconds": round(train_seconds, 1), "val_seconds": round(val_seconds, 1),
@@ -405,7 +417,7 @@ def _run(args: argparse.Namespace, cfg: dict) -> int:
                     since_best=since_best, stopped_early=stop)
         print(f"epoch {epoch} train_loss {record['train_loss']:.4f} val_p5 "
               f"single {p5['single']:.3f} pair {p5['pair']:.3f} negation {p5['negation']:.3f} "
-              f"mean {p5['mean']:.3f} best_epoch {best_epoch} "
+              f"mean {p5['mean']:.3f} text_cos {p5['text_cos']:.3f} best_epoch {best_epoch} "
               f"(train {record['train_seconds']} s, {record['s_per_step']} s/step, "
               f"data wait {record['data_wait_seconds']} s, val {record['val_seconds']} s, "
               f"vram train {vram_train} / val {vram_val} MiB)", flush=True)
