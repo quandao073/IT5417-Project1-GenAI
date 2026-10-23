@@ -76,7 +76,10 @@ def encode_texts(model, tokenizer, texts: Sequence[str], device: torch.device, *
 
 
 def _amp_dtype(device: torch.device) -> torch.dtype:
-    return torch.float16 if device.type == "cuda" else torch.bfloat16
+    """bf16 where the GPU has it (fp32's range, no overflow), else fp16; bf16 on CPU."""
+    if device.type == "cuda":
+        return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    return torch.bfloat16
 
 
 def val_p5(model, tokenizer, images_uint8: np.ndarray, statuses: np.ndarray,

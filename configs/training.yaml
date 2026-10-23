@@ -80,7 +80,14 @@ optim:
   lr_grid: [1.0e-5, 3.0e-5, 1.0e-4]
   weight_decay: 0.01
   warmup_steps: 200
-  amp: true
+  # Laptop GPU (RTX 2000 Ada, 8 GB, ~1.5 GB used by the display): the first smoke run peaked at
+  # 8,661 MiB allocated and spilled into shared memory. bf16 needs no loss scaling; gradient
+  # checkpointing keeps batch 128 (the paper's number of in-batch negatives) inside VRAM.
+  precision: bf16
+  gradient_checkpointing: true
+  max_grad_norm: 1.0
+  # A run aborts after this many non-finite losses in one epoch (each is skipped, no update).
+  max_nonfinite_steps: 10
   early_stop_patience: 3
   # Weight of the repel term in the label-aware loss (paper: 0.3).
   repel_weight: 0.3

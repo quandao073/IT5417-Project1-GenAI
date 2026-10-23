@@ -60,7 +60,7 @@ uv run --project training python training/train.py --variant FT3 --lr <best> --o
 Defaults come from `configs/training.yaml` (batch 128, 10 epochs, AdamW wd 0.01, warmup 200,
 AMP on, patience 3, text max length 64, LoRA 12/24/0.1 on q/k/v) and from
 `configs/models.yaml:image_encoder.candidates.cxrclip` (`--checkpoint`, `--swin-config`,
-`--bert-config`). `--device` defaults to `cuda` when available; `--amp` is forced off on CPU.
+`--bert-config`). `--device` defaults to `cuda` when available. `--precision` (bf16 default, fp16, fp32) and `--grad-checkpointing` come from `training.yaml:optim`; autocast is off on CPU. `--resume` continues from `state_last.pt` after the last finished epoch; `--max-steps` caps an epoch for timing runs.
 `--seed` defaults to `training.yaml:split.seed` (20260101) and drives torch, the caption
 sampler, the subset and the loader order.
 

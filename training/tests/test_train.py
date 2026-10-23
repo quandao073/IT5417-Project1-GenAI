@@ -52,7 +52,7 @@ def test_train_smoke_on_tiny_model_cpu(tmp_path):
     common = ["--lr", "1e-3", "--batch-size", "8", "--seed", "1", "--cache", str(cache),
               "--pool-dir", str(pool_dir), "--checkpoint", str(checkpoint),
               "--swin-config", str(swin_dir), "--bert-config", str(bert_dir),
-              "--device", "cpu", "--no-amp", "--num-workers", "0"]
+              "--device", "cpu", "--precision", "fp32", "--num-workers", "0"]
     rc = train.main(["--variant", "FT1", "--epochs", "2", "--subset", "8", "--out", str(out),
                      *common])
     assert rc == 0
@@ -66,7 +66,10 @@ def test_train_smoke_on_tiny_model_cpu(tmp_path):
     for e in epochs:
         assert math.isfinite(e["train_loss"]) and e["seconds"] >= 0
         assert math.isfinite(e["val_p5_mean"]) and 0.0 <= e["val_p5_mean"] <= 1.0
-        assert set(e) >= {"val_p5_single", "val_p5_pair", "val_p5_negation", "vram_mib"}
+        assert set(e) >= {"val_p5_single", "val_p5_pair", "val_p5_negation", "vram_mib",
+                          "train_seconds", "val_seconds", "s_per_step", "data_wait_seconds",
+                          "skipped_steps"}
+        assert e["skipped_steps"] == 0
         assert (out / f"adapter_epoch{e['epoch']}" / "adapter_model.safetensors").is_file()
     assert metrics["best_epoch"] in (1, 2)
     assert 0 < metrics["trainable_fraction"] < 1
@@ -88,7 +91,7 @@ def test_train_ft2_uses_impressions_and_ft3_drops_repel(tmp_path):
     common = ["--lr", "1e-3", "--epochs", "1", "--batch-size", "8", "--subset", "8",
               "--seed", "2", "--cache", str(cache), "--pool-dir", str(pool_dir),
               "--checkpoint", str(checkpoint), "--swin-config", str(swin_dir),
-              "--bert-config", str(bert_dir), "--device", "cpu", "--no-amp",
+              "--bert-config", str(bert_dir), "--device", "cpu", "--precision", "fp32",
               "--num-workers", "0"]
     assert train.main(["--variant", "FT2", "--out", str(tmp_path / "ft2"), *common]) == 0
     ft2 = json.loads((tmp_path / "ft2" / "metrics.json").read_text(encoding="utf-8"))
@@ -97,3 +100,89 @@ def test_train_ft2_uses_impressions_and_ft3_drops_repel(tmp_path):
     ft3 = json.loads((tmp_path / "ft3" / "metrics.json").read_text(encoding="utf-8"))
     assert ft3["config"]["impression_fraction"] == 0.0 and ft3["config"]["repel_weight"] == 0.0
     assert ft3["best_epoch"] == 1 and (tmp_path / "ft3" / "model.pt").is_file()
+
+
+def _tiny_lora(seed: int = 0):
+    from training import lora
+
+    torch.manual_seed(seed)
+    net = build_model(MODEL_CFG, *tiny_configs())
+    peft_model = lora.apply_lora(net, rank=2, alpha=4, dropout=0.0)
+    return peft_model, lora.unwrap(peft_model)
+
+
+def test_resolve_precision():
+    cpu, cuda = torch.device("cpu"), torch.device("cuda")
+    assert train.resolve_precision("fp32", cpu) == (None, False)
+    assert train.resolve_precision("bf16", cpu) == (torch.bfloat16, False)
+    assert train.resolve_precision("fp16", cuda) == (torch.float16, True)
+    import pytest
+
+    with pytest.raises(ValueError):
+        train.resolve_precision("fp16", cpu)
+    with pytest.raises(ValueError):
+        train.resolve_precision("int8", cpu)
+
+
+def test_gradient_checkpointing_keeps_outputs_and_lora_gradients():
+    peft_model, net = _tiny_lora()
+    peft_model.train()
+    pixels = torch.randn(2, 3, 32, 32)
+    ids, mask = torch.tensor([[1, 2, 3, 4]] * 2), torch.ones(2, 4, dtype=torch.long)
+    torch.manual_seed(5)
+    plain = (net.encode_image(pixels), net.encode_text(ids, mask))
+    train.enable_gradient_checkpointing(net)
+    assert net.image_encoder.image_encoder.is_gradient_checkpointing
+    assert net.text_encoder.text_encoder.is_gradient_checkpointing
+    torch.manual_seed(5)
+    zi, zt = net.encode_image(pixels), net.encode_text(ids, mask)
+    assert torch.allclose(zi, plain[0], atol=1e-6) and torch.allclose(zt, plain[1], atol=1e-6)
+    (zi.sum() + zt.sum()).backward()
+    lora_grads = [p.grad for n, p in peft_model.named_parameters() if "lora_" in n]
+    assert lora_grads and all(g is not None for g in lora_grads)
+    assert any(float(g.abs().sum()) > 0 for g in lora_grads)
+
+
+def test_train_step_skips_a_nonfinite_loss_without_touching_weights():
+    peft_model, net = _tiny_lora()
+    peft_model.train()
+    params = [p for p in peft_model.parameters() if p.requires_grad]
+    optimizer = torch.optim.AdamW(params, lr=1e-2)
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda step: 1.0)
+    before = [p.detach().clone() for p in params]
+    batch = (torch.randn(2, 3, 32, 32), torch.tensor([[1, 2, 3]] * 2),
+             torch.ones(2, 3, dtype=torch.long), torch.tensor([[1, 0], [0, 1]], dtype=torch.int8))
+
+    def nan_loss(zi, zt, y, scale, lam):
+        return (zi.sum() + zt.sum()) * float("nan")
+
+    common = {"optimizer": optimizer, "scheduler": scheduler, "scaler": None,
+              "autocast_dtype": None, "lam": 0.3, "max_grad_norm": 1.0}
+    assert train.train_step(net, *batch, loss_fn=nan_loss, **common) is None
+    assert all(torch.equal(a, b) for a, b in zip(before, params, strict=True))
+    value = train.train_step(net, *batch, **common)
+    assert value is not None and math.isfinite(value)
+    assert any(not torch.equal(a, b) for a, b in zip(before, params, strict=True))
+
+
+def test_resume_continues_from_the_last_finished_epoch(tmp_path):
+    pool_dir, image_root, plus_csv = _pool_with_labels(tmp_path)
+    cache = tmp_path / "cache"
+    build_cache(pool_dir, image_root, plus_csv, cache, size=32, val_fraction=0.5, seed=3)
+    checkpoint, swin_dir, bert_dir, _ = write_tiny_checkpoint(tmp_path / "ckpt")
+    out = tmp_path / "run"
+    common = ["--variant", "FT1", "--lr", "1e-3", "--batch-size", "8", "--seed", "1",
+              "--subset", "8", "--cache", str(cache), "--pool-dir", str(pool_dir),
+              "--checkpoint", str(checkpoint), "--swin-config", str(swin_dir),
+              "--bert-config", str(bert_dir), "--device", "cpu", "--precision", "fp32",
+              "--num-workers", "0", "--out", str(out)]
+    assert train.main([*common, "--epochs", "1"]) == 0
+    assert (out / train.STATE_FILE).is_file()
+    assert train.main([*common, "--epochs", "2", "--resume"]) == 0
+    metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    assert [e["epoch"] for e in metrics["epochs"]] == [1, 2]
+    assert len(metrics["steps"]) == 2 and metrics["resumed_from_epoch"] == 1
+    # Resuming a finished run does nothing and still succeeds.
+    assert train.main([*common, "--epochs", "2", "--resume"]) == 0
+    again = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    assert [e["epoch"] for e in again["epochs"]] == [1, 2]
