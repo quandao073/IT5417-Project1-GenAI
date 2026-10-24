@@ -1,7 +1,7 @@
 """One parse() for every mode: cache, then the LLM (one retry), then the rule parser.
 
 Also the single rule that builds semantic_query for both parsers (spec 4.2), so
-the vector leg sees the same text whichever parser answered; the ablation then
+the encoder sees the same free text whichever parser answered; the ablation then
 measures constraints, not phrasing. `auto` and `rule` never raise; `llm` (used
 by the evaluation to measure the LLM alone) raises ParseError instead of
 falling back.
@@ -152,12 +152,12 @@ class QueryParser:
         elif query.language == "en":
             semantic = text[:SEMANTIC_MAX]
             what = "no positive finding" if query.exclude else "no known concept"
-            warnings.append(f"{what}; vector leg encodes the raw text")
+            warnings.append(f"{what}; the free text is the raw query")
         else:
             semantic = ""
             what = ("no positive finding" if query.exclude
                     else "no concept recognised in a Vietnamese query")
-            warnings.append(f"{what}; vector leg skipped")
+            warnings.append(f"{what}; no free text")
         return query.model_copy(update={"semantic_query": semantic})
 
 
