@@ -198,6 +198,40 @@ def test_resume_continues_from_the_last_finished_epoch(tmp_path):
     assert [e["epoch"] for e in again["epochs"]] == [1, 2]
 
 
+def test_resume_redoes_an_epoch_once_when_drive_kept_a_newer_metrics_json(tmp_path):
+    """Drive uploads asynchronously, so a session killed right after an epoch can leave
+    metrics.json one epoch ahead of state_last.pt. state_last.pt decides: the epoch is redone
+    and recorded once."""
+    import shutil
+
+    pool_dir, image_root, plus_csv = _pool_with_labels(tmp_path)
+    cache = tmp_path / "cache"
+    build_cache(pool_dir, image_root, plus_csv, cache, size=32, val_fraction=0.5, seed=3)
+    checkpoint, swin_dir, bert_dir, _ = write_tiny_checkpoint(tmp_path / "ckpt")
+    out = tmp_path / "run"
+    common = ["--variant", "FT6", "--lr", "1e-3", "--batch-size", "8", "--seed", "1",
+              "--subset", "8", "--cache", str(cache), "--pool-dir", str(pool_dir),
+              "--checkpoint", str(checkpoint), "--swin-config", str(swin_dir),
+              "--bert-config", str(bert_dir), "--device", "cpu", "--precision", "fp32",
+              "--num-workers", "0", "--out", str(out), "--epochs", "2"]
+    assert train.main([*common, "--max-steps", "1"]) == 0
+    assert train.main([*common, "--resume"]) == 0
+    stale = tmp_path / "state_epoch1.pt"
+    assert train.main([*common[:-2], "--epochs", "1", "--out", str(tmp_path / "run1")]) == 0
+    shutil.copy(tmp_path / "run1" / train.STATE_FILE, stale)
+    # The lost upload: state_last.pt of epoch 1 next to metrics.json and adapters of epoch 2.
+    shutil.copy(stale, out / train.STATE_FILE)
+    assert train.main([*common, "--resume"]) == 0
+    metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    assert [e["epoch"] for e in metrics["epochs"]] == [1, 2]
+    assert len(metrics["steps"]) == 2 and metrics["resumed_from_epoch"] == 1
+
+
+def test_git_commit_comes_from_the_environment_on_colab(monkeypatch):
+    monkeypatch.setenv("CXR_GIT_COMMIT", "c" * 40)
+    assert train._git_commit() == "c" * 40
+
+
 def test_emulated_bf16_counts_as_no_bf16(monkeypatch):
     """Colab free's T4: torch says bf16 is supported only through slow emulation."""
     import pytest

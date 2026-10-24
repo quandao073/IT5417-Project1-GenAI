@@ -39,12 +39,19 @@ Trước tiên chọn *Runtime → Change runtime type → **A100 GPU***. Nếu 
 | 4 | **Kiểm môi trường:** P@5 zero-shot trên pool-val phải khớp laptop (trung bình 0,377, dung sai 0,01) | ≈ 1 phút | **Dừng**, gửi output |
 | 5 | **Cổng kiểm tra:** chạy FT6 ngắn (20.000 ảnh × 2 epoch). Không được sụp (cosine giữa các caption < 0,8) và không được thấp hơn zero-shot quá 0,02. Lượt ngắn chỉ để bắt lỗi; có vượt zero-shot hay không là việc của các lượt đầy đủ ở ô 6. Ô này in số s/bước và ước tính số phút, số CU cho một lượt đầy đủ | ≈ 5–10 phút | **Dừng**, gửi output |
 | 6 | Dò lr cho FT6 với {3e-5, 1e-4, 1e-5}, dữ liệu đầy đủ, tối đa 10 epoch, dừng sớm khi 3 epoch liền không tiến bộ | xem số in ở ô 5 | — |
-| 7 | FT1 (đúng công thức bài báo) ở lr mà FT6 chọn: dòng đối chứng | 1 lượt | — |
+| 7 | FT1 (đúng công thức bài báo) ở lr mà FT6 chọn: dòng đối chứng. Ô tự đọc lr thắng từ 3 lượt của ô 6, không cần gõ | 1 lượt | Báo `sweep unfinished`: chạy lại ô 6 cho xong |
 | 8 | **Trả GPU** để không tốn thêm CU | — | — |
 
 Ở ô 5, điền `CU_PER_HOUR` theo số hiện trong bảng *Resources* của Colab để có ước tính chi phí.
 
-**Nếu mất kết nối:** chạy lại ô 1 → 4 vì máy Colab mới có đĩa trống (và chưa có venv), rồi chạy lại đúng ô train đang dở. Lượt đó tự chạy tiếp từ epoch cuối đã lưu trên Drive. Lượt nào đã có `model.pt` thì được bỏ qua.
+**Dừng và chạy tiếp ở phiên sau** (chạy thử trên laptop: giết tiến trình giữa epoch 2, phiên sau chạy tiếp từ epoch 1 và ghi mỗi epoch đúng một lần):
+
+- Cứ đóng tab, hoặc để Colab tự ngắt. Không cần làm gì trước khi dừng. Mỗi epoch xong được lưu vào Drive: adapter, `metrics.json`, `state_last.pt`. Bị ngắt giữa epoch thì chỉ mất phần đang dở của epoch đó.
+- Phiên sau: chạy lại ô 1 → 4 vì máy Colab mới có đĩa trống và chưa có venv, rồi chạy lại đúng ô train đang dở (ô 6). Lượt nào đã có `model.pt` thì được bỏ qua; lượt dở chạy tiếp từ epoch cuối đã lưu. Ô 5 chạy lại cũng chỉ mất vài giây vì cổng kiểm tra đã xong.
+- `state_last.pt` là nguồn quyết định: nếu Drive chưa kịp tải lên file cuối, epoch đó được chạy lại và chỉ ghi một lần.
+- Mỗi lượt có `provenance.json`: commit, sha256 của `code.zip`, và GPU, precision của từng phiên đã chạy nó.
+- **Đừng thay `code.zip` khi còn lượt đang dở.** Lượt dở sẽ báo `REFUSED`, vì không được chạy tiếp bằng code khác. Chỉ thay code giữa hai lượt, hoặc đặt `--tag` mới để bắt đầu lượt mới.
+- Đổi GPU giữa một lượt (T4 sang A100) vẫn chạy tiếp được, chỉ có precision đổi từ fp16 sang bf16, và việc này được ghi vào `provenance.json`. Muốn số liệu gọn thì cho mỗi lượt chạy trên một loại GPU.
 
 ## Chạy bản miễn phí qua đêm (T4, chưa mua CU)
 

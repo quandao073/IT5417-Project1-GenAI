@@ -23,6 +23,7 @@ import os
 import shutil
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 # A full run of train.py: pool-train rows / batch 128 (metrics.json:steps_per_epoch of B14).
@@ -37,6 +38,8 @@ MAX_TEXT_COS = 0.8
 GATE_MARGIN = 0.02
 KINDS = ("single", "pair", "negation", "mean")
 HF = {"--swin-config": "data/hf/swin", "--bert-config": "data/hf/bert"}
+# Per run on Drive: the code it started with and one entry per Colab session that worked on it.
+PROVENANCE = "provenance.json"
 
 
 def _sha256(path: Path) -> str:
@@ -123,15 +126,78 @@ def machine_flags() -> list[str]:
     return flags
 
 
-def train(bundle: Path, work: Path, variant: str, lr: float, subset: int | None,
-          epochs: int | None, tag: str | None) -> int:
+def resume_problem(recorded: dict | None, code_zip_sha256: str) -> str | None:
+    """Why an unfinished run must not continue with this bundle's code, or None."""
+    if recorded is None or recorded["code_zip_sha256"] == code_zip_sha256:
+        return None
+    return (f"this run started with code.zip {recorded['code_zip_sha256'][:12]} (git "
+            f"{recorded['git_head'][:7]}), the bundle now has {code_zip_sha256[:12]}. Finish it "
+            "with the old code.zip + manifest.json, or start a new run with another --tag")
+
+
+def _gpu_name() -> str | None:
+    import torch
+
+    return torch.cuda.get_device_name(0) if torch.cuda.is_available() else None
+
+
+def chosen_lr(bundle: Path, variant: str, grid: list[float]) -> tuple[float | None, str]:
+    """(lr, message): the lr of the D33 grid whose finished full-data run has the best pool-val
+    P@5 mean, or (None, why) while any lr of the grid has no model.pt yet."""
+    scores, missing = {}, []
+    for lr in grid:
+        run = bundle / "runs" / run_name(variant, lr, None)
+        best = None
+        if (run / "model.pt").is_file() and (run / "metrics.json").is_file():
+            best = best_record(json.loads((run / "metrics.json").read_text(encoding="utf-8")))
+        if best is None:
+            missing.append(f"{lr:.0e}")
+        else:
+            scores[lr] = best["val_p5_mean"]
+    if missing:
+        return None, (f"{variant} sweep unfinished: lr {', '.join(missing)} has no model.pt yet "
+                      "(run cell 6 again)")
+    lr = max(grid, key=lambda v: scores[v])    # a tie keeps the grid's first lr
+    return lr, (f"{variant}: best lr {lr:.0e} on pool-val P@5 mean {scores[lr]:.3f} "
+                f"(grid {', '.join(f'{v:.0e}' for v in grid)})")
+
+
+def train(bundle: Path, work: Path, variant: str, lr: float | None, subset: int | None,
+          epochs: int | None, tag: str | None, lr_from: str | None = None) -> int:
+    """Start or continue one run; every session appends itself to the run's provenance.json.
+    With `lr_from`, the lr is the one that variant's finished sweep chose (`chosen_lr`)."""
+    if lr is None:
+        import yaml
+
+        optim = yaml.safe_load((work / "configs" / "training.yaml").read_text(encoding="utf-8"))
+        lr, message = chosen_lr(bundle, lr_from, [float(v) for v in optim["optim"]["lr_grid"]])
+        print(message)
+        if lr is None:
+            return 1
     out = bundle / "runs" / run_name(variant, lr, tag)
     if (out / "model.pt").is_file():
         print(f"{out.name}: finished already (model.pt exists)")
         return 0
+    manifest = _manifest(bundle)
+    prov_path = out / PROVENANCE
+    recorded = (json.loads(prov_path.read_text(encoding="utf-8")) if prov_path.is_file()
+                else None)
+    if problem := resume_problem(recorded, manifest["code_zip"]["sha256"]):
+        print(f"REFUSED: {problem}")
+        return 1
+    flags = machine_flags()
+    precision = flags[flags.index("--precision") + 1] if "--precision" in flags else None
+    record = recorded or {"code_zip_sha256": manifest["code_zip"]["sha256"],
+                          "git_head": manifest["git_head"], "sessions": []}
+    if record["sessions"] and record["sessions"][-1]["precision"] != precision:
+        print(f"note: precision {record['sessions'][-1]['precision']} -> {precision} in the middle "
+              "of this run (another GPU type); recorded in provenance.json")
+    record["sessions"].append({"started_at": datetime.now(UTC).isoformat(timespec="seconds"),
+                               "gpu": _gpu_name(), "precision": precision})
     out.mkdir(parents=True, exist_ok=True)
+    prov_path.write_text(json.dumps(record, indent=2), encoding="utf-8")
     cmd = [sys.executable, "training/train.py", "--variant", variant, "--lr", str(lr),
-           "--out", str(out), "--resume", *[a for kv in HF.items() for a in kv], *machine_flags()]
+           "--out", str(out), "--resume", *[a for kv in HF.items() for a in kv], *flags]
     if subset:
         cmd += ["--subset", str(subset)]
     if epochs:
@@ -139,7 +205,8 @@ def train(bundle: Path, work: Path, variant: str, lr: float, subset: int | None,
     print(" ".join(cmd), flush=True)
     with open(out / "train.log", "a", encoding="utf-8") as log:
         proc = subprocess.Popen(cmd, cwd=work, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                text=True, env={**os.environ, "PYTHONUNBUFFERED": "1"})
+                                text=True, env={**os.environ, "PYTHONUNBUFFERED": "1",
+                                                "CXR_GIT_COMMIT": manifest["git_head"]})
         for line in proc.stdout:
             if "Warning" in line or "warnings.warn" in line:
                 continue
@@ -224,7 +291,10 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--bundle", required=True, type=Path)
         if name == "train":
             p.add_argument("--variant", required=True)
-            p.add_argument("--lr", required=True, type=float)
+            lr = p.add_mutually_exclusive_group(required=True)
+            lr.add_argument("--lr", type=float)
+            lr.add_argument("--lr-from", metavar="VARIANT",
+                            help="the lr this variant's finished sweep chose on pool-val")
             p.add_argument("--subset", type=int)
             p.add_argument("--epochs", type=int)
             p.add_argument("--tag")
@@ -239,7 +309,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "check-env":
         return check_env(args.bundle, work)
     if args.cmd == "train":
-        return train(args.bundle, work, args.variant, args.lr, args.subset, args.epochs, args.tag)
+        return train(args.bundle, work, args.variant, args.lr, args.subset, args.epochs, args.tag,
+                     lr_from=args.lr_from)
     if args.cmd == "gate":
         return gate(args.bundle, args.run, args.cu_per_hour)
     return summary(args.bundle)

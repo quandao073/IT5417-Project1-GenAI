@@ -172,3 +172,120 @@ def test_notebook_runs_every_step_in_the_py312_venv():
     calls = [line.strip() for line in source.splitlines() if "colab_run.py" in line]
     assert calls and all(line.startswith("!{PY} ") for line in calls), calls
     assert "!pip install" not in source.replace("!pip install -q uv", "")
+
+
+# --- stopping and resuming across Colab sessions ---------------------------------------------
+def test_resume_problem_refuses_a_run_started_with_other_code():
+    recorded = {"code_zip_sha256": "a" * 64, "git_head": "c" * 40, "sessions": []}
+    assert cr.resume_problem(None, "d" * 64) is None
+    assert cr.resume_problem(recorded, "a" * 64) is None
+    problem = cr.resume_problem(recorded, "d" * 64)
+    assert problem and "code.zip" in problem and "--tag" in problem
+
+
+class _FakeProc:
+    def __init__(self, cmd, env, **kwargs):
+        _FakeProc.calls.append((cmd, env))
+        self.stdout = iter(["epoch 1 train_loss 5.0\n"])
+
+    def wait(self):
+        return 0
+
+
+def test_train_records_each_session_and_refuses_new_code_mid_run(tmp_path, monkeypatch):
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    manifest = {"code_zip": {"sha256": "a" * 64}, "git_head": "c" * 40}
+    (bundle / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    monkeypatch.setattr(cr, "machine_flags", lambda: ["--num-workers", "2", "--precision", "fp16"])
+    monkeypatch.setattr(cr, "_gpu_name", lambda: "Tesla T4")
+    _FakeProc.calls = []
+    monkeypatch.setattr(cr.subprocess, "Popen", _FakeProc)
+
+    assert cr.train(bundle, tmp_path, "FT6", 3e-5, None, None, None) == 0
+    assert cr.train(bundle, tmp_path, "FT6", 3e-5, None, None, None) == 0    # next session
+    run = bundle / "runs" / "FT6_lr3e-05"
+    prov = json.loads((run / cr.PROVENANCE).read_text(encoding="utf-8"))
+    assert prov["code_zip_sha256"] == "a" * 64 and prov["git_head"] == "c" * 40
+    assert [s["gpu"] for s in prov["sessions"]] == ["Tesla T4", "Tesla T4"]
+    assert prov["sessions"][0]["precision"] == "fp16"
+    # train.py learns the commit it runs (the Colab work dir is an unzip, not a checkout).
+    assert all(env["CXR_GIT_COMMIT"] == "c" * 40 for _, env in _FakeProc.calls)
+
+    # New code.zip uploaded while the run is unfinished: refused, train.py never starts.
+    manifest["code_zip"]["sha256"] = "d" * 64
+    (bundle / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    assert cr.train(bundle, tmp_path, "FT6", 3e-5, None, None, None) == 1
+    assert len(_FakeProc.calls) == 2
+    # A finished run is skipped whatever the code.
+    (run / "model.pt").write_bytes(b"x")
+    assert cr.train(bundle, tmp_path, "FT6", 3e-5, None, None, None) == 0
+
+
+# --- cell 7: FT1 at the lr FT6 chose, read from the runs, never typed ------------------------
+GRID = [1e-5, 3e-5, 1e-4]
+
+
+def _run(bundle, name, lr, mean, *, done=True, subset=None, variant="FT6"):
+    run = bundle / "runs" / name
+    run.mkdir(parents=True)
+    (run / "metrics.json").write_text(json.dumps(
+        {"config": {"variant": variant, "lr": lr, "subset": subset},
+         "epochs": [_epoch(1, mean)], "best_epoch": 1}), encoding="utf-8")
+    if done:
+        (run / "model.pt").write_bytes(b"x")
+
+
+def test_chosen_lr_needs_every_lr_of_the_grid_finished(tmp_path):
+    _run(tmp_path, "FT6_lr1e-05", 1e-5, 0.40)
+    _run(tmp_path, "FT6_lr3e-05", 3e-5, 0.45)
+    _run(tmp_path, "gate_FT6_lr3e-05", 3e-5, 0.60, subset=20000)    # a gate run never competes
+    lr, message = cr.chosen_lr(tmp_path, "FT6", GRID)
+    assert lr is None and "1e-04" in message
+    _run(tmp_path, "FT6_lr1e-04", 1e-4, 0.43, done=False)
+    lr, message = cr.chosen_lr(tmp_path, "FT6", GRID)
+    assert lr is None and "1e-04" in message
+    (tmp_path / "runs" / "FT6_lr1e-04" / "model.pt").write_bytes(b"x")
+    lr, message = cr.chosen_lr(tmp_path, "FT6", GRID)
+    assert lr == 3e-5 and "3e-05" in message and "0.450" in message
+
+
+def test_ft1_trains_at_the_lr_ft6_chose_and_waits_for_the_sweep(tmp_path, monkeypatch):
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "manifest.json").write_text(json.dumps(
+        {"code_zip": {"sha256": "a" * 64}, "git_head": "c" * 40}), encoding="utf-8")
+    monkeypatch.setattr(cr, "machine_flags", lambda: ["--precision", "fp16"])
+    monkeypatch.setattr(cr, "_gpu_name", lambda: "Tesla T4")
+    _FakeProc.calls = []
+    monkeypatch.setattr(cr.subprocess, "Popen", _FakeProc)
+    monkeypatch.chdir(REPO)    # the work dir: configs/training.yaml holds the lr grid
+    argv = ["train", "--bundle", str(bundle), "--variant", "FT1", "--lr-from", "FT6"]
+
+    _run(bundle, "FT6_lr1e-05", 1e-5, 0.40)
+    _run(bundle, "FT6_lr3e-05", 3e-5, 0.46)
+    assert cr.main(argv) == 1 and _FakeProc.calls == []
+    _run(bundle, "FT6_lr1e-04", 1e-4, 0.43)
+    assert cr.main(argv) == 0
+    cmd = _FakeProc.calls[-1][0]
+    assert cmd[cmd.index("--variant") + 1] == "FT1" and float(cmd[cmd.index("--lr") + 1]) == 3e-5
+    assert (bundle / "runs" / "FT1_lr3e-05" / cr.PROVENANCE).is_file()
+
+
+def test_notebook_cell_7_reads_the_lr_instead_of_a_typed_value():
+    nb = json.loads((REPO / "training/colab/train_colab.ipynb").read_text(encoding="utf-8"))
+    cell = "".join(next(c for c in nb["cells"] if c["id"] == "baseline")["source"])
+    assert "--variant FT1 --lr-from FT6" in cell and "BEST_LR" not in cell
+    assert "assert _exit_code == 0" in cell
+
+
+def test_cells_after_the_install_stop_clearly_when_the_runtime_was_reset():
+    # A reset runtime loses PY/BUNDLE; IPython then leaves "!{PY} ..." unexpanded and bash says
+    # "{PY}: command not found" (cell 7 of the B14 run, 2026-10-24).
+    nb = json.loads((REPO / "training/colab/train_colab.ipynb").read_text(encoding="utf-8"))
+    for cell in nb["cells"]:
+        source = "".join(cell["source"])
+        if "{PY}" in source and cell["id"] != "install":
+            first_code = next(line for line in source.splitlines()
+                              if line.strip() and not line.lstrip().startswith("#"))
+            assert first_code.startswith("assert 'PY' in globals()"), cell["id"]

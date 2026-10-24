@@ -21,6 +21,7 @@ import argparse
 import contextlib
 import json
 import math
+import os
 import subprocess
 import sys
 import time
@@ -57,6 +58,10 @@ _WARM_STEPS = 3      # steps left out of s_per_step: CUDA kernels and workers st
 
 
 def _git_commit() -> str | None:
+    """CXR_GIT_COMMIT when set (on Colab the work dir is an unzip of the bundle, not a checkout;
+    colab_run.py passes the bundle's git HEAD), else the checkout's HEAD."""
+    if commit := os.environ.get("CXR_GIT_COMMIT"):
+        return commit
     try:
         out = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True)
     except OSError:
@@ -319,7 +324,10 @@ def _run(args: argparse.Namespace, cfg: dict) -> int:
         best_score, best_epoch = state["best_score"], state["best_epoch"]
         best_record, since_best = state["best_record"], state["since_best"]
         previous = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
-        metrics["steps"], metrics["epochs"] = previous["steps"], previous["epochs"]
+        # state_last.pt decides: Drive uploads asynchronously, so after a killed session
+        # metrics.json can be one epoch ahead of it. That epoch is redone, and recorded once.
+        metrics["steps"] = previous["steps"][:state.get("n_steps", len(previous["steps"]))]
+        metrics["epochs"] = [e for e in previous["epochs"] if e["epoch"] <= done]
         metrics["started_at"], metrics["resumed_from_epoch"] = previous["started_at"], done
         metrics["best_epoch"] = best_epoch
         first_epoch = done + 1
@@ -415,7 +423,7 @@ def _run(args: argparse.Namespace, cfg: dict) -> int:
         write_json_atomic(out / "metrics.json", metrics)
         _save_state(out, epoch=epoch, optimizer=optimizer, scheduler=scheduler, scaler=scaler,
                     best_score=best_score, best_epoch=best_epoch, best_record=best_record,
-                    since_best=since_best, stopped_early=stop)
+                    since_best=since_best, stopped_early=stop, n_steps=len(metrics["steps"]))
         print(f"epoch {epoch} train_loss {record['train_loss']:.4f} val_p5 "
               f"single {p5['single']:.3f} pair {p5['pair']:.3f} negation {p5['negation']:.3f} "
               f"mean {p5['mean']:.3f} text_cos {p5['text_cos']:.3f} best_epoch {best_epoch} "
