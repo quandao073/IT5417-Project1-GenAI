@@ -21,6 +21,9 @@ _ADAPTERS = {
     "xrayclip": "src.embeddings.xrayclip:XrayCLIPEncoder",
     "cxrclip": "src.embeddings.cxrclip:CXRClipEncoder",
 }
+# A fine-tune is a candidate of its own name (`cxrclip_ft6_lr3e-05`) with its base model's
+# adapter, found through models.yaml `framework`, so a new variant needs no code (B16).
+_FRAMEWORKS = {"cxrclip_checkpoint": _ADAPTERS["cxrclip"]}
 
 
 class ImageTextEncoder(Protocol):
@@ -58,7 +61,9 @@ def dir_bytes(path: Path) -> int:
 
 
 def load_encoder(name: str, candidate: dict, device: str = "cpu") -> ImageTextEncoder:
-    if name not in _ADAPTERS:
-        raise ValueError(f"Unknown encoder {name!r}; known: {sorted(_ADAPTERS)}")
-    module, cls = _ADAPTERS[name].split(":")
+    target = _ADAPTERS.get(name) or _FRAMEWORKS.get(candidate.get("framework"))
+    if target is None:
+        raise ValueError(f"Unknown encoder {name!r}; known: {sorted(_ADAPTERS)}, or a candidate "
+                         f"whose framework is one of {sorted(_FRAMEWORKS)}")
+    module, cls = target.split(":")
     return getattr(importlib.import_module(module), cls)(candidate, device)
