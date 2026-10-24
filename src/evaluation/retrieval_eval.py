@@ -319,24 +319,27 @@ def image_vs_vector(report: dict, *, k: int = TOP_K) -> dict | None:
 
 def mode_comparison(report: dict, new_mode: str, against: Sequence[str] = ("image", "vector"),
                     *, k: int = TOP_K) -> dict | None:
-    """Gold-parser `new_mode` against each mode of `against` in the report, on the queries both
-    answered (returned > 0): binary ndcg wins / ties / losses and means, and the HNRR means
-    over the queries where both have one. None when `new_mode` was not run."""
+    """Gold-parser `new_mode` against each mode of `against`, on the queries `vector` answered
+    (returned > 0), as `image_vs_vector` (spec 5.1): one set for every baseline, and a new mode
+    that returns nothing there scores 0 and loses. Binary ndcg wins / ties / losses and means,
+    and the HNRR means over the queries where both have one; the queries vector left empty are
+    reported apart. None when `new_mode` or `vector` was not run."""
     modes = report["parsers"].get("gold", {}).get("modes", {})
-    if new_mode not in modes:
+    if new_mode not in modes or "vector" not in modes:
         return None
     new = modes[new_mode]["per_query"]
     ndcg, hnrr, returned = f"ndcg_binary@{k}", f"hnrr@{k}", f"returned@{k}"
-    out = {}
+    vector = modes["vector"]["per_query"]
+    common = [i for i, m in vector.items() if m[returned] > 0]
+    unanswered = [i for i in vector if i not in common]
+    out: dict = {"n_common": len(common), "against": {}}
     for other in against:
         if other not in modes:
             continue
         base = modes[other]["per_query"]
-        common = [i for i in new if i in base and new[i][returned] > 0 and base[i][returned] > 0]
         diffs = [new[i][ndcg] - base[i][ndcg] for i in common]
         rated = [i for i in common if new[i][hnrr] is not None and base[i][hnrr] is not None]
-        out[other] = {
-            "n_common": len(common),
+        out["against"][other] = {
             ndcg: {new_mode: _mean([new[i][ndcg] for i in common]),
                    other: _mean([base[i][ndcg] for i in common])},
             "wins": sum(d > 1e-9 for d in diffs), "ties": sum(abs(d) <= 1e-9 for d in diffs),
@@ -345,6 +348,9 @@ def mode_comparison(report: dict, new_mode: str, against: Sequence[str] = ("imag
             hnrr: {new_mode: _mean([new[i][hnrr] for i in rated]),
                    other: _mean([base[i][hnrr] for i in rated])},
         }
+    out["vector_unanswered"] = {"n": len(unanswered), ndcg: {
+        name: _mean([modes[name]["per_query"][i][ndcg] for i in unanswered])
+        for name in (new_mode, *against) if name in modes and name != "vector"}}
     return out
 
 

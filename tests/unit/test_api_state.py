@@ -297,6 +297,22 @@ class TestImageProbe:
         assert "build_id" in state.image_reason
 
 
+def test_a_broken_training_yaml_leaves_the_api_ready(world, monkeypatch, caplog):
+    """training.yaml is edited for every fine-tune variant; it only feeds a warning (H2)."""
+    real = deps.load_config
+
+    def load(name, *args, **kwargs):
+        if name == "training":
+            raise ValueError("training.yaml:concepts must follow CHEXPERT_LABELS order")
+        return real(name, *args, **kwargs)
+
+    monkeypatch.setattr(deps, "load_config", load)
+    state = _state(world)
+    assert state.ready and state.joint_status == state.decomposed_status == "ok"
+    assert state.trained_concepts is None
+    assert any("training concepts unknown" in r.message for r in caplog.records)
+
+
 class TestImageModes:
     """The image modes open their own manifest, collection, encoder and scores; nothing
     about them ever touches readiness (Review Focus 5)."""

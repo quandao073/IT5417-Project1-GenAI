@@ -763,13 +763,33 @@ _IMAGE_MODES = (("image_joint", "joint", "cxr index --role image"),
                 ("image_decomposed", "decomposed", "cxr build-image-scores"))
 
 
+def _image_mode_provenance(state, modes: list[str]) -> dict:
+    """Which image build and scores artifact the new modes ran on: the vector build in
+    `build_id` says nothing about them, and V1.1 compares encoder variants through them."""
+    out: dict = {}
+    if "image_joint" in modes:
+        m = state.joint_manifest
+        out["joint"] = {"build_id": m["build_id"], "encoder": m.get("encoder"),
+                        "model_id": m["embedding_model"]["model_id"],
+                        "revision": m["embedding_model"]["revision"],
+                        "collection": state.joint_collection}
+    if "image_decomposed" in modes:
+        out["decomposed"] = {k: state.decomposed_meta.get(k)
+                             for k in ("probe_id", "source", "build_id", "encoder")}
+    return out
+
+
 def _print_mode_comparison(comparisons: dict) -> None:
-    for mode, against in comparisons.items():
-        for other, c in (against or {}).items():
-            n, h = c["ndcg_binary@10"], c["hnrr@10"]
+    for mode, c in comparisons.items():
+        if c is None:
+            print(f"{mode}: comparison n/a (needs gold + vector)")
+            continue
+        for other, a in c["against"].items():
+            n, h = a["ndcg_binary@10"], a["hnrr@10"]
             print(f"{mode} vs {other}: n={c['n_common']} ndcg_bin {_f(n[mode])}/{_f(n[other])} "
-                  f"wins/ties/losses={c['wins']}/{c['ties']}/{c['losses']} "
-                  f"hnrr {_f(h[mode])}/{_f(h[other])} (n={c['n_hnrr']})")
+                  f"wins/ties/losses={a['wins']}/{a['ties']}/{a['losses']} "
+                  f"hnrr {_f(h[mode])}/{_f(h[other])} (n={a['n_hnrr']})")
+        print(f"{mode}: vector left {c['vector_unanswered']['n']} queries empty")
 
 
 def _print_image_vs_vector(result: dict | None) -> None:
@@ -870,6 +890,8 @@ def _cmd_eval_retrieval(args: argparse.Namespace) -> int:
     new_modes = [m for m, _, _ in _IMAGE_MODES if m in args.modes]
     if "gold" in args.parsers and new_modes:
         report["mode_comparison"] = {m: rev.mode_comparison(report, m) for m in new_modes}
+    if new_modes:
+        report["image_modes"] = _image_mode_provenance(state, new_modes)
     _merge_json(out, "eval", report)
 
     _print_eval_table(report, args.verbose)

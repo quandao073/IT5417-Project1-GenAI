@@ -172,18 +172,18 @@ def _studies_in_views(state: AppState, views: Sequence[str]) -> list[str] | None
 
 
 def image_query_text(query: SearchQuery, concepts_cfg: dict, warnings: list[str], *,
-                     trained: Collection[str]) -> tuple[str | None, list[str]]:
+                     trained: Collection[str] | None) -> tuple[str | None, list[str]]:
     """(the text the image modes' encoder reads, the excludes kept).
 
     The text is the H1 template `render(include, exclude)`, the form the encoder is tuned on,
     never the raw query. No Finding is never negated in a template (H1), so an exclude of it
-    is dropped with a warning; a concept outside H2 (`trained`) is scored but flagged. None
-    when no constraint is left: the caller falls back to the semantic query."""
+    is dropped with a warning; a concept outside H2 (`trained`; None when unknown) is scored
+    but flagged. None when no constraint is left: the caller falls back to the semantic query."""
     exclude = [c for c in query.exclude if c != NO_FINDING]
     if len(exclude) != len(query.exclude):
         warnings.append(_NO_FINDING_DROPPED)
     include = [c.concept for c in query.include]
-    for concept in [*include, *exclude]:
+    for concept in [*include, *exclude] if trained is not None else []:
         if concept not in trained:
             warnings.append(f"concept outside the training set: {concept}")
     if not include and not exclude:

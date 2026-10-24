@@ -87,7 +87,7 @@ class AppState:
     decomposed_reason: str | None = None
     # The image modes' text side: H1 templates read concepts.yaml; H2 is training.yaml:concepts.
     concepts_cfg: dict = field(default_factory=dict)
-    trained_concepts: tuple[str, ...] = ()
+    trained_concepts: tuple[str, ...] | None = ()   # None: training.yaml unreadable, H2 unknown
 
 
 def _open_report_index(state: AppState, studies: int) -> None:
@@ -105,6 +105,17 @@ def _open_report_index(state: AppState, studies: int) -> None:
         state.report_reason = (f"report index has {meta.get('studies')} studies, "
                                f"manifest says {studies}; run cxr build-report-index")
     logger.warning("report index disabled: %s", state.report_reason)
+
+
+def _trained_concepts() -> tuple[str, ...] | None:
+    """H2 (training.yaml:concepts), which only feeds the image modes' "outside the training set"
+    warning. The file is edited for every fine-tune variant, so a broken one never costs
+    readiness: H2 is unknown (None) and the warning is skipped."""
+    try:
+        return tuple(training_concepts(load_config("training")))
+    except Exception as exc:  # noqa: BLE001 - a warning's input, never a readiness reason
+        logger.warning("training concepts unknown, outside-training-set warning off: %s", exc)
+        return None
 
 
 def _open_image_probe(state: AppState, *, build_id: str, revision: str,
@@ -294,7 +305,7 @@ def build_state(settings: Settings, *, encoder_loader=None, client_factory=None,
         state.report_min_token_chars = retrieval_cfg["report_search"]["min_token_chars"]
         state.evidence = EvidenceMatcher(concepts_cfg)
         state.concepts_cfg = concepts_cfg
-        state.trained_concepts = tuple(training_concepts(load_config("training")))
+        state.trained_concepts = _trained_concepts()
     except Exception as exc:  # noqa: BLE001 - every failure is a readiness reason
         state.ready = False
         state.not_ready_reason = str(exc)

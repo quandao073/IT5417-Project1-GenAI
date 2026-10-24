@@ -198,7 +198,9 @@ def test_query_metrics_hnrr_at_10(matrix, relevance):
                              matrix)["hnrr@10"] is None
 
 
-def test_mode_comparison_on_common_queries():
+def test_mode_comparison_on_the_queries_vector_answered():
+    """Spec 5.1: the set of image_vs_vector. A new mode that returns nothing there scores 0 and
+    loses; the queries vector left empty are reported apart."""
     def entry(rows):
         return {"per_query": {i: {"ndcg_binary@10": n, "returned@10": r, "hnrr@10": h}
                               for i, (n, r, h) in rows.items()}}
@@ -211,18 +213,19 @@ def test_mode_comparison_on_common_queries():
         "vector": entry({"a": (0.1, 1.0, 0.5), "b": (0.2, 0.0, None), "c": (0.1, 1.0, None),
                          "d": (0.2, 1.0, 0.2)})}}}}
     out = rev.mode_comparison(report, "image_joint")
-    image, vector = out["image"], out["vector"]
-    assert image["n_common"] == 3                         # c: image_joint returned nothing
-    assert image["ndcg_binary@10"] == pytest.approx({"image_joint": 0.5, "image": 0.5})
-    assert (image["wins"], image["ties"], image["losses"]) == (1, 1, 1)
+    assert out["n_common"] == 3                           # b: vector returned nothing
+    image, vector = out["against"]["image"], out["against"]["vector"]
+    assert image["ndcg_binary@10"] == pytest.approx({"image_joint": 1.0 / 3, "image": 1.4 / 3})
+    assert (image["wins"], image["ties"], image["losses"]) == (1, 0, 2)   # c counts as a loss
     assert image["hnrr@10"] == pytest.approx({"image_joint": 0.2, "image": 0.2})
-    assert image["n_hnrr"] == 2                           # a and d have a rate on both sides
-    assert vector["n_common"] == 2                        # b: vector returned nothing
-    assert (vector["wins"], vector["ties"], vector["losses"]) == (1, 1, 0)
+    assert image["n_hnrr"] == 2
+    assert (vector["wins"], vector["ties"], vector["losses"]) == (1, 1, 1)
     assert vector["hnrr@10"] == pytest.approx({"image_joint": 0.2, "vector": 0.35})
+    assert out["vector_unanswered"] == {
+        "n": 1, "ndcg_binary@10": pytest.approx({"image_joint": 0.5, "image": 0.5})}
     assert rev.mode_comparison(report, "image_decomposed") is None
-    only = {"parsers": {"gold": {"modes": {"image_joint": entry({"a": (0.8, 1.0, 0.1)})}}}}
-    assert rev.mode_comparison(only, "image_joint") == {}
+    no_vector = {"parsers": {"gold": {"modes": {"image_joint": entry({"a": (0.8, 1.0, 0.1)})}}}}
+    assert rev.mode_comparison(no_vector, "image_joint") is None
 
 
 def test_evidence_metrics_count_include_pairs_and_the_wanted_polarity():

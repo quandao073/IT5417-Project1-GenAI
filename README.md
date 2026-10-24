@@ -56,8 +56,8 @@ make setup               # tạo .env + thư mục data/artifacts + cài deps
 make up                  # web + api + qdrant
 ```
 
-Mở http://localhost:3000. API chưa bật CORS nên trình duyệt chưa gọi được API từ cổng 3000
-(sửa ở WP5 Task 15 của V1.1). `make seed`, `make smoke`, `make evaluate` còn trỏ tới lệnh chưa viết
+Mở http://localhost:3000; trình duyệt gọi thẳng API, nên API cho phép CORS từ các origin trong
+`CORS_ORIGINS` (mặc định `localhost:3000`, `127.0.0.1:3000`). `make seed`, `make smoke`, `make evaluate` còn trỏ tới lệnh chưa viết
 (`cxr seed`, `scripts/smoke_test.sh`, `cxr evaluate`; để Phase 7).
 
 ## Pipeline đầy đủ (cần dataset)

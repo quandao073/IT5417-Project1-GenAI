@@ -310,6 +310,12 @@ def test_eval_retrieval_refuses_a_disabled_image_mode(world, capsys, mode, attr,
 
 def test_eval_retrieval_accepts_new_modes_and_compares_them(world, monkeypatch, capsys):
     world.state.joint_status = world.state.decomposed_status = "ok"
+    world.state.joint_manifest = {"build_id": "ib1", "encoder": "fake2",
+                                  "embedding_model": {"model_id": "fake/model", "revision": "r2"}}
+    world.state.joint_collection = "cxr_images_ib1"
+    world.state.decomposed_meta = {"probe_id": "ib1_decomposed", "source": "decomposed-fake2",
+                                   "build_id": "ib1",
+                                   "encoder": {"name": "fake2", "revision": "r2"}}
     per_query = {"en-001": {"ndcg@10": 0.4, "ndcg_binary@10": 0.5, "returned@10": 1.0,
                             "exclude_violation@10": 0.2, "hnrr@10": 0.1}}
 
@@ -324,7 +330,13 @@ def test_eval_retrieval_accepts_new_modes_and_compares_them(world, monkeypatch, 
                "--modes", "image", "vector", "image_joint", "image_decomposed") == 0
     report = json.loads(world.out.read_text(encoding="utf-8"))["eval"]
     assert set(report["mode_comparison"]) == {"image_joint", "image_decomposed"}
-    assert report["mode_comparison"]["image_joint"]["image"]["n_common"] == 1
+    assert report["mode_comparison"]["image_joint"]["n_common"] == 1
+    assert set(report["mode_comparison"]["image_joint"]["against"]) == {"image", "vector"}
+    assert report["image_modes"] == {
+        "joint": {"build_id": "ib1", "encoder": "fake2", "model_id": "fake/model",
+                  "revision": "r2", "collection": "cxr_images_ib1"},
+        "decomposed": {"probe_id": "ib1_decomposed", "source": "decomposed-fake2",
+                       "build_id": "ib1", "encoder": {"name": "fake2", "revision": "r2"}}}
     text = capsys.readouterr().out
     text.encode("ascii")
     assert "image_joint vs image" in text and "image_decomposed vs vector" in text

@@ -275,3 +275,14 @@ def test_vector_hybrid_and_image_hits_do_not_depend_on_the_image_modes(world, tm
     assert without.joint_status == "disabled"
     a, b = run(with_modes, edema_no_effusion(), mode), run(without, edema_no_effusion(), mode)
     assert a.hits == b.hits and a.hits
+
+
+def test_unknown_training_concepts_skip_the_outside_training_set_warning(world):
+    state, _ = image_mode_state(world)
+    state.trained_concepts = None
+    query = SearchQuery(semantic_query="wide mediastinum", language="en",
+                        include=[Constraint(concept="Enlarged Cardiomediastinum",
+                                            status="PRESENT")])
+    out = run(state, query, "image_decomposed")
+    assert len(out.hits) == 4
+    assert not any("outside the training set" in w for w in out.warnings)
