@@ -9,7 +9,7 @@ import json
 import subprocess
 import sys
 import time
-from datetime import UTC, date, datetime
+from datetime import date
 from pathlib import Path
 
 import polars as pl
@@ -17,17 +17,13 @@ import polars as pl
 from src.common.config import Settings, default_config_dir, load_config
 from src.data import canonical, probe_pool
 from src.data.audit import CorpusMode, run_audit
-from src.data.labels import CHEXPERT_LABELS
 from src.embeddings import embed, index, spike, validate
-from src.embeddings.probe import save_probe, train_probe
 from src.evaluation import parser_benchmark as pb
 from src.evaluation import parser_eval as pe
-from src.evaluation import probe_eval
 from src.evaluation import vector_baseline as vb
 from src.query.schema import ParseError
 from src.retrieval import label_filter as lf
 from src.retrieval import report_index
-from src.retrieval.image_concepts import validate_image_probe
 
 
 def _cmd_audit(args: argparse.Namespace) -> int:
@@ -368,12 +364,6 @@ def _cmd_validate_indexes(args: argparse.Namespace) -> int:
                   else Path(args.indexes_dir) / "report_search.sqlite")
     checks.append(report_index.validate_report_index(
         index_path, pl.read_parquet(Path(args.canonical_dir) / "reports.parquet")))
-    probe_dir = (Path(args.image_probe_dir) if args.image_probe_dir
-                 else Path(args.indexes_dir) / "image_probe")
-    checks.append(validate_image_probe(
-        probe_dir, build_id=manifest["build_id"], revision=expected_revision,
-        study_ids=pl.read_parquet(Path(args.canonical_dir) / "studies.parquet")
-        ["study_id"].to_list()))
     for c in checks:
         print(f"{'PASS' if c.ok else 'FAIL'} {c.name:<12}: {c.detail}")
     return 0 if all(c.ok for c in checks) else 1
@@ -472,103 +462,6 @@ def _cmd_score_corpus(args: argparse.Namespace) -> int:
         print(f"  {c:<28} {'  n/a' if a is None else f'{a:.3f}'}  pos={v['n_pos']:<5} "
               f"neg={v['n_neg_strict']}")
     print(f"report     : {args.out}")
-    return 0
-
-
-def _load_pool(args: argparse.Namespace, manifest: dict, corpus_images: pl.DataFrame):
-    """The pool's vectors, statuses and patient ids in shard order, or an error message.
-
-    Refuses a pool embedded by another encoder, one that shares a patient with the
-    corpus and one that holds a valid/ study.
-    """
-    pool_dir = Path(args.pool_dir)
-    images = pl.read_parquet(pool_dir / probe_pool.POOL_IMAGES)
-    resolved = pl.read_parquet(pool_dir / probe_pool.POOL_LABELS)
-    meta = json.loads((pool_dir / probe_pool.POOL_META).read_text(encoding="utf-8"))
-    shards_dir = pool_dir / "embeddings" / args.pool_build_id
-    shards = embed.load_shards_manifest(shards_dir)
-    model = manifest["embedding_model"]
-    got = (shards["model_id"], shards["revision"], shards["dim"])
-    want = (model["model_id"], model["revision"], model["dimension"])
-    if got != want:
-        return f"POOL BUILD MISMATCH: pool {got} != corpus {want}", None
-    overlap = set(images["patient_id"]) & set(corpus_images["patient_id"])
-    if overlap:
-        return f"POOL OVERLAPS CORPUS: {len(overlap)} patients", None
-    if images.filter(pl.col("path_to_image").str.starts_with("valid/")).height:
-        return "POOL CONTAINS valid/ STUDIES", None
-
-    vectors, image_ids = vb._all_vectors(shards_dir)
-    study_of = dict(zip(images["image_id"], images["study_id"], strict=True))
-    patient_of = dict(zip(images["image_id"], images["patient_id"], strict=True))
-    studies = [study_of[i] for i in image_ids]
-    statuses = probe_pool.resolved_status_matrix(resolved, studies)
-    return None, (vectors, statuses, [patient_of[i] for i in image_ids], meta)
-
-
-def _corpus_rows(args: argparse.Namespace, manifest: dict, studies: pl.DataFrame):
-    """Corpus vectors of each study's selected image, in `studies` order."""
-    vectors, image_ids = vb._all_vectors(Path(args.embeddings) / manifest["build_id"])
-    row_of = {i: r for r, i in enumerate(image_ids)}
-    rows = [row_of[i] for i in studies["selected_image_id"]]
-    return vectors[rows]
-
-
-def _cmd_train_probe(args: argparse.Namespace) -> int:
-    if _report_is_corrupt(Path(args.report)):
-        return 1
-    manifest = _registered_build(args, Path(args.indexes_dir))
-    if manifest is None:
-        return 1
-    encoder = _build_encoder(manifest)   # before training, so a mismatch costs nothing
-    if encoder is None:
-        return 1
-    canonical_dir = Path(args.canonical_dir)
-    error, pool = _load_pool(args, manifest, pl.read_parquet(canonical_dir / "images.parquet"))
-    if error:
-        print(error, file=sys.stderr)
-        return 1
-    X, pool_statuses, pool_patients, pool_meta = pool
-    probe, fit = train_probe(X, pool_statuses, pool_patients, load_config("models")["image_probe"])
-
-    studies = pl.read_parquet(canonical_dir / "studies.parquet")
-    corpus_vectors = _corpus_rows(args, manifest, studies)
-    logits = probe.logits(corpus_vectors)
-    corpus_scores = pl.DataFrame({
-        "study_id": studies["study_id"], "image_id": studies["selected_image_id"],
-        **{c: logits[:, j] for j, c in enumerate(CHEXPERT_LABELS)},
-    })
-
-    template = load_config("models")["image_encoder"]["text_prompt_template"]
-    text = probe_eval.text_scores(corpus_vectors, encoder, load_config("concepts"), template)
-    priority = load_config("retrieval")["label_resolution"]["source_priority"]
-    statuses = spike.status_matrix(
-        pl.read_parquet(canonical_dir / "labels.parquet"), studies["study_id"].to_list(), priority)
-    comparison = probe_eval.compare({**text, "probe": logits}, statuses, n_boot=args.n_boot)
-
-    model = manifest["embedding_model"]
-    meta = {
-        "probe_id": f"{manifest['build_id']}_probe_lam{fit['lambda']}",
-        "build_id": manifest["build_id"],
-        "encoder": {"model_id": model["model_id"], "revision": model["revision"],
-                    "dim": model["dimension"]},
-        "pool_sha256": pool_meta["pool_sha256"], "pool_build_id": args.pool_build_id,
-        "lambda": fit["lambda"], "selection": fit["selection"], "n_train": fit["n_train"],
-        "git_commit": _git_commit(),
-        "trained_at": datetime.now(UTC).isoformat(timespec="seconds"),
-    }
-    save_probe(Path(args.out), probe, meta, corpus_scores)
-    _merge_json(Path(args.report), "probe", {**meta, "comparison": comparison, "pool": pool_meta})
-
-    print(f"lambda : {fit['lambda']}  (macro val AUROC per lambda: "
-          f"{json.dumps(fit['selection']['per_lambda'])})")
-    print("  ".join(f"{name} {comparison[name]['macro_auroc_strict']:.3f}"
-                    for name in (*text, "probe")))
-    diff = comparison["probe_minus_zero_shot"]
-    print(f"probe - zero_shot: {diff['mean']:.3f} "
-          f"[{diff['ci95'][0]:.3f}, {diff['ci95'][1]:.3f}] -> "
-          f"S1 {'PASS' if comparison['s1_passed'] else 'FAIL'}")
-    print(f"report : {args.report}")
     return 0
 
 
@@ -811,8 +704,6 @@ def build_parser() -> argparse.ArgumentParser:
     val.add_argument("--qdrant-url", default=None)
     val.add_argument("--report-index", default=None,
                      help="default: <indexes-dir>/report_search.sqlite")
-    val.add_argument("--image-probe-dir", default=None,
-                     help="default: <indexes-dir>/image_probe")
     val.set_defaults(func=_cmd_validate_indexes)
 
     rep = sub.add_parser("build-report-index", help="Phase 5: build the SQLite FTS5 report index")
@@ -836,20 +727,6 @@ def build_parser() -> argparse.ArgumentParser:
     score.add_argument("--n-boot", type=int, default=1000)
     score.add_argument("--out", default="artifacts/metrics/vector_baseline.json")
     score.set_defaults(func=_cmd_score_corpus)
-
-    tp = sub.add_parser("train-probe",
-                        help="train the image concept probe on the pool and compare it with "
-                             "zero-shot prompting on the corpus")
-    tp.add_argument("--pool-dir", default="data/probe_pool")
-    tp.add_argument("--pool-build-id", default="20261023_pool88k_biomedclip_v1")
-    tp.add_argument("--embeddings", default="data/indexes/embeddings")
-    tp.add_argument("--indexes-dir", default="data/indexes")
-    _add_build_args(tp)
-    tp.add_argument("--canonical-dir", default="data/canonical")
-    tp.add_argument("--out", default="data/indexes/image_probe")
-    tp.add_argument("--report", default="artifacts/metrics/image_probe.json")
-    tp.add_argument("--n-boot", type=int, default=1000)
-    tp.set_defaults(func=_cmd_train_probe)
 
     prs = sub.add_parser("parse", help="Phase 4: parse one request, print the SearchQuery")
     prs.add_argument("text")

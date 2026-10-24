@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
 import polars as pl
 import pytest
 from fastapi.testclient import TestClient
@@ -13,8 +12,7 @@ from qdrant_client import QdrantClient, models
 from src.api import dependencies as deps
 from src.api.main import create_app
 from src.common.config import Settings
-from src.data.labels import CHEXPERT_LABELS
-from src.embeddings import embed, index, probe
+from src.embeddings import embed, index
 from src.retrieval.report_index import build_report_index
 from tests.unit.fakes import FakeEncoder, FakeOllama
 from tests.unit.test_embed import images_frame
@@ -41,21 +39,6 @@ def studies_frame(images: pl.DataFrame) -> pl.DataFrame:
         pl.lit(True).alias("has_report"), pl.lit(True).alias("has_impression"),
         pl.lit(False).alias("has_findings"), pl.lit("ok").alias("ingestion_status"),
     ).sort("study_id")
-
-
-def write_probe_artifact(out_dir, studies, *, build_id=BUILD, drop=0):
-    """A probe artifact for `studies` (a studies_frame): zero weights, zero logits,
-    `drop` rows of corpus_scores left out."""
-    meta = {"probe_id": "p1", "build_id": build_id,
-            "encoder": {"model_id": "fake", "revision": FakeEncoder().revision, "dim": 4}}
-    scores = pl.DataFrame({
-        "study_id": studies["study_id"], "image_id": studies["selected_image_id"],
-        **{c: pl.Series([0.0] * studies.height, dtype=pl.Float32) for c in CHEXPERT_LABELS},
-    })
-    probe.save_probe(
-        out_dir, probe.Probe(np.zeros((14, 4), np.float32), np.zeros(14, np.float32),
-                             tuple(CHEXPERT_LABELS)),
-        meta, scores.head(studies.height - drop))
 
 
 @pytest.fixture

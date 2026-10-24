@@ -8,7 +8,7 @@ PY := uv run
 
 .DEFAULT_GOAL := help
 .PHONY: help setup up down logs ps seed smoke test lint typecheck \
-        audit-data build-corpus build-probe-pool train-probe embed index \
+        audit-data build-corpus build-probe-pool embed index \
         build-report-index validate-indexes \
         evaluate benchmark eval-parser eval-retrieval clean
 
@@ -45,12 +45,10 @@ embed: ## Embed the corpus into shard files (CPU, native, ~35 min, resumable)
 	$(PY) cxr embed
 # GPU alternative via the Docker worker (needs WSL2 + NVIDIA Container Toolkit):
 #   $(COMPOSE_GPU) --profile worker run --rm worker embed
-index: ## Upsert the shards into Qdrant and write build_manifest.json (needs `make up` or `docker compose up -d qdrant`)
+index: ## Upsert the shards into Qdrant and register the build (needs `make up` or `docker compose up -d qdrant`)
 	$(PY) cxr index
 build-probe-pool: ## Pool of studies outside the corpus for the image probe
 	$(PY) cxr build-probe-pool
-train-probe: ## Train the image concept probe (needs the pool embedded)
-	$(PY) cxr train-probe
 build-report-index: ## Build the SQLite FTS5 report index
 	$(PY) cxr build-report-index
 validate-indexes: ## Check canonical tables, Qdrant and the report index agree
@@ -66,7 +64,7 @@ evaluate: ## Run the three-axis benchmark
 benchmark: evaluate ## Alias for evaluate
 eval-parser: ## Score rule / llm / auto parsers on the held-out benchmark (needs Ollama)
 	$(PY) cxr eval-parser
-eval-retrieval: ## Score label / vector / hybrid on the held-out benchmark (needs Qdrant, report index; OpenAI key in .env for auto)
+eval-retrieval: ## Score the one search path on the held-out benchmark (needs Qdrant, report index; OpenAI key in .env for auto)
 	$(PY) cxr eval-retrieval
 lint: ## ruff
 	$(PY) ruff check src tests

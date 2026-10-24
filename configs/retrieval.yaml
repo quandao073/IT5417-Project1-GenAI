@@ -1,33 +1,14 @@
-# Query pipeline: parse -> three legs -> RRF fusion -> constraint rerank -> evidence.
-# See plan sections 11 and 12. Weights are tuned on the 150 validation queries
-# only, never on test.
+# Query pipeline, one path (WORKLOG D39): parse -> template of the constraints -> the build's
+# text encoder -> cosine over every image in Qdrant (AP/PA facet only) -> report evidence,
+# quoted after ranking for display. No label filter, no fusion: the modes `label`, `vector`,
+# `image`, `hybrid` and their RRF weights were removed with D39.
 
 pipeline:
-  steps: [parse, retrieve, fuse, rerank, build_evidence]
-
-# One API, four retrieval modes (plan 11.1-11.3; `image` added 2026-10-23). `label` and `vector` are the
-# baselines that `hybrid` has to beat; they are not user conveniences.
-modes: [label, vector, image, hybrid]
-
-candidates:
-  vector_top_k: 100
-  report_top_k: 100
-  image_top_k: 100
-  structured_max_matches: 500
-
-fusion:
-  method: rrf
-  # Chosen on the dev grid 2026-10-21 (spec section 11.5): gold hybrid ndcg@10 0.657 vs
-  # 0.644 for the plan default rrf_k 60, leg_weights (1, 1); gain 0.012 >= the 0.005 rule.
-  rrf_k: 10
-  # Dev grid 2026-10-23 (36 configs, baseline rrf_k 10 / vector 0.5 / report 1.0 / image 0.0
-  # = 0.657): kept the baseline. Best image > 0 was rrf_k 10 / 0.0 / 1.0 / 0.5 = 0.661, gain
-  # 0.0040 < 0.005, so image stays 0.0 and the leg does not run: S3 FAIL (docs/image-probe.md).
-  leg_weights: {vector: 0.5, report: 1.0, image: 0.0}
-  # `weights` (concept_match_bonus, uncertain_penalty, constraint_violation_penalty) removed:
-  # hybrid filters on labels first, so there is nothing left to reward or penalise (D23).
+  steps: [parse, render, encode, search, build_evidence]
 
 constraints:
+  # The label policies. Search does not use them; `cxr eval-retrieval` scores relevance under
+  # both, and the label filter will use them again when it comes back as its own knob.
   # See plan sections 10.4 and 11.4. NOT_MENTIONED is never evidence of absence.
   include_accepts: [PRESENT]
   exclude_requires: [ABSENT]
@@ -50,13 +31,8 @@ label_resolution:
   on_conflict: first_non_not_mentioned
 
 report_search:
-  # Reports are English; queries may be Vietnamese. Build the FTS5 MATCH string
-  # from the parsed concepts' English surface forms, never from the raw user
-  # string - otherwise the report leg contributes nothing to Vietnamese queries.
-  # This also makes FTS5 syntax injection impossible by construction.
-  match_from: parsed_concepts
-  fallback_to_semantic_query: true
-  tokenizer: porter unicode61
+  # The report index only quotes evidence now (the FTS ranking leg left with hybrid).
+  # A free-text query is quoted on its words of at least this many characters.
   min_token_chars: 3
 
 explanation:
@@ -68,12 +44,11 @@ explanation:
 results:
   default_top_k: 10
   max_top_k: 50
-  # label mode has no ranking signal: matches come back in one fixed pseudo-random
-  # order so top-k is an unbiased sample of the matching set (WORKLOG D18).
-  # rank_in_manifest would put the 200 radiologist-labelled valid/ studies first.
+  # The fixed pseudo-random order of the label matrix (WORKLOG D18); kept for the label
+  # filter's matches, which have no ranking signal of their own.
   label_order_seed: 20260101
 
 degradation:
   # No single dependency may take search down. See plan section 5.1.
-  on_report_index_unavailable: vector_and_label_only
+  on_report_index_unavailable: search_without_evidence
   on_llm_unavailable: rule_parser

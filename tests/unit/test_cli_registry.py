@@ -91,8 +91,6 @@ class TestValidateOneBuild:
         monkeypatch.setattr("src.cli.main.validate.expected_config_hash", lambda *a, **k: "x")
         monkeypatch.setattr("src.cli.main.report_index.validate_report_index",
                             lambda *a, **k: Check("report_index", True, "ok"))
-        monkeypatch.setattr("src.cli.main.validate_image_probe",
-                            lambda *a, **k: Check("image_probe", True, "ok"))
         return calls
 
     def _validate(self, world, *extra):
@@ -114,8 +112,7 @@ class TestValidateOneBuild:
         assert "build ghost is not registered" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("command", ["validate-indexes", "train-probe", "score-corpus",
-                                     "eval-retrieval"])
+@pytest.mark.parametrize("command", ["validate-indexes", "score-corpus", "eval-retrieval"])
 def test_every_command_that_reads_a_build_takes_a_build_id_or_an_encoder(command):
     args = build_parser().parse_args([command, "--build-id", "b1", "--encoder", "fake"])
     assert (args.build_id, args.encoder) == ("b1", "fake")
