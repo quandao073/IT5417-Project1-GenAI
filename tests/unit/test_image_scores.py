@@ -7,7 +7,7 @@ import numpy as np
 import polars as pl
 
 from src.data.labels import CHEXPERT_LABELS
-from src.retrieval.image_scores import MIN_CLASS, calibrate, corpus_scores
+from src.retrieval.image_scores import MAX_LOGIT, MIN_CLASS, calibrate, corpus_scores
 
 D = 4
 
@@ -72,3 +72,16 @@ def test_corpus_scores_has_one_column_per_concept_in_study_order():
     assert frame.columns == ["study_id", "image_id", *CHEXPERT_LABELS]
     assert frame["study_id"].to_list() == ["s2", "s1"]
     assert np.allclose(frame.select(CHEXPERT_LABELS).to_numpy(), probe.logits(vectors))
+
+
+def test_a_separable_concept_is_flagged_saturated():
+    """Newton at lambda 0 diverges on separable data: a in the thousands would swamp every other
+    term of a decomposed sum. The fit stays, the concept is listed (likelier after fine-tuning)."""
+    text, pool, statuses = _world()
+    statuses[:, 0] = np.where(pool[:, 0] > 0, "PRESENT", "ABSENT")      # no noise: separable
+    _, fit = calibrate(text, pool, statuses)
+    first = fit["calibration"][CHEXPERT_LABELS[0]]
+    assert abs(first["a"]) * 2 > MAX_LOGIT and first["val_auroc"] == 1.0
+    assert fit["saturated"] == [CHEXPERT_LABELS[0]]
+    _, noisy = calibrate(*_world())
+    assert noisy["saturated"] == []
