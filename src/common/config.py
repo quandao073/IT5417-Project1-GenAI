@@ -49,14 +49,17 @@ def load_config(name: str, config_dir: Path | None = None) -> dict:
 
 
 def _select(selector: str, config_dir: Path | None) -> object:
-    """`data` -> the whole parsed file; `models:image_encoder` -> that section."""
+    """`data` -> the whole parsed file; `models:image_encoder` -> that section; dots go deeper
+    (`models:image_encoder.candidates.cxrclip`), so a key holding a dot cannot be selected."""
     name, _, section = selector.partition(":")
-    parsed = load_config(name, config_dir)
+    node = load_config(name, config_dir)
     if not section:
-        return parsed
-    if not isinstance(parsed, dict) or section not in parsed:
-        raise KeyError(f"{name}.yaml has no top-level section {section!r}")
-    return parsed[section]
+        return node
+    for key in section.split("."):
+        if not isinstance(node, dict) or key not in node:
+            raise KeyError(f"{name}.yaml has no section {section!r}")
+        node = node[key]
+    return node
 
 
 def config_hash(
@@ -67,6 +70,21 @@ def config_hash(
     parsed = {selector: _select(selector, config_dir) for selector in sorted(names)}
     canonical = json.dumps(parsed, sort_keys=True, ensure_ascii=False, default=str)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def index_config_scope(encoder: str, config_dir: Path | None = None) -> list[str]:
+    """What a build embedded by `encoder` hashes (WORKLOG D37, narrowing D16): data.yaml, that
+    encoder's own candidate entry and `normalize`, plus the top-level pin and preprocessing when
+    it is the selected encoder, whose they are. Adding another candidate (every fine-tune
+    variant) leaves the hash alone (T35). The scope is recorded in the manifest, so
+    `validate-indexes` rechecks exactly what the build hashed."""
+    cfg = load_config("models", config_dir)["image_encoder"]
+    if encoder not in cfg["candidates"]:
+        raise KeyError(f"encoder {encoder!r} is no models.yaml image_encoder candidate")
+    scope = ["data", f"models:image_encoder.candidates.{encoder}", "models:image_encoder.normalize"]
+    if encoder == cfg["selected"]:
+        scope += ["models:image_encoder.revision", "models:image_encoder.preprocessing"]
+    return scope
 
 
 class Settings(BaseSettings):

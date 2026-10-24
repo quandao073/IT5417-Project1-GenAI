@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import shutil
+
 import pytest
+import yaml
 
 from src.common import config
 
@@ -170,3 +173,52 @@ def test_every_setting_is_documented_in_the_env_example():
         name.upper() for name in config.Settings.model_fields if name.upper() not in documented
     }
     assert not undocumented, f"add these to .env.example: {sorted(undocumented)}"
+
+
+# --- P14 / D37: a build hashes its own candidate, not the whole list (WORKLOG T35) -------------
+def _configs(tmp_path):
+    out = tmp_path / "configs"
+    shutil.copytree("configs", out)
+    return out
+
+
+def _edit_models(config_dir, change):
+    path = config_dir / "models.yaml"
+    models = yaml.safe_load(path.read_text(encoding="utf-8"))
+    change(models["image_encoder"])
+    path.write_text(yaml.safe_dump(models, sort_keys=False), encoding="utf-8")
+
+
+def _add_ft6(encoder_cfg):
+    encoder_cfg["candidates"]["cxrclip_ft6"] = dict(encoder_cfg["candidates"]["cxrclip"])
+
+
+def test_config_hash_reads_a_dotted_section(tmp_path):
+    cfg = _configs(tmp_path)
+    selector = ["models:image_encoder.candidates.biomedclip"]
+    before = config.config_hash(selector, cfg)
+    _edit_models(cfg, _add_ft6)
+    assert config.config_hash(selector, cfg) == before
+    _edit_models(cfg, lambda e: e["candidates"]["biomedclip"].update(revision="other"))
+    assert config.config_hash(selector, cfg) != before
+    with pytest.raises(KeyError, match="candidates.nope"):
+        config.config_hash(["models:image_encoder.candidates.nope"], cfg)
+
+
+def test_index_scope_is_the_build_encoder_and_survives_a_new_candidate(tmp_path):
+    cfg = _configs(tmp_path)
+    assert config.index_config_scope("biomedclip", cfg) == [
+        "data", "models:image_encoder.candidates.biomedclip", "models:image_encoder.normalize",
+        "models:image_encoder.revision", "models:image_encoder.preprocessing"]   # the selected one
+    assert config.index_config_scope("cxrclip", cfg) == [
+        "data", "models:image_encoder.candidates.cxrclip", "models:image_encoder.normalize"]
+    hashes = {n: config.config_hash(config.index_config_scope(n, cfg), cfg)
+              for n in ("biomedclip", "cxrclip")}
+    _edit_models(cfg, _add_ft6)
+    assert {n: config.config_hash(config.index_config_scope(n, cfg), cfg) for n in hashes} == hashes
+    _edit_models(cfg, lambda e: e.update(revision="otherpin"))     # the selected encoder's pin
+    biomedclip = config.index_config_scope("biomedclip", cfg)
+    assert config.config_hash(biomedclip, cfg) != hashes["biomedclip"]
+    assert config.config_hash(config.index_config_scope("cxrclip", cfg), cfg) == hashes["cxrclip"]
+    with pytest.raises(KeyError, match="no models.yaml image_encoder candidate"):
+        config.index_config_scope("fake9", cfg)

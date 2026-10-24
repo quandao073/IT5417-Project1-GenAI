@@ -305,9 +305,18 @@ def _qdrant_client(url: str | None):
 
 
 def _cmd_index(args: argparse.Namespace) -> int:
-    from src.common.config import config_hash
+    from src.common.config import config_hash, index_config_scope
 
     shards_dir = _resolve_build_dir(Path(args.embeddings), args.build_id)
+    # The build hashes its own encoder's entry (D37); shards older than `encoder` are the
+    # selected encoder's.
+    name = (embed.load_shards_manifest(shards_dir).get("encoder")
+            or load_config("models")["image_encoder"]["selected"])
+    try:
+        scope = index_config_scope(name)
+    except KeyError as exc:
+        print(f"INDEX FAILED: {exc.args[0]}", file=sys.stderr)
+        return 1
     images = pl.read_parquet(Path(args.canonical_dir) / "images.parquet")
     data_cfg = load_config("data")["sources"]
     dataset = {"images": data_cfg["images"]["name"],
@@ -316,8 +325,8 @@ def _cmd_index(args: argparse.Namespace) -> int:
     try:
         manifest = index.run_index(
             client, shards_dir, images, Settings().qdrant_collection_prefix,
-            recreate=args.recreate, config_hash=config_hash(), git_commit=_git_commit(),
-            dataset=dataset, library_versions=_library_versions(),
+            recreate=args.recreate, config_hash=config_hash(scope), config_scope=scope,
+            git_commit=_git_commit(), dataset=dataset, library_versions=_library_versions(),
         )
     except (ValueError, FileNotFoundError) as exc:
         print(f"INDEX FAILED: {exc}", file=sys.stderr)

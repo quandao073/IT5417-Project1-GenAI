@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 import pytest
+import yaml
 from qdrant_client import QdrantClient
 
 from src.cli.main import build_parser, main
@@ -43,7 +44,22 @@ def _shards(tmp_path, build_id):
     return canonical
 
 
+def _configs_with_fake2(tmp_path, monkeypatch):
+    """The real configs plus a `fake2` candidate: `cxr index` hashes the build's own entry."""
+    import shutil
+
+    out = tmp_path / "configs"
+    shutil.copytree("configs", out)
+    models = yaml.safe_load((out / "models.yaml").read_text(encoding="utf-8"))
+    models["image_encoder"]["candidates"]["fake2"] = {"model_id": "fake/model",
+                                                      "revision": "fakerev0"}
+    (out / "models.yaml").write_text(yaml.safe_dump(models, sort_keys=False), encoding="utf-8")
+    monkeypatch.setenv("CONFIG_DIR", str(out))
+    return out
+
+
 def test_index_role_image_writes_the_image_manifest_only(tmp_path, monkeypatch):
+    configs = _configs_with_fake2(tmp_path, monkeypatch)
     canonical = _shards(tmp_path, IMAGE_BUILD)
     client = QdrantClient(":memory:")
     monkeypatch.setattr("src.cli.main._qdrant_client", lambda url: client)
@@ -57,9 +73,14 @@ def test_index_role_image_writes_the_image_manifest_only(tmp_path, monkeypatch):
     assert manifest["build_id"] == IMAGE_BUILD and manifest["encoder"] == "fake2"
     assert manifest["collection"] == "cxr_images_" + IMAGE_BUILD
     assert client.collection_exists(manifest["collection"])
+    from src.common.config import config_hash, index_config_scope
+
+    assert manifest["config_scope"] == index_config_scope("fake2", configs)
+    assert manifest["config_hash"] == config_hash(manifest["config_scope"], configs)
 
 
 def test_index_default_role_writes_the_vector_manifest_with_the_encoder(tmp_path, monkeypatch):
+    _configs_with_fake2(tmp_path, monkeypatch)
     canonical = _shards(tmp_path, BUILD)
     monkeypatch.setattr("src.cli.main._qdrant_client", lambda url: QdrantClient(":memory:"))
     indexes = tmp_path / "indexes"
@@ -123,3 +144,11 @@ def test_validate_indexes_takes_an_image_scores_dir(tmp_path, capsys, monkeypatc
     assert main([*argv, "--image-scores-dir", str(tmp_path / "nowhere")]) == 1
     lines = capsys.readouterr().out.splitlines()
     assert lines[-1].startswith("FAIL image_scores") and "nowhere" in lines[-1]
+
+
+def test_index_refuses_shards_of_an_encoder_that_is_no_candidate(tmp_path, monkeypatch, capsys):
+    canonical = _shards(tmp_path, BUILD)       # encoder fake2, absent from the real models.yaml
+    monkeypatch.setattr("src.cli.main._qdrant_client", lambda url: QdrantClient(":memory:"))
+    assert main(["index", "--embeddings", str(tmp_path / "emb"), "--build-id", BUILD,
+                 "--canonical-dir", str(canonical), "--indexes-dir", str(tmp_path / "ix")]) == 1
+    assert "no models.yaml image_encoder candidate" in capsys.readouterr().err
