@@ -7,6 +7,7 @@ import contextlib
 import dataclasses
 import hashlib
 import json
+import re
 import subprocess
 import sys
 import time
@@ -262,6 +263,14 @@ def _cmd_embed(args: argparse.Namespace) -> int:
     images = pl.read_parquet(
         Path(args.images) if args.images else Path(args.canonical_dir) / "images.parquet"
     )
+    if args.pool_val:
+        # Only the patients that choose a fine-tune variant and calibrate H6 (B16): the same
+        # split as the probe's lambda (models.yaml:image_probe).
+        split = load_config("models")["image_probe"]
+        val = patient_split(images["patient_id"].to_list(), val_fraction=split["val_fraction"],
+                            seed=split["seed"])
+        images = images.filter(pl.Series(val))
+        print(f"pool-val   : {images.height:,} images of the validation patients")
     name, encoder = _encoder_by_name(args.encoder, args.device)
     build_id = args.build_id or embed.make_build_id(name, date.today(), scope=args.scope)
     out_dir = Path(args.out) / build_id
@@ -660,6 +669,59 @@ def _cmd_build_image_scores(args: argparse.Namespace) -> int:
               f"{', '.join(fit['saturated'])}")
     print(f"artifact : {args.out}  ({scores.height:,} studies, build {build_id})")
     print(f"report   : {report}")
+    return 0
+
+
+def _repo_path(path: Path) -> str:
+    """POSIX path relative to the working directory when under it (the repo), else absolute."""
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(Path.cwd().resolve()).as_posix()
+    except ValueError:
+        return resolved.as_posix()
+
+
+def _cmd_register_run(args: argparse.Namespace) -> int:
+    """A fine-tune run (runs/<name>: model.pt, model.sha256, metrics.json) as a models.yaml
+    candidate with the base model's adapter (`framework`), so B16 can embed, score and serve it."""
+    from src.common.config import add_encoder_candidate, candidate_yaml
+    from src.embeddings.cxrclip import file_sha256
+
+    run = Path(args.run)
+    recorded = (run / "model.sha256").read_text(encoding="utf-8").split()[0]
+    actual = file_sha256(run / "model.pt")
+    if actual != recorded:
+        print(f"REGISTER FAILED: model.pt checksum {actual[:12]} != model.sha256 "
+              f"{recorded[:12]}; copy the run again", file=sys.stderr)
+        return 1
+    metrics = json.loads((run / "metrics.json").read_text(encoding="utf-8"))
+    variant, lr = metrics["config"]["variant"], float(metrics["config"]["lr"])
+    name = args.name or f"{args.base}_{variant.lower()}_lr{lr:.0e}"
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", name):
+        print(f"REGISTER FAILED: {name!r}: a candidate name has letters, digits, '_' and '-' only "
+              f"(it becomes a config selector and part of a Qdrant collection name)",
+              file=sys.stderr)
+        return 1
+    candidates = load_config("models")["image_encoder"]["candidates"]
+    if name in candidates:
+        print(f"REGISTER FAILED: {name!r} is already a candidate", file=sys.stderr)
+        return 1
+    base = candidates[args.base]
+    best = next((e for e in metrics["epochs"] if e["epoch"] == metrics["best_epoch"]), {})
+    entry = {k: base[k] for k in ("model_id", "framework", "variant") if k in base}
+    entry |= {"weights": _repo_path(run / "model.pt"), "revision": f"sha256:{actual}"}
+    entry |= {k: base[k] for k in ("swin_config", "text_config", "license") if k in base}
+    entry["finetune"] = {"run": _repo_path(run), "variant": variant, "lr": lr,
+                         "best_epoch": metrics["best_epoch"],
+                         "val_p5_mean": best.get("val_p5_mean"),
+                         "base_revision": base["revision"]}
+    print(candidate_yaml(name, entry), end="")
+    if not args.write:
+        print("dry run: --write adds it to configs/models.yaml")
+        return 0
+    print(f"added to {add_encoder_candidate(name, entry)}")
+    print(f"next (B16): cxr embed --encoder {name} --images data/probe_pool/pool_images.parquet "
+          f"--out data/probe_pool/embeddings --pool-val --scope poolval9k")
     return 0
 
 
@@ -1062,6 +1124,8 @@ def build_parser() -> argparse.ArgumentParser:
                      help="override the generated <YYYYMMDD>_<scope>_<encoder>_v1")
     emb.add_argument("--encoder", default=None,
                      help="models.yaml image_encoder candidate (default: the selected one)")
+    emb.add_argument("--pool-val", action="store_true",
+                     help="embed only the pool-val patients (B16 selection and H6 calibration)")
     emb.add_argument("--scope", default="chexpert25k",
                      help="gallery name in the generated build_id, e.g. pool88k")
     emb.set_defaults(func=_cmd_embed)
@@ -1133,6 +1197,15 @@ def build_parser() -> argparse.ArgumentParser:
                     help="score this corpus build's shards instead of the one in "
                          "build_manifest.json")
     tp.set_defaults(func=_cmd_train_probe)
+
+    rr = sub.add_parser("register-run",
+                        help="B16: add a fine-tune run (model.pt, model.sha256, metrics.json) "
+                             "as a models.yaml candidate")
+    rr.add_argument("run", help="runs/<name> copied back from Colab")
+    rr.add_argument("--name", default=None, help="default: <base>_<variant>_lr<lr>")
+    rr.add_argument("--base", default="cxrclip", help="the candidate it was fine-tuned from")
+    rr.add_argument("--write", action="store_true", help="add it to configs/models.yaml")
+    rr.set_defaults(func=_cmd_register_run)
 
     bis = sub.add_parser("build-image-scores",
                          help="image_decomposed scores (H6): each concept's caption cosine, "

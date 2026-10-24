@@ -9,6 +9,7 @@ evaluation cannot change what lands in Qdrant.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -85,6 +86,39 @@ def index_config_scope(encoder: str, config_dir: Path | None = None) -> list[str
     if encoder == cfg["selected"]:
         scope += ["models:image_encoder.revision", "models:image_encoder.preprocessing"]
     return scope
+
+
+def candidate_yaml(name: str, entry: dict) -> str:
+    """`entry` as the YAML of one models.yaml image_encoder candidate (indented four spaces)."""
+    block = yaml.safe_dump({name: entry}, sort_keys=False, allow_unicode=True)
+    return "".join(f"    {line}\n" if line else "\n" for line in block.splitlines())
+
+
+def add_encoder_candidate(name: str, entry: dict, config_dir: Path | None = None) -> Path:
+    """Insert one candidate at the end of models.yaml `image_encoder.candidates`, as text, so the
+    file keeps its comments. Refused, nothing written, when the name is taken or the file parses
+    to anything but the old content plus this candidate (a layout this cannot place)."""
+    path = (config_dir or default_config_dir()) / "models.yaml"
+    with open(path, encoding="utf-8", newline="") as handle:
+        text = handle.read()
+    before = yaml.safe_load(text)
+    if name in before["image_encoder"]["candidates"]:
+        raise ValueError(f"{name!r} is already a candidate in {path}")
+    lines = text.splitlines(keepends=True)
+    newline = "\r\n" if lines and lines[0].endswith("\r\n") else "\n"
+    start = next(i for i, line in enumerate(lines) if line.rstrip("\r\n") == "  candidates:")
+    # The candidates end at the first non-blank line indented two spaces or less.
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].strip()
+                and len(lines[i]) - len(lines[i].lstrip(" ")) <= 2), len(lines))
+    block = candidate_yaml(name, entry).replace("\n", newline)
+    new_text = "".join(lines[:end]) + block + "".join(lines[end:])
+    expected = copy.deepcopy(before)
+    expected["image_encoder"]["candidates"][name] = entry
+    if yaml.safe_load(new_text) != expected:
+        raise ValueError(f"{path}: layout not understood; add the candidate by hand")
+    with open(path, "w", encoding="utf-8", newline="") as handle:
+        handle.write(new_text)
+    return path
 
 
 class Settings(BaseSettings):
