@@ -180,7 +180,49 @@ def test_query_metrics_divide_by_k_and_count_violations(matrix, relevance):
     plain = q([("Edema", "PRESENT")])
     assert rev.query_metrics([], relevance(plain), plain, matrix) == {
         "p@5": 0.0, "p@10": 0.0, "ndcg@10": 0.0, "ndcg_binary@10": 0.0, "mrr": 0.0,
-        "exclude_violation@10": None, "returned@10": 0.0}
+        "exclude_violation@10": None, "returned@10": 0.0, "hnrr@10": None}
+
+
+def test_query_metrics_hnrr_at_10(matrix, relevance):
+    """The share of what came back that has the include AND the excluded finding (s3)."""
+    gold = q([("Edema", "PRESENT")], ["Pleural Effusion"])
+    rel = relevance(gold)
+    assert rev.query_metrics(["s1", "s3"], rel, gold, matrix)["hnrr@10"] == 0.5
+    assert rev.query_metrics(["s1", "s2"], rel, gold, matrix)["hnrr@10"] == 0.0
+    assert rev.query_metrics([], rel, gold, matrix)["hnrr@10"] is None
+    include_only = q([("Edema", "PRESENT")])
+    assert rev.query_metrics(["s3"], relevance(include_only), include_only,
+                             matrix)["hnrr@10"] is None
+    exclude_only = q(exclude=["Pleural Effusion"])
+    assert rev.query_metrics(["s3"], relevance(exclude_only), exclude_only,
+                             matrix)["hnrr@10"] is None
+
+
+def test_mode_comparison_on_common_queries():
+    def entry(rows):
+        return {"per_query": {i: {"ndcg_binary@10": n, "returned@10": r, "hnrr@10": h}
+                              for i, (n, r, h) in rows.items()}}
+
+    report = {"parsers": {"gold": {"modes": {
+        "image_joint": entry({"a": (0.8, 1.0, 0.1), "b": (0.5, 1.0, None), "c": (0.0, 0.0, None),
+                              "d": (0.2, 1.0, 0.3)}),
+        "image": entry({"a": (0.6, 1.0, 0.3), "b": (0.5, 1.0, None), "c": (0.4, 1.0, 0.0),
+                        "d": (0.4, 1.0, 0.1)}),
+        "vector": entry({"a": (0.1, 1.0, 0.5), "b": (0.2, 0.0, None), "c": (0.1, 1.0, None),
+                         "d": (0.2, 1.0, 0.2)})}}}}
+    out = rev.mode_comparison(report, "image_joint")
+    image, vector = out["image"], out["vector"]
+    assert image["n_common"] == 3                         # c: image_joint returned nothing
+    assert image["ndcg_binary@10"] == pytest.approx({"image_joint": 0.5, "image": 0.5})
+    assert (image["wins"], image["ties"], image["losses"]) == (1, 1, 1)
+    assert image["hnrr@10"] == pytest.approx({"image_joint": 0.2, "image": 0.2})
+    assert image["n_hnrr"] == 2                           # a and d have a rate on both sides
+    assert vector["n_common"] == 2                        # b: vector returned nothing
+    assert (vector["wins"], vector["ties"], vector["losses"]) == (1, 1, 0)
+    assert vector["hnrr@10"] == pytest.approx({"image_joint": 0.2, "vector": 0.35})
+    assert rev.mode_comparison(report, "image_decomposed") is None
+    only = {"parsers": {"gold": {"modes": {"image_joint": entry({"a": (0.8, 1.0, 0.1)})}}}}
+    assert rev.mode_comparison(only, "image_joint") == {}
 
 
 def test_evidence_metrics_count_include_pairs_and_the_wanted_polarity():

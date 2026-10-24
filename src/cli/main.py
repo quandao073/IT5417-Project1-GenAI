@@ -758,6 +758,20 @@ def _print_grid(grid: dict) -> None:
           f"baseline_ndcg={grid['baseline_ndcg']:.3f}")
 
 
+# (mode, AppState prefix, the command that builds what it needs)
+_IMAGE_MODES = (("image_joint", "joint", "cxr index --role image"),
+                ("image_decomposed", "decomposed", "cxr build-image-scores"))
+
+
+def _print_mode_comparison(comparisons: dict) -> None:
+    for mode, against in comparisons.items():
+        for other, c in (against or {}).items():
+            n, h = c["ndcg_binary@10"], c["hnrr@10"]
+            print(f"{mode} vs {other}: n={c['n_common']} ndcg_bin {_f(n[mode])}/{_f(n[other])} "
+                  f"wins/ties/losses={c['wins']}/{c['ties']}/{c['losses']} "
+                  f"hnrr {_f(h[mode])}/{_f(h[other])} (n={c['n_hnrr']})")
+
+
 def _print_image_vs_vector(result: dict | None) -> None:
     if result is None:
         print("image_vs_vector: n/a")
@@ -808,6 +822,12 @@ def _cmd_eval_retrieval(args: argparse.Namespace) -> int:
         print(f"image probe disabled: {state.image_reason}; run cxr train-probe",
               file=sys.stderr)
         return 1
+    # The image modes stay disabled, never not-ready, when their artifacts are missing.
+    for mode, attr, fix in _IMAGE_MODES:
+        if mode in args.modes and getattr(state, f"{attr}_status") != "ok":
+            print(f"{mode} disabled: {getattr(state, f'{attr}_reason')}; run {fix}",
+                  file=sys.stderr)
+            return 1
     agreement = rev.build_agreement_matrix(
         pl.read_parquet(Path(args.canonical_dir) / "labels.parquet"), state.labels.study_ids)
     shared = {"state": state, "parser": parser, "matrix": state.labels, "agreement": agreement,
@@ -847,6 +867,9 @@ def _cmd_eval_retrieval(args: argparse.Namespace) -> int:
     compared = "gold" in args.parsers and {"image", "vector"} <= set(args.modes)
     if compared:
         report["image_vs_vector"] = rev.image_vs_vector(report)
+    new_modes = [m for m, _, _ in _IMAGE_MODES if m in args.modes]
+    if "gold" in args.parsers and new_modes:
+        report["mode_comparison"] = {m: rev.mode_comparison(report, m) for m in new_modes}
     _merge_json(out, "eval", report)
 
     _print_eval_table(report, args.verbose)
@@ -854,6 +877,7 @@ def _cmd_eval_retrieval(args: argparse.Namespace) -> int:
           f"verdict: {'PASS' if v['passed'] else 'FAIL'} {json.dumps(v, ensure_ascii=True)}")
     if compared:
         _print_image_vs_vector(report["image_vs_vector"])
+    _print_mode_comparison(report.get("mode_comparison") or {})
     print(f"report     : {args.out}")
     return 0 if v is None or v["passed"] else 1
 
@@ -1110,7 +1134,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Phase 5: score label / vector / image / hybrid search")
     er.add_argument("--benchmark", default="benchmarks/parser_queries_v1.jsonl")
     er.add_argument("--split", choices=["heldout", "dev", "all"], default="heldout")
-    er.add_argument("--modes", nargs="+", choices=["label", "vector", "image", "hybrid"],
+    er.add_argument("--modes", nargs="+",
+                    choices=["label", "vector", "image", "hybrid", "image_joint",
+                             "image_decomposed"],
                     default=["label", "vector", "hybrid"])
     er.add_argument("--parsers", nargs="+", choices=["gold", "rule", "auto"],
                     default=["gold", "rule", "auto"])

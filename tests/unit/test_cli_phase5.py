@@ -294,3 +294,37 @@ def test_eval_retrieval_without_image_still_runs_when_the_probe_is_disabled(worl
     assert run(world, "--split", "dev", "--parsers", "gold", "--modes", "label", "vector",
                "hybrid") == 0
     assert world.out.exists()
+
+
+@pytest.mark.parametrize("mode, attr, fix", [("image_joint", "joint", "cxr index --role image"),
+                                             ("image_decomposed", "decomposed",
+                                              "cxr build-image-scores")])
+def test_eval_retrieval_refuses_a_disabled_image_mode(world, capsys, mode, attr, fix):
+    setattr(world.state, f"{attr}_status", "disabled")
+    setattr(world.state, f"{attr}_reason", "no manifest")
+    assert run(world, "--split", "dev", "--parsers", "gold", "--modes", mode) == 1
+    err = capsys.readouterr().err
+    assert f"{mode} disabled: no manifest" in err and fix in err
+    assert not world.out.exists()
+
+
+def test_eval_retrieval_accepts_new_modes_and_compares_them(world, monkeypatch, capsys):
+    world.state.joint_status = world.state.decomposed_status = "ok"
+    per_query = {"en-001": {"ndcg@10": 0.4, "ndcg_binary@10": 0.5, "returned@10": 1.0,
+                            "exclude_violation@10": 0.2, "hnrr@10": 0.1}}
+
+    def fake(rows, **kw):
+        report = canned(kw["parsers"], kw["modes"])
+        for entry in report["parsers"]["gold"]["modes"].values():
+            entry["per_query"] = per_query
+        return report
+
+    monkeypatch.setattr("src.evaluation.retrieval_eval.evaluate_retrieval", fake)
+    assert run(world, "--split", "dev", "--parsers", "gold",
+               "--modes", "image", "vector", "image_joint", "image_decomposed") == 0
+    report = json.loads(world.out.read_text(encoding="utf-8"))["eval"]
+    assert set(report["mode_comparison"]) == {"image_joint", "image_decomposed"}
+    assert report["mode_comparison"]["image_joint"]["image"]["n_common"] == 1
+    text = capsys.readouterr().out
+    text.encode("ascii")
+    assert "image_joint vs image" in text and "image_decomposed vs vector" in text

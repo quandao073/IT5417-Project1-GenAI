@@ -103,7 +103,9 @@ def ndcg_at(ranked: Sequence[str], grade: Mapping[str, float], k: int) -> float:
 def query_metrics(ranked: Sequence[str], rel: Relevance, gold: SearchQuery,
                   matrix: lf.LabelMatrix, *, k: int = TOP_K) -> dict:
     """Precision divides by k even when fewer come back; the violation rate divides by what
-    came back and is None when nothing did or the gold excludes nothing."""
+    came back and is None when nothing did or the gold excludes nothing. HNRR (as in
+    `template_bench`) is the share of what came back with every include AND every exclude
+    PRESENT, the negation ignored; None unless the gold has both."""
     top = list(ranked[:k])
     hit = [s in rel.relevant for s in top]
     first = next((rank for rank, h in enumerate(hit, start=1) if h), None)
@@ -112,11 +114,18 @@ def query_metrics(ranked: Sequence[str], rel: Relevance, gold: SearchQuery,
         status = matrix.status[np.ix_([matrix.row_of[s] for s in top],
                                       [matrix.col_of[c] for c in gold.exclude])]
         violation = float((status == lf.STATUS_CODE["PRESENT"]).any(axis=1).mean())
+    hnrr = None
+    if gold.include and gold.exclude and top:
+        concepts = [c.concept for c in gold.include] + list(gold.exclude)
+        status = matrix.status[np.ix_([matrix.row_of[s] for s in top],
+                                      [matrix.col_of[c] for c in concepts])]
+        hnrr = float((status == lf.STATUS_CODE["PRESENT"]).all(axis=1).mean())
     return {"p@5": sum(hit[:5]) / 5, f"p@{k}": sum(hit) / k,
             f"ndcg@{k}": ndcg_at(top, rel.grade, k),
             f"ndcg_binary@{k}": ndcg_at(top, dict.fromkeys(rel.relevant, 1.0), k),
             "mrr": 1 / first if first else 0.0,
-            f"exclude_violation@{k}": violation, f"returned@{k}": len(top) / k}
+            f"exclude_violation@{k}": violation, f"returned@{k}": len(top) / k,
+            f"hnrr@{k}": hnrr}
 
 
 def evidence_metrics(hits: Sequence[pipeline.Hit], query: SearchQuery) -> dict:
@@ -306,6 +315,37 @@ def image_vs_vector(report: dict, *, k: int = TOP_K) -> dict | None:
                 ndcg: {"image": _mean([image[i][ndcg] for i in unanswered]),
                        "label": _mean([label[i][ndcg] for i in unanswered]) if label else None}},
             "s2_passed": bool(common) and mean["image"] > mean["vector"] and violation_ok}
+
+
+def mode_comparison(report: dict, new_mode: str, against: Sequence[str] = ("image", "vector"),
+                    *, k: int = TOP_K) -> dict | None:
+    """Gold-parser `new_mode` against each mode of `against` in the report, on the queries both
+    answered (returned > 0): binary ndcg wins / ties / losses and means, and the HNRR means
+    over the queries where both have one. None when `new_mode` was not run."""
+    modes = report["parsers"].get("gold", {}).get("modes", {})
+    if new_mode not in modes:
+        return None
+    new = modes[new_mode]["per_query"]
+    ndcg, hnrr, returned = f"ndcg_binary@{k}", f"hnrr@{k}", f"returned@{k}"
+    out = {}
+    for other in against:
+        if other not in modes:
+            continue
+        base = modes[other]["per_query"]
+        common = [i for i in new if i in base and new[i][returned] > 0 and base[i][returned] > 0]
+        diffs = [new[i][ndcg] - base[i][ndcg] for i in common]
+        rated = [i for i in common if new[i][hnrr] is not None and base[i][hnrr] is not None]
+        out[other] = {
+            "n_common": len(common),
+            ndcg: {new_mode: _mean([new[i][ndcg] for i in common]),
+                   other: _mean([base[i][ndcg] for i in common])},
+            "wins": sum(d > 1e-9 for d in diffs), "ties": sum(abs(d) <= 1e-9 for d in diffs),
+            "losses": sum(d < -1e-9 for d in diffs),
+            "n_hnrr": len(rated),
+            hnrr: {new_mode: _mean([new[i][hnrr] for i in rated]),
+                   other: _mean([base[i][hnrr] for i in rated])},
+        }
+    return out
 
 
 def ablation(rows: Sequence[BenchmarkQuery], *, state, parser: QueryParser,
