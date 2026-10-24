@@ -129,10 +129,6 @@ class TestSettings:
         assert settings.canonical_dir.name == "canonical"
         assert settings.build_id is None
 
-    def test_image_probe_dir_default(self):
-        assert config.Settings(_env_file=None).image_probe_dir.as_posix() == (
-            "data/indexes/image_probe")
-
     def test_reads_values_from_the_environment(self, monkeypatch):
         monkeypatch.setenv("QDRANT_URL", "http://qdrant:6333")
         monkeypatch.setenv("BUILD_ID", "20260921_chexpert25k_v1")
@@ -148,7 +144,7 @@ class TestSettings:
         assert settings.llm_disabled is True
 
     def test_treats_a_blank_build_id_as_unset(self, monkeypatch):
-        """.env.example ships BUILD_ID= so the API falls back to build_manifest.json."""
+        """.env.example ships BUILD_ID= so the API serves the selected encoder's only build."""
         monkeypatch.setenv("BUILD_ID", "")
         assert config.Settings(_env_file=None).build_id is None
 

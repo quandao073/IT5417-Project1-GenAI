@@ -1,4 +1,5 @@
-"""Live Phase 5 checks on the real corpus: a 50-image hybrid round trip and evidence faithfulness.
+"""Live checks on the real corpus: a 50-image round trip of the one search path and evidence
+faithfulness.
 
 Run with `uv run pytest -m integration` while `docker compose up -d qdrant` is up. The round trip
 reuses the throwaway 50-image build of test_vector_index.py (same build id, so its `qdrant`
@@ -19,14 +20,12 @@ from src.data.labels import CHEXPERT_LABELS, resolve
 from src.embeddings import embed, index
 from src.query.schema import Constraint, SearchQuery
 from src.retrieval.evidence import EvidenceMatcher
-from src.retrieval.label_filter import satisfies
 from src.retrieval.pipeline import run_search
 from src.retrieval.report_index import build_report_index
 from tests.integration.test_vector_index import BUILD, qdrant  # noqa: F401 - pytest fixture
 
 pytestmark = pytest.mark.integration
 CANONICAL = Path("data/canonical")
-POLICY = {"absence_policy": "exclude_present", "uncertainty_policy": "EXCLUDE"}
 
 
 def _subset_world(client, tmp_path: Path, encoder) -> tuple[Path, Path, pl.DataFrame]:
@@ -52,7 +51,7 @@ def _subset_world(client, tmp_path: Path, encoder) -> tuple[Path, Path, pl.DataF
     return canonical, indexes, pl.read_parquet(canonical / "reports.parquet")
 
 
-def test_hybrid_fifty_images_round_trip(qdrant, tmp_path):  # noqa: F811 - the fixture
+def test_fifty_images_round_trip_of_the_one_path(qdrant, tmp_path):  # noqa: F811 - fixture
     from src.embeddings.base import load_encoder
 
     cfg = load_config("models")["image_encoder"]
@@ -60,6 +59,7 @@ def test_hybrid_fifty_images_round_trip(qdrant, tmp_path):  # noqa: F811 - the f
     canonical, indexes, reports = _subset_world(qdrant, tmp_path, encoder)
     fts = tmp_path / "report_search.sqlite"
     build_report_index(reports, fts, concepts_sha256="itest", git_commit=None)
+    (canonical / "labels.parquet").unlink()     # search must not need the labels
     settings = Settings(_env_file=None, qdrant_url=Settings().qdrant_url, canonical_dir=canonical,
                         indexes_dir=indexes, build_id=BUILD, fts_db_path=fts, llm_disabled=True)
     state = build_state(settings, encoder_loader=lambda *_: encoder)
@@ -70,17 +70,12 @@ def test_hybrid_fifty_images_round_trip(qdrant, tmp_path):  # noqa: F811 - the f
         assert [c.concept for c in query.include] == ["Edema"]
         assert query.exclude == ["Pleural Effusion"]
 
-        outcome = run_search(state, query, "hybrid", top_k=50, views=query.views, **POLICY)
-        expected = [s for s in state.labels.study_ids.tolist()
-                    if satisfies(state.labels, s, query.include, query.exclude, **POLICY)]
-        assert expected, "no edema-without-effusion study among the 50"
-        assert outcome.total_matches == len(expected)
-        ids = [h.study_id for h in outcome.hits]
-        assert all(satisfies(state.labels, s, query.include, query.exclude, **POLICY)
-                   for s in ids)
-        # vector_top_k (100) covers the whole 50-study collection, so every allowed study
-        # comes back ranked.
-        assert sorted(ids) == sorted(expected)
+        outcome = run_search(state, query, top_k=50, views=query.views)
+        assert outcome.text == "pulmonary edema and no pleural effusion"
+        # one image per study, and top_k covers the whole 50-image collection
+        assert len(outcome.hits) == 50 and len({h.study_id for h in outcome.hits}) == 50
+        scores = [h.score for h in outcome.hits]
+        assert scores == sorted(scores, reverse=True)
         text_of = dict(zip(reports["study_id"], reports["search_text"], strict=True))
         quotes = [(h.study_id, e) for h in outcome.hits for e in h.evidence]
         assert quotes, "no hit carries evidence"

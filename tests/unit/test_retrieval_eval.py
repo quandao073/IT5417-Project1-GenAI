@@ -103,7 +103,8 @@ def fake(rankings):
         calls.append({"state": state, "query": query, "mode": mode, "top_k": top_k,
                       "views": views, "policy": (absence_policy, uncertainty_policy),
                       "fusion": fusion})
-        hits = [Hit(rank, s, f"img-{s}", evidence=[ev("Edema", "affirmed")] if s == "s1" else [])
+        hits = [Hit(rank, s, f"img-{s}", 0.5,
+                    evidence=[ev("Edema", "affirmed")] if s == "s1" else [])
                 for rank, s in enumerate(rankings(mode, fusion), start=1)]
         return SearchOutcome(hits, None, [])
 
@@ -185,10 +186,11 @@ def test_query_metrics_divide_by_k_and_count_violations(matrix, relevance):
 
 def test_evidence_metrics_count_include_pairs_and_the_wanted_polarity():
     query = q([("Edema", "PRESENT"), ("Pneumonia", "UNCERTAIN")], ["Pleural Effusion"])
-    hits = [Hit(1, "s1", "i1", evidence=[ev("Edema", "affirmed"), ev("Pneumonia", "affirmed"),
-                                         ev("Pleural Effusion", "negated")]),
-            Hit(2, "s2", "i2", evidence=[ev("Edema", "negated")]),
-            Hit(3, "s3", "i3")]
+    hits = [Hit(1, "s1", "i1", 0.5, evidence=[ev("Edema", "affirmed"),
+                                              ev("Pneumonia", "affirmed"),
+                                              ev("Pleural Effusion", "negated")]),
+            Hit(2, "s2", "i2", 0.4, evidence=[ev("Edema", "negated")]),
+            Hit(3, "s3", "i3", 0.3)]
     # 3 hits x 2 include concepts = 6 pairs, 3 quoted; only s1 Edema has the wanted polarity.
     # The exclude quote is not an include pair and is not counted.
     assert rev.evidence_metrics(hits, query) == pytest.approx(

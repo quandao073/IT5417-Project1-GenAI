@@ -21,15 +21,12 @@ def health(state: Annotated[AppState, Depends(get_state)]):
                             content={"status": "not_ready", "reason": state.not_ready_reason})
     model = state.manifest["embedding_model"]
     return HealthResponse(
-        status="ready", build_id=state.manifest["build_id"], model_id=model["model_id"],
-        revision=model["revision"], dimension=model["dimension"],
+        status="ready", build_id=state.manifest["build_id"], encoder=state.manifest["encoder"],
+        model_id=model["model_id"], revision=model["revision"], dimension=model["dimension"],
         vectors=state.manifest["counts"]["vectors"],
         studies=state.manifest["counts"]["studies"], qdrant="ok",
         report_index=state.report_status,
         report_studies=(int(state.report_meta["studies"]) if state.report_status == "ok"
-                        else None),
-        image_probe=state.image_status,
-        image_probe_id=(state.image_meta.get("probe_id") if state.image_status == "ok"
                         else None),
         llm=state.llm_status, llm_model=state.settings.llm_model,
     )
