@@ -1,6 +1,6 @@
 """CXR-CLIP (Kakao Brain, 2023): Swin-Tiny + Bio_ClinicalBERT pre-trained on MIMIC-CXR.
 
-The image-mode encoder of V1.1 (WORKLOG D30). The architecture is rebuilt here from the
+The default encoder (WORKLOG D38). The architecture is rebuilt here from the
 authors' code (cxrclip/model/clip.py, read 2026-10-23), not from the README, because two
 details decide the vectors: the image feature is token 0 of Swin's last hidden state (not
 the pooler) and the text feature is the last attended token, i.e. [SEP] ("eos" pooling),

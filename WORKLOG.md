@@ -21,14 +21,14 @@ Ba mục đó đủ để không phá vỡ thứ gì. Các mục còn lại tra 
 
 > Cập nhật lại mục này mỗi lần ghi log. Mục này mà cũ thì tệ hơn là không có.
 
-**Cập nhật lần cuối:** 2026-10-23, image probe merge vào `main` (D29, P12 trả lời bằng số đo, khối *Image probe* trong *Sự thật đã đo*; mở P13 về prompt đối). Trước đó cùng ngày, trên `main`: D28 (giữ scope V1, không thêm KG); mở P12 về vector leg; đo ablation, pool ngoài corpus và RadGraph-XL, thêm T29; dọn file
+**Cập nhật lần cuối:** 2026-10-24, nhánh `feat/cxrclip-image-only` (từ `main` 90cd62a): bước 1 của pipeline một đường xong: encoder mặc định CXR-CLIP (D38, đảo D11), sổ đăng ký build theo `build_id`. Trước đó: 2026-10-23, image probe merge vào `main` (D29, P12 trả lời bằng số đo, khối *Image probe* trong *Sự thật đã đo*; mở P13 về prompt đối). Trước đó cùng ngày, trên `main`: D28 (giữ scope V1, không thêm KG); mở P12 về vector leg; đo ablation, pool ngoài corpus và RadGraph-XL, thêm T29; dọn file
 
 | | |
 |---|---|
 | Đã xong | Part A · Phase 0a · Phase 1 (canonical corpus 25.000 study) · Phase 2 (model gate: BiomedCLIP) · Phase 3 (vector baseline) · Phase 4 (parser + label mode) — parser mặc định OpenAI gpt-5-mini PASS heldout (D22, Phase 4c); qwen 3B cũ FAIL (Phase 4) · **Phase 5 (report FTS + hybrid)** — heldout, gold: nDCG@10 hybrid / vector / label **0,607 / 0,235 / 0,531**, p@10 1,000 / 0,359 / 1,000, exclude_violation@10 vector 0,319 so với hybrid 0; verdict **PASS** (gain 1,579) |
 | Image probe | Merge vào `main` 2026-10-23 (local, chưa push; lịch sử gốc ở `backup/image-concept-probe-original`): S1/S2/S3/S4 = **PASS/PASS/FAIL/PASS** (D29). Heldout gold, 138 câu vector trả lời: nDCG@10 mode `image` 0,297 so với `vector` 0,259, vi phạm exclude 0,165 so với 0,319; cả 152 câu (spec §8.4 "ảnh không có report") 0,299 / 0,235. Lưới dev giữ trọng số ảnh 0 trong hybrid, nên hybrid 0,607 trùng từng bit với bản trước khi merge. → `docs/image-probe.md` |
-| Đang làm | — |
-| Tiếp theo | **Phase 6 (web UI)**, hoặc Phase 0b song song |
+| Đang làm | **Pipeline một đường CXR-CLIP** (câu hỏi → parser → câu mẫu → text encoder → cosine trên Qdrant, lọc view) trên nhánh `feat/cxrclip-image-only`. Bảng trạng thái từng bước: `notes/cxrclip-status.md` |
+| Tiếp theo | Bước 2 của `notes/cxrclip-status.md`: rút pipeline/API về một đường |
 | Chặn Phase 6 | `pnpm` chưa cài trên máy (T5), cùng chỗ chặn với Phase 0b. P9 đã chốt thành D26; P4, P5, P8, P11, P12, P13 còn mở nhưng không chặn (P5 chọn khi build image ở Phase 6) |
 | Chặn Phase 0b | `pnpm` chưa cài trên máy — xem T5 |
 
@@ -40,8 +40,11 @@ heldout đóng băng `artifacts/metrics/retrieval_eval_heldout_image_probe_20261
 
 Dữ liệu, chỉ mục và artifact đều gitignored; lệnh dựng lại nằm ở `README.md`. Những điều README không nói:
 
-- Build đang phục vụ: `20261011_chexpert25k_biomedclip_v1` (shard ở `data/indexes/embeddings/<build_id>/`,
-  collection `cxr_images_<build_id>` trong volume Docker `cxr-semantic-retrieval_qdrant_data`). Report index
+- Mỗi build có manifest riêng `data/indexes/builds/<build_id>/manifest.json` (ghi encoder đã embed nó); API phục vụ
+  `BUILD_ID`, không đặt thì build duy nhất của encoder `selected`. Đăng ký: `20261023_chexpert25k_cxrclip_v1` (mặc định,
+  D38) và `20261011_chexpert25k_biomedclip_v1`; shard ở `data/indexes/embeddings/<build_id>/`, collection
+  `cxr_images_<build_id>` trong volume Docker `cxr-semantic-retrieval_qdrant_data`. `data/indexes/build_manifest*.json`
+  là của nhánh `feat/label-aware-image-retrieval`; code nhánh này không đọc chúng. Report index
   `data/indexes/report_search.sqlite` gắn với corpus canonical, không gắn với build.
 - **`cxr eval-parser` ghi đè `parser_eval.json`, `cxr eval-retrieval` ghi đè `retrieval_eval.json`.** Các bản
   heldout được trích dẫn đã đóng băng trong `artifacts/metrics/`: `parser_eval_heldout_20261014.json` (qwen 3B,
@@ -55,12 +58,13 @@ Dữ liệu, chỉ mục và artifact đều gitignored; lệnh dựng lại n�
 Lệnh kiểm tra sau mỗi thay đổi:
 
 ```bash
-uv run pytest -q                 # 912 tests trên nhánh (4 `model` + 4 `integration` + 3 `llm` bị bỏ chọn mặc định)
+uv run pytest -q                 # 952 tests trên `feat/cxrclip-image-only` (13 `model`/`integration`/`llm` bị bỏ chọn mặc định)
 uv run pytest -m llm             # 3 test parse thật qua LLM đang cấu hình (mặc định OpenAI, đọc .env): 2 passed, 1 xpassed
 uv run pytest -m model           # 4 smoke test adapter thật, cần weights đã tải
 uv run pytest -m integration     # 4 test: 50 ảnh vector, 50 ảnh hybrid, evidence trên 1.000 report thật,
                                  # mode image với probe thật; cần Qdrant Docker (`docker compose up -d qdrant`)
-uv run cxr validate-indexes      # 8 x PASS (thứ 7: report index, thứ 8: image probe), cần Qdrant Docker
+uv run cxr validate-indexes      # build CXR-CLIP: 7 PASS + image_probe FAIL tới bước 2 (probe là của BiomedCLIP);
+                                 # `--encoder biomedclip`: 8 x PASS; cần Qdrant Docker
 uv run ruff check src tests
 uv run cxr --help
 docker compose config > /dev/null
@@ -464,7 +468,7 @@ ngữ: `docs/image-probe.md`.
 | D10 | **`CHEXBERT_FINDINGS` không phát assertion cho study thiếu findings section.** Nguồn không có đầu vào thì không có assertion, nên không đóng góp dòng nào vào `labels.parquet`. | — | Xem T11 |
 | D22 | **Parser mặc định là OpenAI `gpt-5-mini-2025-08-07`** qua `OpenAICompatClient` (`LLM_PROVIDER=openai`, key từ `OPENAI_API_KEY` hoặc `LLM_API_KEY` trong `.env`). Rule parser vẫn là dự phòng khi LLM lỗi/timeout/thiếu key; Ollama qwen 3B còn dùng được bằng `LLM_PROVIDER=ollama`. Tham số riêng theo model nằm ở `models.yaml:llm.hosted_request`. | D5 (qwen 3B local), §1 ("chạy local") | Người dùng chọn chuyển sang OpenAI (2026-10-20). Model do bake-off trên dev chọn theo luật viết trước (Phase 4c); heldout PASS cả verdict, còn qwen 3B trượt cả ba ngưỡng. Đổi lại: cần internet và key, ~0,22 USD / 1.000 câu, truy vấn người dùng đi ra máy chủ OpenAI (không có dữ liệu bệnh nhân trong truy vấn), và model chạy ở temperature mặc định (T23). Người dùng đã thử chuyển sang gpt-4o-mini rồi gpt-4.1-mini để có `temperature: 0`; cả hai được đo heldout và lặp lại, cả hai kém hơn và cũng không tất định hơn (Phase 4c), nên giữ gpt-5-mini |
 | D8 | **Không có disk guard.** §9.2, task "Viết disk guard" của Phase 1 và mục disk guard trong §19 đều **không thực hiện**. | §9.2, §17, §19 | 191 GB trống, V1 thêm <1 GB, `serve_originals` nghĩa là không stage nào ghi ảnh. §9.2 viết cho kịch bản materialize ảnh đã xử lý — kịch bản đó đã bị loại. → `docs/adr/0003` |
-| D11 | **Image encoder là BiomedCLIP** (`microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224` @ `9f341de`), pin trong `configs/models.yaml`. | `models.yaml` (`selected: null`) | Luật gate cố định trước khi chạy: hard gate rồi macro strict AUROC; hai model đầu cách < 0,02 thì chọn rẻ hơn. BiomedCLIP 0,636 vs XrayCLIP 0,616: hiệu 0,0198, dưới ngưỡng chỉ 0,0002 → hòa, BiomedCLIP nhanh hơn 6,9× nên thắng. MIT (thay vì CC-BY-NC) là lợi ích đi kèm; bước license không được xét. CheXzero trượt (0,461). → `docs/model-decision.md` |
+| D38 | **Encoder mặc định là CXR-CLIP SwinT bản M** (`selected: cxrclip`, pin `sha256:743e2333…a5d5`, CC BY-NC 4.0); BiomedCLIP vẫn là candidate và build của nó vẫn đăng ký, phục vụ được bằng `BUILD_ID` hoặc `--encoder biomedclip`. (D30–D37 nằm trên nhánh `feat/label-aware-image-retrieval`.) | D11 (BiomedCLIP) | Người dùng chọn 2026-10-24 theo đúng luật hòa của gate Phase 2 (hòa thì chọn rẻ hơn): zero-shot trên dev hai encoder hòa (`vector` nDCG@10 0,302 so với 0,286, Δ −0,016 [−0,075; +0,038]), CXR-CLIP nhanh gấp 2,4 lần (p95 76 so với 180 ms), ảnh tốt hơn (probe pool-val 0,661 so với 0,620) nhưng tháp chữ kém hơn (AUROC prompt nhãn 0,528 so với 0,599), đúng chỗ fine-tune nhắm tới. Số đo: WORKLOG của nhánh `feat/label-aware-image-retrieval`, *Thí nghiệm: CXR-CLIP zero-shot thay BiomedCLIP*. Gate Phase 2 và lý do của D11: `docs/model-decision.md` |
 | D12 | **200 ca nhãn bác sĩ (`valid/`, rank 0–199) không bao giờ tham gia chọn model hay tune.** Spike lấy rank 200–1199; `select_sample` raise nếu chạm ca `valid/`. | cách hiểu mặc định của §17 | Đó là ground truth người duy nhất của test. Chọn model là tune; dùng chúng ở đây thì con số test cuối cùng không còn sạch |
 | D13 | **Spike chấm bằng 14 prompt đơn concept** (`"chest x-ray showing {}"` + `concepts.yaml:<c>.en[0]`), không phải 30–50 canonical query. | §17 | Query phủ định/đa concept cần parser Phase 4; bịa chúng bây giờ là đo sai thứ. Prompt đơn dương là đúng phép vector mode sẽ chạy |
 | D14 | **Embed hai bước qua shard file.** `cxr embed` ghi `data/indexes/embeddings/<build_id>/shard_NNNN.npz` + `shards.json`; `cxr index` upsert vào Qdrant và ghi `build_manifest.json`. `build_id` cố định lúc embed bắt đầu, `index` đọc lại chứ không sinh mới. | §17 ("Index vào Qdrant", không nói cách) | Embed CPU ≈34 phút (đo từ mtime shard của lần chạy CPU dở, chưa tính nạp model) là thứ đắt, còn Qdrant/Docker/payload là thứ hay đổi. Tách ra thì nâng image Qdrant hay `--recreate` không phải embed lại; resume theo shard là lưới an toàn; `cxr score-corpus` chấm chất lượng thẳng từ shard, không cần Qdrant. → `docs/vector-baseline.md` |
