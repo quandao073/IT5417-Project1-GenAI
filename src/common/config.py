@@ -1,6 +1,6 @@
 """YAML config loading, the build config hash, and runtime settings.
 
-`config_hash` goes into build_manifest.json so a built index can be told apart
+`config_hash` goes into each build's manifest so a built index can be told apart
 from one produced under different settings. It hashes the *parsed* configs, not
 the files, so editing a comment does not invalidate an index that is still
 correct. Only the configs that actually shape a build are included: logging and
@@ -49,14 +49,17 @@ def load_config(name: str, config_dir: Path | None = None) -> dict:
 
 
 def _select(selector: str, config_dir: Path | None) -> object:
-    """`data` -> the whole parsed file; `models:image_encoder` -> that section."""
+    """`data` -> the whole parsed file; `models:image_encoder` -> that section; dots go deeper
+    (`models:image_encoder.candidates.cxrclip`), so a key holding a dot cannot be selected."""
     name, _, section = selector.partition(":")
-    parsed = load_config(name, config_dir)
+    node = load_config(name, config_dir)
     if not section:
-        return parsed
-    if not isinstance(parsed, dict) or section not in parsed:
-        raise KeyError(f"{name}.yaml has no top-level section {section!r}")
-    return parsed[section]
+        return node
+    for key in section.split("."):
+        if not isinstance(node, dict) or key not in node:
+            raise KeyError(f"{name}.yaml has no section {section!r}")
+        node = node[key]
+    return node
 
 
 def config_hash(
@@ -67,6 +70,17 @@ def config_hash(
     parsed = {selector: _select(selector, config_dir) for selector in sorted(names)}
     canonical = json.dumps(parsed, sort_keys=True, ensure_ascii=False, default=str)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def index_config_scope(encoder: str, config_dir: Path | None = None) -> list[str]:
+    """What a build embedded by `encoder` hashes: data.yaml, that encoder's own candidate entry
+    and `normalize`. Neither another candidate nor `selected` is in it, so adding a fine-tune
+    variant or switching the served encoder leaves every registered build valid. The scope is
+    recorded in the manifest, so `validate-indexes` rechecks exactly what the build hashed."""
+    cfg = load_config("models", config_dir)["image_encoder"]
+    if encoder not in cfg["candidates"]:
+        raise KeyError(f"encoder {encoder!r} is no models.yaml image_encoder candidate")
+    return ["data", f"models:image_encoder.candidates.{encoder}", "models:image_encoder.normalize"]
 
 
 class Settings(BaseSettings):
@@ -81,8 +95,7 @@ class Settings(BaseSettings):
     canonical_dir: Path = Path("data/canonical")
     fts_db_path: Path = Path("data/indexes/report_search.sqlite")
     indexes_dir: Path = Path("data/indexes")
-    image_probe_dir: Path = Path("data/indexes/image_probe")
-    # Blank in .env.example: the API then reads it from build_manifest.json.
+    # Blank in .env.example: the API then serves the selected encoder's only build.
     build_id: str | None = None
 
     # OpenAI by default (WORKLOG D22, replacing the local qwen 3B of D5). `openai` is

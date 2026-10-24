@@ -77,6 +77,16 @@ class TestConfigHash:
         with pytest.raises(KeyError, match="image_encoder"):
             config.config_hash(("models:image_encoder",), config_dir)
 
+    def test_dots_select_a_nested_section(self, config_dir):
+        """A build hashes its own candidate entry; another candidate is not part of it."""
+        (config_dir / "models.yaml").write_text(
+            "image_encoder:\n  candidates:\n    a: {revision: r1}\n", encoding="utf-8")
+        before = config.config_hash(("models:image_encoder.candidates.a",), config_dir)
+        (config_dir / "models.yaml").write_text(
+            "image_encoder:\n  candidates:\n    a: {revision: r1}\n    b: {revision: r2}\n",
+            encoding="utf-8")
+        assert config.config_hash(("models:image_encoder.candidates.a",), config_dir) == before
+
     def test_defaults_to_what_shapes_the_vectors(self):
         """retrieval, concepts and models:llm are query-time; only the corpus
         definition and the image encoder change what lands in Qdrant."""
@@ -85,16 +95,39 @@ class TestConfigHash:
         assert len(config.config_hash()) == 64
 
 
+class TestIndexConfigScope:
+    MODELS = ("image_encoder:\n  selected: a\n  revision: r1\n  normalize: true\n"
+              "  candidates:\n    a: {revision: r1}\n    b: {revision: r2}\n")
+
+    @pytest.fixture
+    def models_dir(self, config_dir):
+        (config_dir / "models.yaml").write_text(self.MODELS, encoding="utf-8")
+        return config_dir
+
+    def test_covers_the_corpus_and_the_build_s_own_candidate(self, models_dir):
+        assert config.index_config_scope("b", models_dir) == [
+            "data", "models:image_encoder.candidates.b", "models:image_encoder.normalize"]
+
+    def test_switching_the_selected_encoder_leaves_every_build_s_hash_alone(self, models_dir):
+        """`selected` only picks the default build to serve; it shapes no vectors."""
+        scopes = {e: config.index_config_scope(e, models_dir) for e in ("a", "b")}
+        before = {e: config.config_hash(s, models_dir) for e, s in scopes.items()}
+        (models_dir / "models.yaml").write_text(
+            self.MODELS.replace("selected: a\n  revision: r1", "selected: b\n  revision: r2"),
+            encoding="utf-8")
+        assert {e: config.config_hash(s, models_dir) for e, s in scopes.items()} == before
+
+    def test_an_unknown_encoder_is_an_error_that_names_it(self, models_dir):
+        with pytest.raises(KeyError, match="nope"):
+            config.index_config_scope("nope", models_dir)
+
+
 class TestSettings:
     def test_has_local_defaults_that_need_no_env_file(self):
         settings = config.Settings(_env_file=None)
         assert settings.qdrant_url.startswith("http")
         assert settings.canonical_dir.name == "canonical"
         assert settings.build_id is None
-
-    def test_image_probe_dir_default(self):
-        assert config.Settings(_env_file=None).image_probe_dir.as_posix() == (
-            "data/indexes/image_probe")
 
     def test_reads_values_from_the_environment(self, monkeypatch):
         monkeypatch.setenv("QDRANT_URL", "http://qdrant:6333")
@@ -111,7 +144,7 @@ class TestSettings:
         assert settings.llm_disabled is True
 
     def test_treats_a_blank_build_id_as_unset(self, monkeypatch):
-        """.env.example ships BUILD_ID= so the API falls back to build_manifest.json."""
+        """.env.example ships BUILD_ID= so the API serves the selected encoder's only build."""
         monkeypatch.setenv("BUILD_ID", "")
         assert config.Settings(_env_file=None).build_id is None
 

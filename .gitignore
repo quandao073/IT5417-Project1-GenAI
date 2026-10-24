@@ -54,3 +54,8 @@ Thumbs.db
 docs/superpowers/
 .superpowers/
 
+# --- Run logs; the notes themselves are committed ---
+notes/*.log
+
+# --- Fine-tuning runs: adapters and merged weights, CC BY-NC, never committed ---
+runs/

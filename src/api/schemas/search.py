@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from src.query.schema import ParseResult, SearchQuery
 from src.retrieval.evidence import Evidence
@@ -44,24 +44,27 @@ class ParsedQuery(SearchQuery):
                    cached=result.cached, llm_ms=result.llm_ms)
 
 
-AbsencePolicy = Literal["exclude_present", "explicit_absence_required"]
-UncertaintyPolicy = Literal["EXCLUDE", "INCLUDE"]
+_MODE_REMOVED = ("`mode` was removed: search has one path (template -> text encoder -> "
+                 "cosine); the encoder is chosen on the server by BUILD_ID")
 
 
 class SearchRequest(BaseModel):
+    # An unknown field is a 422, never silently ignored: a client still sending `mode` or a
+    # label policy would otherwise believe it was applied.
+    model_config = ConfigDict(extra="forbid")
+
     query: str = Field(min_length=1, max_length=500,
                        description="English or Vietnamese request; parsed by /query/parse rules")
-    mode: Literal["vector", "label", "image", "hybrid"] = "vector"
     top_k: int = Field(10, ge=1, le=50)
     views: list[View] | None = Field(
         None, description="AP/PA facet; overrides the views the parser found when given")
-    # Defaults mirror configs/retrieval.yaml:constraints (a test ties them together).
-    absence_policy: AbsencePolicy = Field("exclude_present", description=(
-        "applies to label and hybrid only; vector and image modes neither filter nor rank by "
-        "it and only use it to flag constraints_satisfied"))
-    uncertainty_policy: UncertaintyPolicy = Field("EXCLUDE", description=(
-        "applies to label and hybrid only; vector and image modes neither filter nor rank by "
-        "it and only use it to flag constraints_satisfied"))
+
+    @model_validator(mode="before")
+    @classmethod
+    def _no_mode(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "mode" in data:
+            raise ValueError(_MODE_REMOVED)
+        return data
 
     @field_validator("query")
     @classmethod
@@ -69,52 +72,29 @@ class SearchRequest(BaseModel):
         return _non_blank(value)
 
 
-class LabelAssertion(BaseModel):
-    concept: str
-    status: Literal["PRESENT", "ABSENT", "UNCERTAIN", "NOT_MENTIONED"]
-    source: str | None = Field(description="winning label source (WORKLOG G1); null if silent")
-
-
-class ScoreBreakdown(BaseModel):
-    vector_rank: int | None = None
-    report_rank: int | None = None
-    image_rank: int | None = None
-    rrf_score: float | None = None
-    label_match: bool | None = None
-    constraints_satisfied: bool | None = Field(None, description=(
-        "hybrid/label: always true by construction; vector and image: whether every constrained "
-        "concept's resolved status satisfies the request's policies, informational only; null "
-        "without constraints"))
-
-
 class SearchResult(BaseModel):
     rank: int
     study_id: str
     image_id: str
     image_url: str
-    score: float | None = Field(description=(
-        "vector mode: cosine similarity between the query and the image embedding, a ranking "
-        "signal, NOT a probability (roughly 0.2-0.5 on this corpus). image mode: "
-        "Σ log σ(z) over included concepts + Σ log(1−σ(z)) over excluded, from the image "
-        "probe logits; ≤ 0, a ranking signal, NOT a probability (the vector-mode cosine "
-        "when the query has no concept). hybrid mode: the RRF score, also a ranking "
-        "signal (0.0 when no leg ranked anything). label mode: null."))
-    score_breakdown: ScoreBreakdown
-    labels: list[LabelAssertion] = Field(
-        description="resolved status of every constrained concept, in every mode")
+    score: float = Field(description=(
+        "cosine similarity between the query text and the image embedding, a ranking signal, "
+        "NOT a probability"))
     report_evidence: list[Evidence] = Field(default_factory=list, description=(
-        "exact sentences of the study's report: one per constrained concept it mentions, or "
-        "the best free-text match when nothing is included; empty without the report index"))
+        "exact sentences of the study's report, quoted after ranking for display only: they "
+        "never change a rank. One per constrained concept the report mentions, or the best "
+        "free-text match when nothing is included; empty for a study without a report and "
+        "without the report index"))
 
 
 class SearchResponse(BaseModel):
     request_id: str
     build_id: str
     parsed_query: ParsedQuery
+    query_text: str | None = Field(description=(
+        "what the text encoder read: the template of the parsed constraints, or the free text "
+        "when none was recognised; null when nothing was searched"))
     results: list[SearchResult]
-    total_matches: int | None = Field(
-        description=("label and hybrid modes: studies matching after the view filter; "
-                     "null in vector and image modes and in hybrid mode without a constraint"))
     warnings: list[str]
     latency_ms: int
 
@@ -122,6 +102,7 @@ class SearchResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: Literal["ready"]
     build_id: str
+    encoder: str
     model_id: str
     revision: str
     dimension: int
@@ -130,7 +111,5 @@ class HealthResponse(BaseModel):
     qdrant: Literal["ok"]
     report_index: Literal["ok", "disabled"]
     report_studies: int | None
-    image_probe: Literal["ok", "disabled"]
-    image_probe_id: str | None
     llm: Literal["ok", "disabled", "unreachable", "missing_model"]
     llm_model: str

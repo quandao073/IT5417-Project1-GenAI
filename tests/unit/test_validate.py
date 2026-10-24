@@ -23,7 +23,7 @@ def built(tmp_path):
     client = QdrantClient(":memory:")
     manifest = index.run_index(client, out, images, "cxr_images", recreate=False,
                                config_hash="cfg", git_commit=None, dataset={},
-                               library_versions={})
+                               library_versions={}, encoder="fake")
     return client, manifest, out, images
 
 

@@ -1,10 +1,9 @@
-"""Vector leg of retrieval (plan 11.2, tool contract 12.1).
+"""The search itself (plan 11.2, tool contract 12.1).
 
-Encodes the semantic query with the pinned encoder and asks Qdrant for the
-nearest image vectors. The only constraint it knows is the AP/PA view facet
-(WORKLOG G3); label constraints belong to the hybrid leg, because `vector` is
-the baseline hybrid has to beat. Hybrid narrows the search to its label-allowed set by
-passing `point_ids` (Qdrant point ids, WORKLOG D7).
+Encodes the query text with the build's encoder and asks Qdrant for the nearest image
+vectors. The only constraint it applies is the AP/PA view facet (WORKLOG G3). `point_ids`
+(Qdrant point ids, WORKLOG D7) narrows the search to an allowed set; nothing passes it today,
+and the label filter will when it comes back as its own knob.
 """
 
 from __future__ import annotations

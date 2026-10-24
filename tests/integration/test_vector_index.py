@@ -47,7 +47,7 @@ def test_fifty_images_round_trip(qdrant, tmp_path):
 
     built = index.run_index(qdrant, out, images, "cxr_images", recreate=True,
                             config_hash=config_hash(), git_commit=None, dataset={},
-                            library_versions={})
+                            library_versions={}, encoder=cfg["selected"])
     # The in-memory client ignores payload indexes, so only a real server can prove this one.
     assert "projection" in qdrant.get_collection(built["collection"]).payload_schema
     checks = validate.validate_indexes(qdrant, built, out, images,

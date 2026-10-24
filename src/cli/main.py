@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import dataclasses
 import hashlib
 import json
 import subprocess
 import sys
 import time
-from datetime import UTC, date, datetime
+from datetime import date
 from pathlib import Path
 
 import polars as pl
@@ -18,17 +17,13 @@ import polars as pl
 from src.common.config import Settings, default_config_dir, load_config
 from src.data import canonical, probe_pool
 from src.data.audit import CorpusMode, run_audit
-from src.data.labels import CHEXPERT_LABELS
 from src.embeddings import embed, index, spike, validate
-from src.embeddings.probe import save_probe, train_probe
 from src.evaluation import parser_benchmark as pb
 from src.evaluation import parser_eval as pe
-from src.evaluation import probe_eval
 from src.evaluation import vector_baseline as vb
 from src.query.schema import ParseError
 from src.retrieval import label_filter as lf
 from src.retrieval import report_index
-from src.retrieval.image_concepts import validate_image_probe
 
 
 def _cmd_audit(args: argparse.Namespace) -> int:
@@ -289,7 +284,7 @@ def _qdrant_client(url: str | None):
 
 
 def _cmd_index(args: argparse.Namespace) -> int:
-    from src.common.config import config_hash
+    from src.common.config import config_hash, index_config_scope
 
     shards_dir = _resolve_build_dir(Path(args.embeddings), args.build_id)
     images = pl.read_parquet(Path(args.canonical_dir) / "images.parquet")
@@ -298,32 +293,66 @@ def _cmd_index(args: argparse.Namespace) -> int:
                "plus_csv": Path(data_cfg["plus_metadata"]["csv"]).name}
     client = _qdrant_client(args.qdrant_url)
     try:
+        encoder = index.encoder_of(embed.load_shards_manifest(shards_dir),
+                                   load_config("models")["image_encoder"]["candidates"])
+        scope = index_config_scope(encoder)
         manifest = index.run_index(
             client, shards_dir, images, Settings().qdrant_collection_prefix,
-            recreate=args.recreate, config_hash=config_hash(), git_commit=_git_commit(),
-            dataset=dataset, library_versions=_library_versions(),
+            recreate=args.recreate, config_hash=config_hash(scope), git_commit=_git_commit(),
+            dataset=dataset, library_versions=_library_versions(), encoder=encoder,
+            config_scope=scope,
         )
     except (ValueError, FileNotFoundError) as exc:
         print(f"INDEX FAILED: {exc}", file=sys.stderr)
         return 1
-    out = Path(args.indexes_dir) / index.MANIFEST_FILE
+    out = index.manifest_path(Path(args.indexes_dir), manifest["build_id"])
     index.write_manifest(out, manifest)
-    print(f"collection : {manifest['collection']}")
+    print(f"collection : {manifest['collection']}  encoder {manifest['encoder']}")
     print(f"vectors    : {manifest['counts']['vectors']:,}  "
           f"dim {manifest['embedding_model']['dimension']}")
     print(f"manifest   : {out}")
     return 0
 
 
+def _add_build_args(parser: argparse.ArgumentParser) -> None:
+    """Which registered build a command reads; both unset: the selected encoder's build."""
+    parser.add_argument("--build-id", default=None, help="a registered build")
+    parser.add_argument("--encoder", default=None,
+                        help="shorthand for this encoder's only registered build; with "
+                             "--build-id, it must be the encoder that embedded that build")
+
+
+def _registered_build(args: argparse.Namespace, indexes_dir: Path) -> dict | None:
+    """The build `--build-id` / `--encoder` name, else the selected encoder's; None after
+    printing why there is none."""
+    encoder = args.encoder or (
+        None if args.build_id else load_config("models")["image_encoder"]["selected"])
+    try:
+        return index.resolve_build(indexes_dir, build_id=args.build_id, encoder=encoder)
+    except LookupError as exc:
+        print(f"FAIL manifest    : {exc}", file=sys.stderr)
+        return None
+
+
+def _build_encoder(manifest: dict, device: str = "cpu"):
+    """The encoder that embedded `manifest`'s build (index.build_encoder); None after printing
+    why it cannot be used."""
+    try:
+        return index.build_encoder(
+            manifest, load_config("models")["image_encoder"]["candidates"], device)
+    except ValueError as exc:
+        print(f"ENCODER MISMATCH: {exc}", file=sys.stderr)
+        return None
+
+
 def _cmd_validate_indexes(args: argparse.Namespace) -> int:
-    manifest_path = Path(args.indexes_dir) / index.MANIFEST_FILE
-    if not manifest_path.is_file():
-        print(f"FAIL manifest    : {manifest_path} not found; run cxr index", file=sys.stderr)
+    manifest = _registered_build(args, Path(args.indexes_dir))
+    if manifest is None:
         return 1
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     shards_dir = Path(args.embeddings) / manifest["build_id"]
     images = pl.read_parquet(Path(args.canonical_dir) / "images.parquet")
-    expected_revision = load_config("models")["image_encoder"]["revision"]
+    candidates = load_config("models")["image_encoder"]["candidates"]
+    expected_revision = candidates[manifest["encoder"]]["revision"]
     # Hash over the scope this manifest recorded, not today's default, so an
     # index stays checkable across a change of scope (see D16).
     checks = validate.validate_indexes(
@@ -335,12 +364,6 @@ def _cmd_validate_indexes(args: argparse.Namespace) -> int:
                   else Path(args.indexes_dir) / "report_search.sqlite")
     checks.append(report_index.validate_report_index(
         index_path, pl.read_parquet(Path(args.canonical_dir) / "reports.parquet")))
-    probe_dir = (Path(args.image_probe_dir) if args.image_probe_dir
-                 else Path(args.indexes_dir) / "image_probe")
-    checks.append(validate_image_probe(
-        probe_dir, build_id=manifest["build_id"], revision=expected_revision,
-        study_ids=pl.read_parquet(Path(args.canonical_dir) / "studies.parquet")
-        ["study_id"].to_list()))
     for c in checks:
         print(f"{'PASS' if c.ok else 'FAIL'} {c.name:<12}: {c.detail}")
     return 0 if all(c.ok for c in checks) else 1
@@ -394,8 +417,7 @@ def _cmd_bench_vector(args: argparse.Namespace) -> int:
     report = {"build_id": state.manifest["build_id"], "cold_ms": round(cold_ms, 1),
               "warm": warm, "torch_threads": spike._torch_threads()}
     if args.api_url:
-        report[f"http_{args.mode}"] = vb.bench_http(args.api_url, queries, args.repeats,
-                                                    mode=args.mode)
+        report["http"] = vb.bench_http(args.api_url, queries, args.repeats)
     _merge_json(Path(args.out), "latency", report)
 
     p95 = warm["total_ms"]["p95"]
@@ -404,8 +426,7 @@ def _cmd_bench_vector(args: argparse.Namespace) -> int:
           f"qdrant {warm['qdrant_ms']['p50']:.0f}  total {warm['total_ms']['p50']:.0f} ms")
     print(f"warm p95   : total {p95:.0f} ms  -> {'PASS' if p95 < 1000 else 'FAIL'} (< 1000)")
     if args.api_url:
-        print(f"http({args.mode}) p95: "
-              f"{report[f'http_{args.mode}']['http_ms']['p95']:.0f} ms")
+        print(f"http p95   : {report['http']['http_ms']['p95']:.0f} ms")
     print(f"report     : {args.out}")
     return 0 if p95 < 1000 else 1
 
@@ -413,12 +434,17 @@ def _cmd_bench_vector(args: argparse.Namespace) -> int:
 def _cmd_score_corpus(args: argparse.Namespace) -> int:
     if _report_is_corrupt(Path(args.out)):
         return 1
-    shards_dir = _resolve_build_dir(Path(args.embeddings), args.build_id)
+    manifest = _registered_build(args, Path(args.indexes_dir))
+    if manifest is None:
+        return 1
+    encoder = _build_encoder(manifest)
+    if encoder is None:
+        return 1
+    shards_dir = Path(args.embeddings) / manifest["build_id"]
     canonical_dir = Path(args.canonical_dir)
     images = pl.read_parquet(canonical_dir / "images.parquet")
     labels = pl.read_parquet(canonical_dir / "labels.parquet")
     cfg = load_config("models")["image_encoder"]
-    _, encoder = _selected_encoder("cpu")
     prompts = spike.build_prompts(load_config("concepts"), cfg["text_prompt_template"])
     priority = load_config("retrieval")["label_resolution"]["source_priority"]
     report = vb.score_corpus(shards_dir, encoder, labels, images, prompts, priority,
@@ -436,100 +462,6 @@ def _cmd_score_corpus(args: argparse.Namespace) -> int:
         print(f"  {c:<28} {'  n/a' if a is None else f'{a:.3f}'}  pos={v['n_pos']:<5} "
               f"neg={v['n_neg_strict']}")
     print(f"report     : {args.out}")
-    return 0
-
-
-def _load_pool(args: argparse.Namespace, manifest: dict, corpus_images: pl.DataFrame):
-    """The pool's vectors, statuses and patient ids in shard order, or an error message.
-
-    Refuses a pool embedded by another encoder, one that shares a patient with the
-    corpus and one that holds a valid/ study.
-    """
-    pool_dir = Path(args.pool_dir)
-    images = pl.read_parquet(pool_dir / probe_pool.POOL_IMAGES)
-    resolved = pl.read_parquet(pool_dir / probe_pool.POOL_LABELS)
-    meta = json.loads((pool_dir / probe_pool.POOL_META).read_text(encoding="utf-8"))
-    shards_dir = pool_dir / "embeddings" / args.pool_build_id
-    shards = embed.load_shards_manifest(shards_dir)
-    model = manifest["embedding_model"]
-    got = (shards["model_id"], shards["revision"], shards["dim"])
-    want = (model["model_id"], model["revision"], model["dimension"])
-    if got != want:
-        return f"POOL BUILD MISMATCH: pool {got} != corpus {want}", None
-    overlap = set(images["patient_id"]) & set(corpus_images["patient_id"])
-    if overlap:
-        return f"POOL OVERLAPS CORPUS: {len(overlap)} patients", None
-    if images.filter(pl.col("path_to_image").str.starts_with("valid/")).height:
-        return "POOL CONTAINS valid/ STUDIES", None
-
-    vectors, image_ids = vb._all_vectors(shards_dir)
-    study_of = dict(zip(images["image_id"], images["study_id"], strict=True))
-    patient_of = dict(zip(images["image_id"], images["patient_id"], strict=True))
-    studies = [study_of[i] for i in image_ids]
-    statuses = probe_pool.resolved_status_matrix(resolved, studies)
-    return None, (vectors, statuses, [patient_of[i] for i in image_ids], meta)
-
-
-def _corpus_rows(args: argparse.Namespace, manifest: dict, studies: pl.DataFrame):
-    """Corpus vectors of each study's selected image, in `studies` order."""
-    vectors, image_ids = vb._all_vectors(Path(args.embeddings) / manifest["build_id"])
-    row_of = {i: r for r, i in enumerate(image_ids)}
-    rows = [row_of[i] for i in studies["selected_image_id"]]
-    return vectors[rows]
-
-
-def _cmd_train_probe(args: argparse.Namespace) -> int:
-    if _report_is_corrupt(Path(args.report)):
-        return 1
-    manifest = json.loads(
-        (Path(args.indexes_dir) / index.MANIFEST_FILE).read_text(encoding="utf-8"))
-    canonical_dir = Path(args.canonical_dir)
-    error, pool = _load_pool(args, manifest, pl.read_parquet(canonical_dir / "images.parquet"))
-    if error:
-        print(error, file=sys.stderr)
-        return 1
-    X, pool_statuses, pool_patients, pool_meta = pool
-    probe, fit = train_probe(X, pool_statuses, pool_patients, load_config("models")["image_probe"])
-
-    studies = pl.read_parquet(canonical_dir / "studies.parquet")
-    corpus_vectors = _corpus_rows(args, manifest, studies)
-    logits = probe.logits(corpus_vectors)
-    corpus_scores = pl.DataFrame({
-        "study_id": studies["study_id"], "image_id": studies["selected_image_id"],
-        **{c: logits[:, j] for j, c in enumerate(CHEXPERT_LABELS)},
-    })
-
-    template = load_config("models")["image_encoder"]["text_prompt_template"]
-    _, encoder = _selected_encoder("cpu")
-    text = probe_eval.text_scores(corpus_vectors, encoder, load_config("concepts"), template)
-    priority = load_config("retrieval")["label_resolution"]["source_priority"]
-    statuses = spike.status_matrix(
-        pl.read_parquet(canonical_dir / "labels.parquet"), studies["study_id"].to_list(), priority)
-    comparison = probe_eval.compare({**text, "probe": logits}, statuses, n_boot=args.n_boot)
-
-    model = manifest["embedding_model"]
-    meta = {
-        "probe_id": f"{manifest['build_id']}_probe_lam{fit['lambda']}",
-        "build_id": manifest["build_id"],
-        "encoder": {"model_id": model["model_id"], "revision": model["revision"],
-                    "dim": model["dimension"]},
-        "pool_sha256": pool_meta["pool_sha256"], "pool_build_id": args.pool_build_id,
-        "lambda": fit["lambda"], "selection": fit["selection"], "n_train": fit["n_train"],
-        "git_commit": _git_commit(),
-        "trained_at": datetime.now(UTC).isoformat(timespec="seconds"),
-    }
-    save_probe(Path(args.out), probe, meta, corpus_scores)
-    _merge_json(Path(args.report), "probe", {**meta, "comparison": comparison, "pool": pool_meta})
-
-    print(f"lambda : {fit['lambda']}  (macro val AUROC per lambda: "
-          f"{json.dumps(fit['selection']['per_lambda'])})")
-    print("  ".join(f"{name} {comparison[name]['macro_auroc_strict']:.3f}"
-                    for name in (*text, "probe")))
-    diff = comparison["probe_minus_zero_shot"]
-    print(f"probe - zero_shot: {diff['mean']:.3f} "
-          f"[{diff['ci95'][0]:.3f}, {diff['ci95'][1]:.3f}] -> "
-          f"S1 {'PASS' if comparison['s1_passed'] else 'FAIL'}")
-    print(f"report : {args.report}")
     return 0
 
 
@@ -617,39 +549,18 @@ def _ms(value: float | None) -> str:
 
 
 def _print_eval_table(report: dict, verbose: bool) -> None:
-    for parser_name, entry in report["parsers"].items():
-        for mode, e in entry["modes"].items():
-            m, lat = e["metrics"], e["latency_ms"] or {}
-            line = (f"{parser_name:<5} {mode:<7} n={m['n']:<4} p@10={_f(m['p@10'])} "
-                    f"ndcg={_f(m['ndcg@10'])} mrr={_f(m['mrr'])} "
-                    f"viol={_f(m['exclude_violation@10'])} ret={_f(m['returned@10'])} "
-                    f"p50={_ms(lat.get('p50'))} p95={_ms(lat.get('p95'))}")
-            if entry["fallback_rate"] is not None:
-                line += f" fallback={entry['fallback_rate']:.3f}"
-            print(line)
-            if verbose:
-                for qid, values in e["per_query"].items():
-                    print("  " + json.dumps({"id": qid, **values}, ensure_ascii=True))
-
-
-def _print_grid(grid: dict) -> None:
-    for c in grid["configs"]:
-        w = c["leg_weights"]
-        print(f"rrf_k={c['rrf_k']:<3} vector={w['vector']} report={w['report']} "
-              f"image={w['image']} ndcg={c['ndcg@10']:.3f} p@10={c['p@10']:.3f}")
-    print(f"chosen: {json.dumps(grid['chosen'], ensure_ascii=True)} "
-          f"baseline_ndcg={grid['baseline_ndcg']:.3f}")
-
-
-def _print_image_vs_vector(result: dict | None) -> None:
-    if result is None:
-        print("image_vs_vector: n/a")
-        return
-    m = result["ndcg@10"]
-    print(f"image_vs_vector: n={result['n_common']} ndcg image={_f(m['image'])} "
-          f"vector={_f(m['vector'])} wins/ties/losses="
-          f"{result['wins']}/{result['ties']}/{result['losses']} "
-          f"s2={'PASS' if result['s2_passed'] else 'FAIL'}")
+    for parser_name, e in report["parsers"].items():
+        m, lat = e["metrics"], e["latency_ms"] or {}
+        line = (f"{parser_name:<5} n={m['n']:<4} ndcg_bin={_f(m['ndcg_binary@10'])} "
+                f"(graded {_f(m['ndcg_graded@10'])}) p@10={_f(m['p@10'])} mrr={_f(m['mrr'])} "
+                f"viol={_f(m['exclude_violation@10'])} ret={_f(m['returned@10'])} "
+                f"p50={_ms(lat.get('p50'))} p95={_ms(lat.get('p95'))}")
+        if e["fallback_rate"] is not None:
+            line += f" fallback={e['fallback_rate']:.3f}"
+        print(line)
+        if verbose:
+            for qid, values in e["per_query"].items():
+                print("  " + json.dumps({"id": qid, **values}, ensure_ascii=True))
 
 
 def _cmd_eval_retrieval(args: argparse.Namespace) -> int:
@@ -665,19 +576,20 @@ def _cmd_eval_retrieval(args: argparse.Namespace) -> int:
     if not rows:
         print(f"no rows for split {args.split!r}", file=sys.stderr)
         return 1
-    if args.grid and args.split != "dev":
-        print("grid runs on dev only", file=sys.stderr)
-        return 1
-    if args.ablation and args.split != "dev":
-        print("ablation runs on dev only", file=sys.stderr)
-        return 1
-    need_llm = "auto" in args.parsers and not (args.grid or args.ablation)
+    need_llm = "auto" in args.parsers
     parser, status = _build_parser_or_exit(need_llm)
     if need_llm and status == "ok":
         with contextlib.suppress(ParseError):      # pay the cold start outside the scored rows
             parser.parse("chest x-ray", mode="llm")
-    # The flag wins over CANONICAL_DIR in .env, so the state and the agreement matrix agree.
-    state = build_state(Settings(canonical_dir=Path(args.canonical_dir)))
+    # The flags win over .env: the canonical dir, so the state and the agreement matrix agree,
+    # and --build-id / --encoder, whose build the state then serves instead of BUILD_ID's.
+    overrides = {"canonical_dir": Path(args.canonical_dir)}
+    if args.build_id or args.encoder:
+        manifest = _registered_build(args, Settings().indexes_dir)
+        if manifest is None:
+            return 1
+        overrides["build_id"] = manifest["build_id"]
+    state = build_state(Settings(**overrides))
     if not state.ready:
         print(f"API state not ready: {state.not_ready_reason}", file=sys.stderr)
         return 1
@@ -685,60 +597,34 @@ def _cmd_eval_retrieval(args: argparse.Namespace) -> int:
         print(f"report index disabled: {state.report_reason}; run cxr build-report-index",
               file=sys.stderr)
         return 1
-    # The state stays ready without the probe, so image mode would score 0 and hybrid would
-    # drop the image leg without a word; refuse rather than record numbers that never ran.
-    if ("image" in args.modes or args.grid or args.ablation) and state.image_status != "ok":
-        print(f"image probe disabled: {state.image_reason}; run cxr train-probe",
-              file=sys.stderr)
-        return 1
-    agreement = rev.build_agreement_matrix(
-        pl.read_parquet(Path(args.canonical_dir) / "labels.parquet"), state.labels.study_ids)
-    shared = {"state": state, "parser": parser, "matrix": state.labels, "agreement": agreement,
-              "projection_of": {s: state.images[i].projection
-                                for s, i in state.study_image.items()}}
+    # The labels are the answer key only: the search never sees them (the state has none).
+    canonical_dir = Path(args.canonical_dir)
+    studies = pl.read_parquet(canonical_dir / "studies.parquet")
+    labels_long = pl.read_parquet(canonical_dir / "labels.parquet")
+    cfg = load_config("retrieval")
+    matrix = lf.build_label_matrix(
+        labels_long, studies["study_id"].to_list(), cfg["label_resolution"]["source_priority"],
+        seed=cfg["results"]["label_order_seed"])
+    shared = {"state": state, "parser": parser, "matrix": matrix,
+              "agreement": rev.build_agreement_matrix(labels_long, matrix.study_ids),
+              "projection_of": {s: state.images[i].projection for s, i in
+                                zip(studies["study_id"], studies["selected_image_id"],
+                                    strict=True)}}
     digest = hashlib.sha256(Path(args.benchmark).read_bytes()).hexdigest()
-    extras = {"benchmark": {"file": args.benchmark, "split": args.split, "sha256": digest},
-              "build_id": state.manifest["build_id"]}
-    fusion = dataclasses.asdict(state.fusion)
-    if args.grid:
-        grid = rev.grid_search(rows, baseline=state.fusion, **shared)
-        _merge_json(out, "grid", {**grid, **extras,
-                                  "fusion_default": dataclasses.asdict(rev.DEFAULT_FUSION),
-                                  "fusion_current": fusion})
-        _print_grid(grid)
-        print(f"report     : {args.out}")
-        return 0
-    if args.ablation:
-        result = rev.ablation(rows, fusion=state.fusion, **shared)
-        _merge_json(out, "ablation", {**result, **extras, "fusion_current": fusion})
-        for name, m in result["configs"].items():
-            print(f"{name:<14} ndcg={_f(m['ndcg@10'])} p@10={_f(m['p@10'])} "
-                  f"viol={_f(m['exclude_violation@10'])}")
-        print(f"report     : {args.out}")
-        return 0
     policies = [rev.DEFAULT_POLICY] + ([rev.NEGATION_POLICY]
                                        if args.policies == "negation_both" else [])
-    report = rev.evaluate_retrieval(rows, parsers=args.parsers, modes=args.modes,
-                                    policies=policies, fusion=state.fusion, **shared)
-    report.update(extras, report_index=state.report_meta, fusion=fusion)
+    report = rev.evaluate_retrieval(rows, parsers=args.parsers, policies=policies, **shared)
+    report.update(benchmark={"file": args.benchmark, "split": args.split, "sha256": digest},
+                  build_id=state.manifest["build_id"], encoder=state.manifest["encoder"],
+                  report_index=state.report_meta)
     if "auto" in args.parsers:
         report["llm"] = {"status": status, "provider": Settings().llm_provider,
                          "model": Settings().llm_model, "prompt_sha256": parser.prompt_sha256}
-    judged = "gold" in args.parsers and {"vector", "hybrid"} <= set(args.modes)
-    v = rev.verdict(report, load_config("evaluation")["thresholds"]) if judged else None
-    report["verdict"] = v
-    compared = "gold" in args.parsers and {"image", "vector"} <= set(args.modes)
-    if compared:
-        report["image_vs_vector"] = rev.image_vs_vector(report)
     _merge_json(out, "eval", report)
 
     _print_eval_table(report, args.verbose)
-    print("verdict: n/a (needs gold + vector + hybrid)" if v is None else
-          f"verdict: {'PASS' if v['passed'] else 'FAIL'} {json.dumps(v, ensure_ascii=True)}")
-    if compared:
-        _print_image_vs_vector(report["image_vs_vector"])
     print(f"report     : {args.out}")
-    return 0 if v is None or v["passed"] else 1
+    return 0
 
 
 def _f(value: float | None) -> str:
@@ -801,7 +687,7 @@ def build_parser() -> argparse.ArgumentParser:
                      help="override the generated <YYYYMMDD>_chexpert25k_<model>_v1")
     emb.set_defaults(func=_cmd_embed)
 
-    idx = sub.add_parser("index", help="Phase 3: upsert shards into Qdrant, write manifest")
+    idx = sub.add_parser("index", help="Phase 3: upsert shards into Qdrant, register the build")
     idx.add_argument("--embeddings", default="data/indexes/embeddings")
     idx.add_argument("--build-id", default=None, help="required when several builds exist")
     idx.add_argument("--canonical-dir", default="data/canonical")
@@ -812,13 +698,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     val = sub.add_parser("validate-indexes", help="Phase 3: cross-check manifest, shards, Qdrant")
     val.add_argument("--indexes-dir", default="data/indexes")
+    _add_build_args(val)
     val.add_argument("--embeddings", default="data/indexes/embeddings")
     val.add_argument("--canonical-dir", default="data/canonical")
     val.add_argument("--qdrant-url", default=None)
     val.add_argument("--report-index", default=None,
                      help="default: <indexes-dir>/report_search.sqlite")
-    val.add_argument("--image-probe-dir", default=None,
-                     help="default: <indexes-dir>/image_probe")
     val.set_defaults(func=_cmd_validate_indexes)
 
     rep = sub.add_parser("build-report-index", help="Phase 5: build the SQLite FTS5 report index")
@@ -830,32 +715,18 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--queries", type=int, default=30)
     bench.add_argument("--repeats", type=int, default=5)
     bench.add_argument("--api-url", default=None, help="also time POST /api/v1/search over HTTP")
-    bench.add_argument("--mode", choices=["vector", "hybrid", "image"], default="vector",
-                       help="search mode posted to --api-url")
     bench.add_argument("--out", default="artifacts/metrics/vector_baseline.json")
     bench.set_defaults(func=_cmd_bench_vector)
 
     score = sub.add_parser("score-corpus",
                            help="Phase 3: zero-shot AUROC on all embedded studies")
     score.add_argument("--embeddings", default="data/indexes/embeddings")
-    score.add_argument("--build-id", default=None)
+    score.add_argument("--indexes-dir", default="data/indexes")
+    _add_build_args(score)
     score.add_argument("--canonical-dir", default="data/canonical")
     score.add_argument("--n-boot", type=int, default=1000)
     score.add_argument("--out", default="artifacts/metrics/vector_baseline.json")
     score.set_defaults(func=_cmd_score_corpus)
-
-    tp = sub.add_parser("train-probe",
-                        help="train the image concept probe on the pool and compare it with "
-                             "zero-shot prompting on the corpus")
-    tp.add_argument("--pool-dir", default="data/probe_pool")
-    tp.add_argument("--pool-build-id", default="20261023_pool88k_biomedclip_v1")
-    tp.add_argument("--embeddings", default="data/indexes/embeddings")
-    tp.add_argument("--indexes-dir", default="data/indexes")
-    tp.add_argument("--canonical-dir", default="data/canonical")
-    tp.add_argument("--out", default="data/indexes/image_probe")
-    tp.add_argument("--report", default="artifacts/metrics/image_probe.json")
-    tp.add_argument("--n-boot", type=int, default=1000)
-    tp.set_defaults(func=_cmd_train_probe)
 
     prs = sub.add_parser("parse", help="Phase 4: parse one request, print the SearchQuery")
     prs.add_argument("text")
@@ -875,19 +746,13 @@ def build_parser() -> argparse.ArgumentParser:
     ev.set_defaults(func=_cmd_eval_parser)
 
     er = sub.add_parser("eval-retrieval",
-                        help="Phase 5: score label / vector / image / hybrid search")
+                        help="score the one search path against the benchmark gold")
     er.add_argument("--benchmark", default="benchmarks/parser_queries_v1.jsonl")
     er.add_argument("--split", choices=["heldout", "dev", "all"], default="heldout")
-    er.add_argument("--modes", nargs="+", choices=["label", "vector", "image", "hybrid"],
-                    default=["label", "vector", "hybrid"])
     er.add_argument("--parsers", nargs="+", choices=["gold", "rule", "auto"],
                     default=["gold", "rule", "auto"])
     er.add_argument("--policies", choices=["default", "negation_both"], default="negation_both")
-    only = er.add_mutually_exclusive_group()
-    only.add_argument("--grid", action="store_true",
-                      help="fusion grid on gold + hybrid; dev split only")
-    only.add_argument("--ablation", action="store_true",
-                      help="leg ablation on gold queries; dev split only")
+    _add_build_args(er)   # both unset: BUILD_ID, else the selected encoder's build
     er.add_argument("--canonical-dir", default="data/canonical")
     er.add_argument("--out", default="artifacts/metrics/retrieval_eval.json")
     er.add_argument("--verbose", action="store_true", help="print every per-query row (ASCII)")

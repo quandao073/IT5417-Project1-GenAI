@@ -19,6 +19,7 @@ _ADAPTERS = {
     "biomedclip": "src.embeddings.biomedclip:BiomedCLIPEncoder",
     "chexzero": "src.embeddings.chexzero:CheXzeroEncoder",
     "xrayclip": "src.embeddings.xrayclip:XrayCLIPEncoder",
+    "cxrclip": "src.embeddings.cxrclip:CXRClipEncoder",
 }
 
 
