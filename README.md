@@ -1,146 +1,167 @@
 # CXR Semantic Retrieval
 
-Hệ thống truy vấn ảnh X-quang phổi theo ngữ nghĩa, kết hợp image embedding,
-structured CheXpert labels và full-text search trên báo cáo.
+Tìm ảnh X-quang ngực bằng câu hỏi tự nhiên, tiếng Anh hoặc tiếng Việt, chỉ dựa vào ảnh.
 
-> **Research/education POC — not for diagnosis.**
-> Đây là công cụ tìm kiếm, không phải hệ thống chẩn đoán. Điểm số trả về không phải xác suất bệnh.
+> **Công cụ nghiên cứu và học tập, không dùng để chẩn đoán.** Điểm số trả về là tín hiệu xếp hạng,
+> không phải xác suất bệnh.
 
-## Trạng thái
+## Bài toán
 
-Đang xây. Trạng thái hiện tại, các quyết định đang có hiệu lực và những bẫy đã
-biết nằm ở [WORKLOG.md](WORKLOG.md) — đọc file đó trước khi sửa code.
+Đầu vào là một câu như "tim to và tràn dịch màng phổi, phim PA" hoặc "pulmonary edema without
+pleural effusion". Đầu ra là các ảnh X-quang ngực khớp nhất trong kho 25.000 ca, xếp hạng theo độ
+giống giữa câu hỏi và nội dung ảnh. Câu hỏi có thể đòi một bệnh, nhiều bệnh cùng lúc, loại trừ một
+bệnh, hoặc lọc theo tư thế chụp (AP/PA). Thứ hạng không dùng nhãn hay report của ca, nên cách làm
+áp dụng được cho ảnh chưa có report.
 
-Xem thêm [kế hoạch triển khai](docs/ke-hoach-du-an-nho-cxr-semantic-retrieval-v1.md)
-để biết lộ trình 8 tuần và thứ tự các phase, và [scope-and-non-goals](docs/scope-and-non-goals.md)
-để biết phần nào đã được hoãn sang V2. Lưu ý kế hoạch viết trước khi có số đo nên
-vài yêu cầu đã bị override; WORKLOG là nguồn đúng.
-
-## Kiến trúc
+## Cách tiếp cận
 
 ```
-web (Next.js) → api (FastAPI) → qdrant     (image vectors)
-                              → SQLite FTS (reports)
-                              → ollama     (query parser, có rule fallback)
+câu hỏi (EN/VI)
+  → parser: các bệnh được hỏi (include), bị loại (exclude), tư thế chụp
+  → câu mẫu, vd "pulmonary edema and no pleural effusion"
+  → text encoder của model CLIP chuyên X-quang ngực
+  → cosine với vector ảnh trong Qdrant, chỉ lọc tư thế chụp → top-k
+  → trích câu trong report của từng ca, chỉ để hiển thị
 ```
 
-Corpus build và embedding chạy trực tiếp ngoài Docker (`make build-corpus`, `make embed`);
-Docker worker chỉ là đường thay thế khi muốn embed bằng GPU. API, web và Qdrant chạy trong
-compose, thuần CPU vì embedding đã precompute.
+- **Parser.** LLM (`gpt-5-mini`, output ràng buộc bằng JSON schema theo 14 khái niệm CheXpert);
+  thiếu key hoặc LLM lỗi thì dùng rule parser có từ điển song ngữ.
+- **Câu mẫu.** Một hàm duy nhất dựng câu từ các ràng buộc: mỗi khái niệm một cụm cố định,
+  `no X` cho bệnh bị loại, `normal chest` cho No Finding, thứ tự cố định (nên "A and B" và
+  "B and A" là một câu). Câu không có khái niệm nào thì dùng câu tự do của parser. Câu chỉ có
+  phủ định, có ý "có thể", hoặc có trên hai ràng buộc vẫn được tìm, kèm cảnh báo trong response.
+- **Encoder.** Mặc định là CXR-CLIP SwinT (Kakao Brain, huấn luyện trên MIMIC-CXR). BiomedCLIP là
+  encoder thay thế; mỗi lần embed tạo một *build* riêng (`<ngày>_chexpert25k_<encoder>_v1`), và
+  server phục vụ build chọn bằng `BUILD_ID`.
+- **Bằng chứng.** Mỗi kết quả kèm câu nguyên văn trong report có nhắc tới bệnh được hỏi, gắn
+  polarity (`affirmed`, `negated`, `uncertain`). Câu trích được thêm sau khi xếp hạng và không
+  làm đổi thứ hạng.
+- **Đánh giá.** Đáp án là nhãn 14 bệnh của từng ca (CheXbert trích từ report, nhãn bác sĩ cho 200
+  ca `valid/`). Một ảnh là đúng khi nhãn của nó thỏa ràng buộc của câu hỏi. Số chính là nDCG@10 nhị
+  phân, báo cáo thêm P@10, MRR và tỉ lệ kết quả mang bệnh bị loại trừ. Benchmark gồm 200 câu
+  EN/VI chia dev và heldout.
 
 ## Dữ liệu
 
-| Phần | Nguồn |
+| Phần | Nguồn | Đặt tại |
+|---|---|---|
+| Ảnh | CheXpert-v1.0-small | `data/raw/CheXpert-v1.0-small/` (`train/`, `valid/`, `train.csv`, `valid.csv`) |
+| Report | CheXpert Plus | `data/raw/chexpert-plus/df_chexpert_plus_240401.csv` |
+| Nhãn CheXbert | CheXpert Plus | `data/raw/chexpert-plus/labels/` |
+
+Ảnh và report ghép theo `path_to_image`. Corpus gồm 25.000 study, mỗi study một ảnh frontal AP/PA
+có impression. Cả hai bộ dữ liệu đều phải đăng ký và chấp nhận điều khoản; repo không chứa dữ liệu nào.
+
+## Cài đặt
+
+Yêu cầu: [`uv`](https://docs.astral.sh/uv/) (tự cài Python 3.11–3.12), Docker cho Qdrant, khoảng
+25 GB trống ngoài dữ liệu gốc (12,1 GB). GPU không bắt buộc: mọi bước chạy được trên CPU. Trên Windows,
+dùng Git Bash.
+
+```bash
+uv sync --all-extras
+echo "OPENAI_API_KEY=sk-..." > .env          # tùy chọn; không có thì dùng rule parser
+```
+
+Khi chạy trực tiếp trên máy, `.env` chỉ cần dòng trên; mọi đường dẫn và địa chỉ đã có giá trị mặc
+định. `.env.example` là cấu hình cho container.
+
+Trọng số CXR-CLIP không có trên Hugging Face. Tải một lần rồi chuyển sang file mà code đọc; URL nằm ở
+`configs/models.yaml` (`image_encoder.candidates.cxrclip.url`):
+
+```bash
+mkdir -p data/cache/models/cxrclip
+curl -L -o data/cache/models/cxrclip/swint_m.tar "<url trong configs/models.yaml>"
+uv run --with omegaconf python -c "from pathlib import Path; \
+from src.embeddings.cxrclip import convert_checkpoint as c; \
+print(c(Path('data/cache/models/cxrclip/swint_m.tar'), Path('data/cache/models/cxrclip/swint_m.pt')))"
+```
+
+File đầu ra phải đúng tên `swint_m.pt`: sha256 của nó được ghim trong `configs/models.yaml`, nên
+một file khác sẽ bị từ chối khi nạp. BiomedCLIP và cấu hình Swin/BERT tự tải từ Hugging Face theo
+revision đã ghim.
+
+## Dựng chỉ mục
+
+```bash
+uv run cxr audit                  # đo tỉ lệ ghép ảnh–report
+uv run cxr build-corpus           # bảng Parquet của corpus 25.000 study
+uv run cxr embed                  # vector ảnh ra shard file, chạy trên CPU, resume được
+docker compose up -d qdrant
+uv run cxr index                  # nạp shard vào Qdrant, ghi data/indexes/builds/<build_id>/manifest.json
+uv run cxr build-report-index     # chỉ mục report để trích bằng chứng
+uv run cxr validate-indexes       # kiểm manifest, shard, Qdrant và chỉ mục report khớp nhau
+```
+
+`cxr embed` dùng encoder `image_encoder.selected` trong `configs/models.yaml`. Muốn có build cho encoder
+khác (vd BiomedCLIP), đặt tạm `selected` và `revision` sang encoder đó khi chạy `cxr embed`, rồi
+`cxr index --build-id <build_id>`. Các build cùng tồn tại; `--build-id` hoặc `--encoder` chọn build
+cho `validate-indexes`, `score-corpus` và `eval-retrieval`.
+
+## Chạy
+
+```bash
+docker compose up -d qdrant
+uv run uvicorn src.api.main:app --port 8000
+```
+
+Mở http://127.0.0.1:8000/docs để thử trực tiếp, hoặc:
+
+```bash
+curl -s http://127.0.0.1:8000/api/v1/search -H "Content-Type: application/json" \
+     -d '{"query": "pulmonary edema without pleural effusion", "top_k": 5}'
+```
+
+| Endpoint | Chức năng |
 |---|---|
-| Ảnh | CheXpert-v1.0-small (JPEG downsample) |
-| Report và CheXbert labels | CheXpert Plus |
-| Khóa join | `path_to_image` — đo được join rate 1,0000 trên toàn bộ 223.462 dòng |
+| `POST /api/v1/search` | Nhận `query`, `top_k` (1–50), `views` (`AP`/`PA`, tùy chọn). Trả `parsed_query`, `query_text` (câu encoder đã đọc), `results` (ảnh, điểm cosine, `report_evidence`) và `warnings` |
+| `POST /api/v1/query/parse` | Chỉ parse câu hỏi |
+| `GET /api/v1/images/{image_id}` | Ảnh JPEG |
+| `GET /api/v1/health` | Build, encoder, trạng thái Qdrant, chỉ mục report và LLM |
 
-Cả hai dataset đều yêu cầu đăng ký và chấp nhận điều khoản. Không có dữ liệu nào
-được commit vào repo này.
+`BUILD_ID=<build_id>` chọn build khác để phục vụ; không đặt thì server dùng build duy nhất của
+encoder mặc định. Thử parser riêng: `uv run cxr parse "tim to nhưng không có tràn dịch"`.
 
-## Yêu cầu
-
-- Docker Desktop (Compose v2+), WSL2
-- `uv` (Python) và `pnpm` (Node) nếu chạy ngoài Docker
-- ~25 GB trống ngoài raw data (raw data chiếm 12,1 GB)
-- GPU NVIDIA — không bắt buộc; embedding chạy được trên CPU, GPU chỉ để nhanh hơn
-- Ollama 0.40+ (native) với model qwen2.5:3b-instruct-q4_K_M — chỉ cần cho LLM parser; không có thì API dùng rule parser.
-  Cài: `winget install Ollama.Ollama` rồi `ollama pull qwen2.5:3b-instruct-q4_K_M`
-- `make` (Git Bash hoặc WSL)
-
-## Chạy nhanh
+## Đánh giá
 
 ```bash
-make setup               # tạo .env + thư mục data/artifacts + cài deps
-make up                  # web + api + qdrant
-make seed                # nạp fixture tổng hợp, không cần dataset
-make smoke               # kiểm tra end-to-end
+uv run cxr eval-parser --split dev --out artifacts/metrics/parser_eval_dev.json
+uv run cxr eval-retrieval --split dev --out artifacts/metrics/retrieval_eval_dev.json
+uv run cxr eval-retrieval --split dev --encoder biomedclip --out artifacts/metrics/retrieval_eval_dev_biomedclip.json
 ```
 
-Mở http://localhost:3000.
+`eval-retrieval` chấm ba cấu hình parser (`gold`, `rule`, `auto`), tách theo nhóm câu (đơn, ghép,
+phủ định, tư thế chụp, tiếng Việt), và chấm nhóm phủ định dưới hai cách hiểu nhãn: bệnh bị loại chỉ
+cần không được ghi là có, hoặc phải được ghi rõ là không có. `--encoder` cần build của encoder đó đã
+được index.
 
-## Pipeline đầy đủ (cần dataset)
+## Kiểm thử
 
 ```bash
-make audit-data           # đo tỉ lệ join — CỔNG CHẶN
-make build-corpus         # canonical Parquet tables + sample manifest
-make embed                # embed 25k ảnh ra shard file, chạy trực tiếp trên CPU, resume được
-make index                # upsert shard vào Qdrant + data/indexes/builds/<build_id>/manifest.json (cần `docker compose up -d qdrant`)
-make build-report-index   # SQLite FTS5
-uv run cxr build-probe-pool   # pool ngoài corpus -> data/probe_pool/ (dữ liệu cho fine-tune)
-make validate-indexes     # kiểm tra build_id khớp nhau trước khi phục vụ
-make eval-parser          # chấm parser trên benchmark held-out (cần Ollama)
-make eval-retrieval       # chấm đường tìm kiếm duy nhất trên benchmark held-out (cần Qdrant + report index; key OpenAI cho `auto`)
-make up                   # web + api + qdrant
-make evaluate             # benchmark ba trục
+uv run pytest -q                  # unit test
+uv run pytest -m model            # adapter thật trên trọng số đã tải; chạy khi đổi encoder hoặc configs/models.yaml
+uv run pytest -m integration      # cần Qdrant
+uv run ruff check src tests
 ```
-
-`make embed` không cần Docker hay GPU, mất ≈34 phút (đo từ mtime shard của lần chạy CPU dở,
-chưa tính nạp model); đường GPU qua Docker worker nằm trong comment của `Makefile`. Số đo của vector baseline: [docs/vector-baseline.md](docs/vector-baseline.md).
-
-`make eval-parser` (tức `cxr eval-parser`) **ghi đè** `artifacts/metrics/parser_eval.json`. Lần chạy
-heldout ngày 2026-10-14 được đóng băng ở `artifacts/metrics/parser_eval_heldout_20261014.json`. Số dev
-lấy từ `uv run cxr eval-parser --split dev --out artifacts/metrics/parser_eval_dev.json`.
-
-Thứ tự dựng lại chỉ mục: `cxr embed` → `cxr index` → `cxr build-report-index` →
-`cxr validate-indexes` (7 check; check thứ 7 so report index với `reports.parquet`: số dòng, tập `study_id`,
-`corpus_sha256`). Mỗi build có manifest riêng `data/indexes/builds/<build_id>/manifest.json`, ghi encoder đã
-embed nó; `validate-indexes`, `score-corpus` và `eval-retrieval` nhận `--build-id` hoặc `--encoder` (mặc định:
-build duy nhất của encoder `selected`). Report index gắn với corpus canonical chứ không với `build_id`, nên đổi
-encoder không phải dựng lại nó.
-
-`make eval-retrieval` (tức `cxr eval-retrieval`; mặc định heldout, ba cấu hình parser `gold`/`rule`/`auto`,
-nhóm negation dưới hai policy; số chính là nDCG@10 nhị phân, graded là số phụ) cũng **ghi đè**
-`artifacts/metrics/retrieval_eval.json`; chạy dev bằng `--split dev --out <file khác>`. Các lần heldout cũ
-(`artifacts/metrics/retrieval_eval_heldout_20261021*.json`) chấm các mode đã gỡ (WORKLOG D39). `auto` cần key
-OpenAI trong `.env` (WORKLOG D22). Report index tắt,
-hoặc có `auto` mà LLM không `ok`, thì lệnh thoát mã 1. Số đo: [docs/retrieval-evaluation.md](docs/retrieval-evaluation.md).
-
-Chạy native (không qua Docker): `make setup` chép `.env.example` thành `.env` với
-`QDRANT_URL=http://qdrant:6333`, `LLM_BASE_URL=http://host.docker.internal:11434` và đường dẫn
-`/app/...`, chỉ đúng trong container. Các lệnh native (`cxr index`, `validate-indexes`,
-`bench-vector`, `cxr parse`, `cxr eval-parser`, `cxr eval-retrieval`, uvicorn) cần hoặc không có `.env`,
-hoặc ghi đè: `QDRANT_URL=http://localhost:6333`, `LLM_BASE_URL=http://localhost:11434`,
-`IMAGE_ROOT=data/raw/CheXpert-v1.0-small`, `CANONICAL_DIR=data/canonical`, `INDEXES_DIR=data/indexes`,
-`FTS_DB_PATH=data/indexes/report_search.sqlite` (thiếu dòng này thì API và `eval-retrieval` không thấy
-report index).
-Không ghi đè `LLM_BASE_URL` thì `cxr parse` và API chỉ chạy rule parser (chỉ có warning báo), còn
-`cxr eval-parser` với `llm`/`auto` thoát mã 1.
-
-`make help` liệt kê toàn bộ target.
-
-## Truy vấn
-
-`POST /api/v1/query/parse` trả `SearchQuery` đã validate kèm `parser` (llm | rule), `fallback_used`
-và `warnings`. `POST /api/v1/search` nhận `query`, `top_k` và `views` (AP/PA), không gì khác: còn gửi `mode`
-(hay trường lạ nào) thì trả 422. Chỉ có một đường (WORKLOG D39): parser → câu mẫu của các ràng buộc
-(`templates.render`, vd "pulmonary edema and no pleural effusion"; No Finding là "normal chest") → text
-encoder của build đang phục vụ → cosine trên Qdrant, chỉ lọc view → top-k. Response ghi `query_text` (chuỗi
-encoder đã đọc) và kết quả; không có nhãn, API cũng không nạp `labels.parquet`. Encoder chọn ở server bằng
-`BUILD_ID`, `/health` báo `encoder`. Câu không có concept thì encode câu tự do của parser; câu chỉ phủ định,
-UNCERTAIN, câu trên hai ràng buộc và No Finding bị phủ định đều có warning. Mỗi kết quả kèm
-`report_evidence`: câu nguyên văn của report (offset vào `search_text`) cho mỗi concept bị ràng buộc, kèm
-polarity (`affirmed`, `negated`, `uncertain`); trích sau khi xếp hạng, chỉ để hiển thị, không đổi thứ hạng.
-Thiếu report index, hoặc `meta.studies` của nó lệch số study của manifest, thì API vẫn chạy: `/health` báo
-`report_index: "disabled"`, kết quả không có bằng chứng và có warning. Lúc khởi động API chỉ so số study; nội dung lệch corpus (cùng số study) thì không bị
-phát hiện, chỉ `uv run cxr validate-indexes` bắt được (so `corpus_sha256`). Số đo parser:
-[docs/parser-evaluation.md](docs/parser-evaluation.md), số đo retrieval:
-[docs/retrieval-evaluation.md](docs/retrieval-evaluation.md). Thử nhanh: `uv run cxr parse "tim to nhưng không có tràn dịch"`.
 
 ## Cấu trúc
 
 | Thư mục | Nội dung |
 |---|---|
-| `src/` | Package Python duy nhất: data, embeddings, query, retrieval, api, evaluation |
-| `web/` | Next.js UI |
-| `docker/` | Dockerfile và cấu hình service |
-| `configs/` | data, models, retrieval, concepts, evaluation, logging |
-| `docs/` | Thiết kế, data dictionary, ADR, limitations |
-| `data/`, `artifacts/` | Gitignored |
+| `src/data` | Ghép ảnh–report, corpus, nhãn |
+| `src/embeddings` | Adapter encoder, embed, index Qdrant, sổ đăng ký build |
+| `src/query` | Parser LLM và rule parser |
+| `src/retrieval` | Câu mẫu, tìm kiếm, trích bằng chứng, chỉ mục report |
+| `src/api` | FastAPI |
+| `src/evaluation` | Benchmark parser và retrieval |
+| `src/cli` | Lệnh `cxr` |
+| `configs/` | Dữ liệu, model, khái niệm, retrieval, đánh giá |
+| `benchmarks/` | 200 câu truy vấn có đáp án |
+| `data/`, `artifacts/` | Không commit |
 
-## Giới hạn
+## Lưu ý
 
-Xem [docs/limitations.md](docs/limitations.md). Tóm tắt: ảnh đã downsample nên
-không dùng cho chi tiết mảnh; nhãn sinh tự động từ report chứ không phải ground
-truth lâm sàng; hai trong ba trục đánh giá đều suy ra từ report nên còn tương quan.
+- Ảnh CheXpert-small đã giảm độ phân giải, không phù hợp với tổn thương nhỏ.
+- Nhãn dùng để chấm do máy trích từ report, không phải bác sĩ đọc ảnh; chỉ 200 ca `valid/` có
+  nhãn bác sĩ.
+- Trọng số CXR-CLIP dùng giấy phép CC BY-NC 4.0, chỉ dùng cho mục đích phi thương mại.
