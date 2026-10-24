@@ -13,10 +13,11 @@ axes:
 
   constraint_compliance:
     ground_truth: chexpert_labels
-    metrics: [exclude_violation_rate@10, constraint_satisfaction_rate@10]
+    metrics: [exclude_violation_rate@10]
     interpretation: >
-      Hybrid wins BY DESIGN here, since it filters on this very source.
-      Report it as a property of the system, never as a retrieval result.
+      The one search path never reads labels, so the violation rate measures the encoder
+      itself. (Hybrid, removed with WORKLOG D39, won this axis by design: it filtered on
+      this very source.)
 
   human_judged:
     ground_truth: manual_review
@@ -52,7 +53,9 @@ query_split:
   test: 250         # run once, in Phase 7
   patient_disjoint: true
 
-configurations: [label_only, vector_only, hybrid]
+# One search path (WORKLOG D39); configurations differ by encoder build, chosen with
+# `cxr eval-retrieval --encoder`. Headline metric: binary nDCG@10; graded nDCG@10 is secondary.
+configurations: [one_path]
 
 parser_ablation:
   # Gives the reportable number for the LLM's contribution over the rule parser.
@@ -67,10 +70,10 @@ thresholds:
   # which is measured, not guessed.
   parser_schema_valid_rate_min: 0.99
   parser_macro_f1_min: 0.90
-  simple_label_precision10_min: 0.70
-  constraint_satisfaction_min: 0.95
+  # simple_label_precision10_min, constraint_satisfaction_min and
+  # hybrid_ndcg10_relative_gain_min were the Phase 5 verdict of hybrid mode; removed with
+  # it (WORKLOG D39). The one path has no verdict yet: it is measured, then compared.
   evidence_faithfulness_min: 1.00
-  hybrid_ndcg10_relative_gain_min: 0.05   # hybrid over vector_only
   vector_warm_p95_seconds_max: 1.0
   end_to_end_p95_seconds_max: 5.0         # without the local LLM
   end_to_end_with_llm_seconds_max: 12.0   # with a CPU LLM

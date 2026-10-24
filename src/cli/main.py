@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import dataclasses
 import hashlib
 import json
 import subprocess
@@ -428,8 +427,7 @@ def _cmd_bench_vector(args: argparse.Namespace) -> int:
     report = {"build_id": state.manifest["build_id"], "cold_ms": round(cold_ms, 1),
               "warm": warm, "torch_threads": spike._torch_threads()}
     if args.api_url:
-        report[f"http_{args.mode}"] = vb.bench_http(args.api_url, queries, args.repeats,
-                                                    mode=args.mode)
+        report["http"] = vb.bench_http(args.api_url, queries, args.repeats)
     _merge_json(Path(args.out), "latency", report)
 
     p95 = warm["total_ms"]["p95"]
@@ -438,8 +436,7 @@ def _cmd_bench_vector(args: argparse.Namespace) -> int:
           f"qdrant {warm['qdrant_ms']['p50']:.0f}  total {warm['total_ms']['p50']:.0f} ms")
     print(f"warm p95   : total {p95:.0f} ms  -> {'PASS' if p95 < 1000 else 'FAIL'} (< 1000)")
     if args.api_url:
-        print(f"http({args.mode}) p95: "
-              f"{report[f'http_{args.mode}']['http_ms']['p95']:.0f} ms")
+        print(f"http p95   : {report['http']['http_ms']['p95']:.0f} ms")
     print(f"report     : {args.out}")
     return 0 if p95 < 1000 else 1
 
@@ -659,39 +656,18 @@ def _ms(value: float | None) -> str:
 
 
 def _print_eval_table(report: dict, verbose: bool) -> None:
-    for parser_name, entry in report["parsers"].items():
-        for mode, e in entry["modes"].items():
-            m, lat = e["metrics"], e["latency_ms"] or {}
-            line = (f"{parser_name:<5} {mode:<7} n={m['n']:<4} p@10={_f(m['p@10'])} "
-                    f"ndcg={_f(m['ndcg@10'])} mrr={_f(m['mrr'])} "
-                    f"viol={_f(m['exclude_violation@10'])} ret={_f(m['returned@10'])} "
-                    f"p50={_ms(lat.get('p50'))} p95={_ms(lat.get('p95'))}")
-            if entry["fallback_rate"] is not None:
-                line += f" fallback={entry['fallback_rate']:.3f}"
-            print(line)
-            if verbose:
-                for qid, values in e["per_query"].items():
-                    print("  " + json.dumps({"id": qid, **values}, ensure_ascii=True))
-
-
-def _print_grid(grid: dict) -> None:
-    for c in grid["configs"]:
-        w = c["leg_weights"]
-        print(f"rrf_k={c['rrf_k']:<3} vector={w['vector']} report={w['report']} "
-              f"image={w['image']} ndcg={c['ndcg@10']:.3f} p@10={c['p@10']:.3f}")
-    print(f"chosen: {json.dumps(grid['chosen'], ensure_ascii=True)} "
-          f"baseline_ndcg={grid['baseline_ndcg']:.3f}")
-
-
-def _print_image_vs_vector(result: dict | None) -> None:
-    if result is None:
-        print("image_vs_vector: n/a")
-        return
-    m = result["ndcg@10"]
-    print(f"image_vs_vector: n={result['n_common']} ndcg image={_f(m['image'])} "
-          f"vector={_f(m['vector'])} wins/ties/losses="
-          f"{result['wins']}/{result['ties']}/{result['losses']} "
-          f"s2={'PASS' if result['s2_passed'] else 'FAIL'}")
+    for parser_name, e in report["parsers"].items():
+        m, lat = e["metrics"], e["latency_ms"] or {}
+        line = (f"{parser_name:<5} n={m['n']:<4} ndcg_bin={_f(m['ndcg_binary@10'])} "
+                f"(graded {_f(m['ndcg_graded@10'])}) p@10={_f(m['p@10'])} mrr={_f(m['mrr'])} "
+                f"viol={_f(m['exclude_violation@10'])} ret={_f(m['returned@10'])} "
+                f"p50={_ms(lat.get('p50'))} p95={_ms(lat.get('p95'))}")
+        if e["fallback_rate"] is not None:
+            line += f" fallback={e['fallback_rate']:.3f}"
+        print(line)
+        if verbose:
+            for qid, values in e["per_query"].items():
+                print("  " + json.dumps({"id": qid, **values}, ensure_ascii=True))
 
 
 def _cmd_eval_retrieval(args: argparse.Namespace) -> int:
@@ -707,13 +683,7 @@ def _cmd_eval_retrieval(args: argparse.Namespace) -> int:
     if not rows:
         print(f"no rows for split {args.split!r}", file=sys.stderr)
         return 1
-    if args.grid and args.split != "dev":
-        print("grid runs on dev only", file=sys.stderr)
-        return 1
-    if args.ablation and args.split != "dev":
-        print("ablation runs on dev only", file=sys.stderr)
-        return 1
-    need_llm = "auto" in args.parsers and not (args.grid or args.ablation)
+    need_llm = "auto" in args.parsers
     parser, status = _build_parser_or_exit(need_llm)
     if need_llm and status == "ok":
         with contextlib.suppress(ParseError):      # pay the cold start outside the scored rows
@@ -734,60 +704,34 @@ def _cmd_eval_retrieval(args: argparse.Namespace) -> int:
         print(f"report index disabled: {state.report_reason}; run cxr build-report-index",
               file=sys.stderr)
         return 1
-    # The state stays ready without the probe, so image mode would score 0 and hybrid would
-    # drop the image leg without a word; refuse rather than record numbers that never ran.
-    if ("image" in args.modes or args.grid or args.ablation) and state.image_status != "ok":
-        print(f"image probe disabled: {state.image_reason}; run cxr train-probe",
-              file=sys.stderr)
-        return 1
-    agreement = rev.build_agreement_matrix(
-        pl.read_parquet(Path(args.canonical_dir) / "labels.parquet"), state.labels.study_ids)
-    shared = {"state": state, "parser": parser, "matrix": state.labels, "agreement": agreement,
-              "projection_of": {s: state.images[i].projection
-                                for s, i in state.study_image.items()}}
+    # The labels are the answer key only: the search never sees them (the state has none).
+    canonical_dir = Path(args.canonical_dir)
+    studies = pl.read_parquet(canonical_dir / "studies.parquet")
+    labels_long = pl.read_parquet(canonical_dir / "labels.parquet")
+    cfg = load_config("retrieval")
+    matrix = lf.build_label_matrix(
+        labels_long, studies["study_id"].to_list(), cfg["label_resolution"]["source_priority"],
+        seed=cfg["results"]["label_order_seed"])
+    shared = {"state": state, "parser": parser, "matrix": matrix,
+              "agreement": rev.build_agreement_matrix(labels_long, matrix.study_ids),
+              "projection_of": {s: state.images[i].projection for s, i in
+                                zip(studies["study_id"], studies["selected_image_id"],
+                                    strict=True)}}
     digest = hashlib.sha256(Path(args.benchmark).read_bytes()).hexdigest()
-    extras = {"benchmark": {"file": args.benchmark, "split": args.split, "sha256": digest},
-              "build_id": state.manifest["build_id"], "encoder": state.manifest["encoder"]}
-    fusion = dataclasses.asdict(state.fusion)
-    if args.grid:
-        grid = rev.grid_search(rows, baseline=state.fusion, **shared)
-        _merge_json(out, "grid", {**grid, **extras,
-                                  "fusion_default": dataclasses.asdict(rev.DEFAULT_FUSION),
-                                  "fusion_current": fusion})
-        _print_grid(grid)
-        print(f"report     : {args.out}")
-        return 0
-    if args.ablation:
-        result = rev.ablation(rows, fusion=state.fusion, **shared)
-        _merge_json(out, "ablation", {**result, **extras, "fusion_current": fusion})
-        for name, m in result["configs"].items():
-            print(f"{name:<14} ndcg={_f(m['ndcg@10'])} p@10={_f(m['p@10'])} "
-                  f"viol={_f(m['exclude_violation@10'])}")
-        print(f"report     : {args.out}")
-        return 0
     policies = [rev.DEFAULT_POLICY] + ([rev.NEGATION_POLICY]
                                        if args.policies == "negation_both" else [])
-    report = rev.evaluate_retrieval(rows, parsers=args.parsers, modes=args.modes,
-                                    policies=policies, fusion=state.fusion, **shared)
-    report.update(extras, report_index=state.report_meta, fusion=fusion)
+    report = rev.evaluate_retrieval(rows, parsers=args.parsers, policies=policies, **shared)
+    report.update(benchmark={"file": args.benchmark, "split": args.split, "sha256": digest},
+                  build_id=state.manifest["build_id"], encoder=state.manifest["encoder"],
+                  report_index=state.report_meta)
     if "auto" in args.parsers:
         report["llm"] = {"status": status, "provider": Settings().llm_provider,
                          "model": Settings().llm_model, "prompt_sha256": parser.prompt_sha256}
-    judged = "gold" in args.parsers and {"vector", "hybrid"} <= set(args.modes)
-    v = rev.verdict(report, load_config("evaluation")["thresholds"]) if judged else None
-    report["verdict"] = v
-    compared = "gold" in args.parsers and {"image", "vector"} <= set(args.modes)
-    if compared:
-        report["image_vs_vector"] = rev.image_vs_vector(report)
     _merge_json(out, "eval", report)
 
     _print_eval_table(report, args.verbose)
-    print("verdict: n/a (needs gold + vector + hybrid)" if v is None else
-          f"verdict: {'PASS' if v['passed'] else 'FAIL'} {json.dumps(v, ensure_ascii=True)}")
-    if compared:
-        _print_image_vs_vector(report["image_vs_vector"])
     print(f"report     : {args.out}")
-    return 0 if v is None or v["passed"] else 1
+    return 0
 
 
 def _f(value: float | None) -> str:
@@ -880,8 +824,6 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--queries", type=int, default=30)
     bench.add_argument("--repeats", type=int, default=5)
     bench.add_argument("--api-url", default=None, help="also time POST /api/v1/search over HTTP")
-    bench.add_argument("--mode", choices=["vector", "hybrid", "image"], default="vector",
-                       help="search mode posted to --api-url")
     bench.add_argument("--out", default="artifacts/metrics/vector_baseline.json")
     bench.set_defaults(func=_cmd_bench_vector)
 
@@ -927,20 +869,13 @@ def build_parser() -> argparse.ArgumentParser:
     ev.set_defaults(func=_cmd_eval_parser)
 
     er = sub.add_parser("eval-retrieval",
-                        help="Phase 5: score label / vector / image / hybrid search")
+                        help="score the one search path against the benchmark gold")
     er.add_argument("--benchmark", default="benchmarks/parser_queries_v1.jsonl")
     er.add_argument("--split", choices=["heldout", "dev", "all"], default="heldout")
-    er.add_argument("--modes", nargs="+", choices=["label", "vector", "image", "hybrid"],
-                    default=["label", "vector", "hybrid"])
     er.add_argument("--parsers", nargs="+", choices=["gold", "rule", "auto"],
                     default=["gold", "rule", "auto"])
     er.add_argument("--policies", choices=["default", "negation_both"], default="negation_both")
     _add_build_args(er)   # both unset: BUILD_ID, else the selected encoder's build
-    only = er.add_mutually_exclusive_group()
-    only.add_argument("--grid", action="store_true",
-                      help="fusion grid on gold + hybrid; dev split only")
-    only.add_argument("--ablation", action="store_true",
-                      help="leg ablation on gold queries; dev split only")
     er.add_argument("--canonical-dir", default="data/canonical")
     er.add_argument("--out", default="artifacts/metrics/retrieval_eval.json")
     er.add_argument("--verbose", action="store_true", help="print every per-query row (ASCII)")
