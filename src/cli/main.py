@@ -645,6 +645,10 @@ def _cmd_build_image_scores(args: argparse.Namespace) -> int:
               f"(pos {c['n_pos']}, neg {c['n_neg']})")
     if fit["uncalibrated"]:
         print(f"uncalibrated (< {iscores.MIN_CLASS} per class): {', '.join(fit['uncalibrated'])}")
+    if fit["saturated"]:
+        print(f"WARNING saturated (|logit| > {iscores.MAX_LOGIT:g} on pool-val, the caption "
+              f"separates its slice; that term dominates decomposed sums): "
+              f"{', '.join(fit['saturated'])}")
     print(f"artifact : {args.out}  ({scores.height:,} studies, build {build_id})")
     print(f"report   : {report}")
     return 0
