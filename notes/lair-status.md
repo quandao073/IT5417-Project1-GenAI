@@ -2,12 +2,12 @@
 
 > **Cách dùng.** Một bước một lúc. Trước khi bắt đầu bước nào: đổi trạng thái của nó thành `🔄` và ghi giờ.
 > Sau khi xong: `✅` + kết quả (commit, file, số đo chính, log). Lỗi/chặn: `⛔` + lý do. Bước chưa tới: `⏳`.
-> Mỗi phiên mới (hoặc chat mới) đọc theo thứ tự: `WORKLOG.md` (*Trạng thái*, *Quyết định* D30–D36, *Bẫy*) →
+> Mỗi phiên mới (hoặc chat mới) đọc theo thứ tự: `WORKLOG.md` (*Trạng thái*, *Quyết định* D30–D37, *Bẫy*) →
 > **file này** → spec `docs/superpowers/specs/2026-10-23-label-aware-image-retrieval-design.md` →
 > plan `docs/superpowers/plans/2026-10-23-label-aware-image-retrieval.md` (chi tiết từng task) → mục của bước đang làm.
 > Chỉ **một** dòng được đánh dấu **TIẾP THEO**. File này nằm trên nhánh tích hợp; commit cùng các mốc, không commit từng lần sửa.
 
-**Cập nhật lần cuối:** 2026-10-24 tối — **M1 đạt** (WP5 Task 15–17 + Task 23, `notes/lair-runs.md`). Fine-tune chạy song song trên Colab (người dùng).
+**Cập nhật lần cuối:** 2026-10-24 đêm — B16 chuẩn bị xong và đã diễn tập (P14 → D37). Trước đó: **M1 đạt** (WP5 Task 15–17 + Task 23, `notes/lair-runs.md`). Fine-tune chạy song song trên Colab (người dùng).
 
 **Nhánh tích hợp:** `feat/label-aware-image-retrieval` (HEAD xem `git log -1`), tách từ `main` 90cd62a. Không push, không đụng `main`; squash/PR khi người dùng gọi `/commit`.
 
@@ -40,7 +40,7 @@
 | B14 | WP6b | Dò lr {1e-5, 3e-5, 1e-4} cho **FT6** (D36; FT1 công thức bài báo chạy ở lr FT6 chọn), chọn trên pool-val (D33), **trên Colab Pro** | 🔄 **đang chạy trên Colab T4** (ô 6, 2026-10-24): cổng PASS (TB 0,388); FT6 lr 3e-5 epoch 1: TB 0,399, phủ định 0,389, đơn 0,583 (−8,4 điểm, theo dõi K2). 0,93 s/bước, ≈ 10,3 phút/epoch. Không thay `code.zip` trên Drive tới khi ô 6 xong (provenance sẽ từ chối lượt dở); ô 7 gõ `BEST_LR` tay | `runs/ab_ft6/`, `runs/ab_ft6_scale24/`, `runs/zero_shot_val.json`, `notes/b14_ab.log`; Colab: `training/colab/README.md`, gói `data/colab_bundle/cxr_v11` |
 | B14c | WP4 | Bộ Colab: `training/colab/pack.py` (gói + manifest sha256), `colab_run.py` (setup / check-env / train / gate / summary), `train_colab.ipynb`, README; `training/zero_shot_val.py`; `val_text_cos` mỗi epoch | ✅ commit `d355a27`; notebook dựng venv Python 3.12 từ `pylock.colab.toml` (T32), chạy T4 (fp16, không checkpointing) và A100 (bf16); tập dượt trong container Linux GPU: zero-shot trùng laptop, train 15 bước OK | WORKLOG *Colab: môi trường tái lập*; 52 test training |
 | B15 | WP6b | Ở lr FT6 chọn, dựng trên FT6 (D36), trên Colab: FT4 (LoRA rộng + đầu chiếu), FT5 (FT4 + câu 3 ý), FT3 (λ 0, ablation); FT2 (+impression) ghép lên biến thể thắng | ⏳ | |
-| B16 | WP6b | Embed corpus + pool bằng từng checkpoint (GPU qua venv `training/`), `build-image-scores` từng biến thể, bench pool-val → chọn joint/decomposed (D33); bench corpus → K1–K3 | ⏳ | |
+| B16 | WP6b | Mỗi checkpoint: `register-run` → embed pool-val (≈ 5,5 phút CPU) → bench joint pool-val → embed corpus (≈ 15 phút) → `build-image-scores` → bench decomposed pool-val; chọn biến thể + joint/decomposed trên pool-val (D33); bench corpus cho bản chọn → K1–K3 | ⏳ chờ `model.pt` từ Colab; công cụ + diễn tập ✅ | `64a1c5c`, `9d3cc05`, D37 `f5f70de`. Diễn tập (zero-shot): pool-val riêng cho H6 lệch < 5e-8 và bench pool-val trùng tuyệt đối với bản embed cả pool; `model.pt` thật (LoRA lúc khởi tạo, gộp như `train.py`) nạp strict, vector trùng zero-shot (lệch 0,0). Lệnh: `notes/lair-runs.md` *B16 dry run*; log `notes/b16_rehearsal.log` |
 | B17 | WP7 | Trỏ phục vụ vào biến thể đã chọn; heldout **một lần** (khai báo trong WORKLOG trước khi chạy); K4–K7; AUROC `valid/` | ⏳ | → **M2** |
 | B18 | WP7 | `docs/image-retrieval.md`, `docs/model-decision.md`, README, WORKLOG (gom `notes/lair-*.md`) | ⏳ | |
 
@@ -56,7 +56,7 @@ Không có việc nào chạy nền (2026-10-24). Lượt train dài chạy trê
 
 ```bash
 # Kiểm tra sức khỏe nhanh
-uv run pytest -q && uv run ruff check src tests training  # 978 passed (2026-10-24)
+uv run pytest -q && uv run ruff check src tests training  # 1024 passed (2026-10-24 đêm)
 uv run --project training pytest training/tests -q        # 49 passed
 # B10: chạy khối *Script B10* ở cuối file này (CPU)
 # B14/B15: trên Colab, training/colab/README.md (gói: training/colab/pack.py)
@@ -67,7 +67,7 @@ uv run cxr build-image-scores --encoder cxrclip --corpus-build-id 20261023_chexp
 uv run cxr validate-indexes && uv run pytest -m integration -q
 ```
 
-**TIẾP THEO:** người dùng review M1 (WP5 Task 15–17, `notes/lair-runs.md`) và quyết P14; fine-tune chạy trên Colab. Sau đó: B16 khi có `runs/<lượt>/model.pt` (embed từng biến thể, chọn joint/decomposed trên pool-val, K1–K3 trên corpus), song song B13b (FT4/FT5) hoặc Task 21–22.
+**TIẾP THEO:** B16 khi có `runs/<lượt>/model.pt` từ Colab: chạy khối lệnh *Procedure* trong `notes/lair-runs.md` cho từng lượt, chọn trên pool-val, K1–K3 trên corpus. Trong lúc chờ: B13b (FT4/FT5) hoặc Task 21–22.
 
 ### Script B10 (bản chép của `wp6a_cxrclip.sh`)
 
