@@ -13,6 +13,7 @@ import time
 from datetime import UTC, date, datetime
 from pathlib import Path
 
+import numpy as np
 import polars as pl
 
 from src.common.config import Settings, default_config_dir, load_config
@@ -20,16 +21,18 @@ from src.data import canonical, probe_pool
 from src.data.audit import CorpusMode, run_audit
 from src.data.labels import CHEXPERT_LABELS
 from src.embeddings import embed, index, spike, validate
-from src.embeddings.probe import load_probe, save_probe, train_probe
+from src.embeddings.probe import load_probe, patient_split, save_probe, train_probe
 from src.evaluation import parser_benchmark as pb
 from src.evaluation import parser_eval as pe
 from src.evaluation import probe_eval
 from src.evaluation import template_bench as tb
 from src.evaluation import vector_baseline as vb
 from src.query.schema import ParseError
+from src.retrieval import image_scores as iscores
 from src.retrieval import label_filter as lf
 from src.retrieval import report_index
 from src.retrieval.image_concepts import validate_image_probe
+from src.retrieval.templates import render
 
 
 def _cmd_audit(args: argparse.Namespace) -> int:
@@ -595,6 +598,58 @@ def _cmd_train_probe(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_build_image_scores(args: argparse.Namespace) -> int:
+    """The H6 artifact of `image_decomposed`: each concept's caption cosine, calibrated on the
+    pool-val slice (the patient split of models.yaml:image_probe, as the probe's lambda)."""
+    report = Path(args.report or f"artifacts/metrics/image_scores_{args.encoder}.json")
+    if _report_is_corrupt(report):
+        return 1
+    build_id, expect = _corpus_build(args)
+    canonical_dir = Path(args.canonical_dir)
+    error, pool = _load_pool(args, expect, pl.read_parquet(canonical_dir / "images.parquet"))
+    if error:
+        print(error, file=sys.stderr)
+        return 1
+    name, encoder = _encoder_by_name(args.encoder, "cpu")
+    if encoder.revision != expect["revision"]:
+        print(f"ENCODER MISMATCH: {name} revision {encoder.revision} != corpus build "
+              f"{build_id} revision {expect['revision']}", file=sys.stderr)
+        return 1
+    X, pool_statuses, pool_patients, pool_meta = pool
+    split = load_config("models")["image_probe"]
+    val = patient_split(pool_patients, val_fraction=split["val_fraction"], seed=split["seed"])
+    concepts_cfg = load_config("concepts")
+    prompts = {c: render([c], [], concepts_cfg) for c in CHEXPERT_LABELS}
+    text = encoder.encode_texts(list(prompts.values())).astype("float64")
+    text /= np.linalg.norm(text, axis=1, keepdims=True)
+    probe_, fit = iscores.calibrate(text, X[val], pool_statuses[val])
+
+    studies = pl.read_parquet(canonical_dir / "studies.parquet")
+    scores = iscores.corpus_scores(probe_, _corpus_rows(args, build_id, studies), studies)
+    meta = {
+        "probe_id": f"{build_id}_decomposed",
+        "build_id": build_id,
+        "encoder": {"name": name, **expect},
+        "source": f"decomposed-{name}",
+        "pool_sha256": pool_meta["pool_sha256"], "pool_build_id": args.pool_build_id,
+        "n_val": int(val.sum()), "prompts": prompts, **fit,
+        "git_commit": _git_commit(),
+        "trained_at": datetime.now(UTC).isoformat(timespec="seconds"),
+    }
+    save_probe(Path(args.out), probe_, meta, scores)
+    _merge_json(report, "image_scores", meta)
+
+    for concept, c in fit["calibration"].items():
+        auroc = "  n/a" if c["val_auroc"] is None else f"{c['val_auroc']:.3f}"
+        print(f"{concept:27s} a {c['a']:8.3f}  b {c['b']:8.3f}  pool-val AUROC {auroc}  "
+              f"(pos {c['n_pos']}, neg {c['n_neg']})")
+    if fit["uncalibrated"]:
+        print(f"uncalibrated (< {iscores.MIN_CLASS} per class): {', '.join(fit['uncalibrated'])}")
+    print(f"artifact : {args.out}  ({scores.height:,} studies, build {build_id})")
+    print(f"report   : {report}")
+    return 0
+
+
 def _build_parser_or_exit(need_llm: bool):
     from src.api.dependencies import build_query_parser
 
@@ -1019,6 +1074,20 @@ def build_parser() -> argparse.ArgumentParser:
                     help="score this corpus build's shards instead of the one in "
                          "build_manifest.json")
     tp.set_defaults(func=_cmd_train_probe)
+
+    bis = sub.add_parser("build-image-scores",
+                         help="image_decomposed scores (H6): each concept's caption cosine, "
+                              "calibrated on pool-val")
+    bis.add_argument("--encoder", required=True, help="models.yaml candidate of the image modes")
+    bis.add_argument("--corpus-build-id", required=True)
+    bis.add_argument("--pool-build-id", required=True)
+    bis.add_argument("--pool-dir", default="data/probe_pool")
+    bis.add_argument("--embeddings", default="data/indexes/embeddings")
+    bis.add_argument("--canonical-dir", default="data/canonical")
+    bis.add_argument("--out", default="data/indexes/image_scores")
+    bis.add_argument("--report", default=None,
+                     help="default: artifacts/metrics/image_scores_<encoder>.json")
+    bis.set_defaults(func=_cmd_build_image_scores)
 
     prs = sub.add_parser("parse", help="Phase 4: parse one request, print the SearchQuery")
     prs.add_argument("text")
