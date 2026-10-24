@@ -29,14 +29,16 @@
 | `image_decomposed` (CXR-CLIP H6) | 38 | 0.474 | 0.272 | 0.383 | 28 ms |
 | `hybrid` | 38 | 1.000 | 0.657 | 0.000 | 396 ms |
 
-Mode comparison on the queries both modes answered (binary nDCG@10; HNRR@10 on the 6 queries that have both an include and an exclude):
+Mode comparison (K4) on the 35 queries `vector` answered, as `image_vs_vector` (spec §5.1). It uses binary nDCG@10; HNRR@10 is computed on the 6 queries that have both an include and an exclude. `image_modes` in the report names the image build (`cxrclip`, `sha256:743e…`) and the H6 artifact (`20261023_chexpert25k_cxrclip_v1_decomposed`).
 
-| | n | ndcg_bin (new / base) | wins / ties / losses | HNRR (new / base) |
-|---|---|---|---|---|
-| `image_joint` vs `image` | 38 | 0.472 / 0.615 | 8 / 2 / 28 | 0.133 / 0.100 |
-| `image_joint` vs `vector` | 35 | 0.457 / 0.506 | 7 / 6 / 22 | 0.133 / 0.067 |
-| `image_decomposed` vs `image` | 38 | 0.473 / 0.615 | 4 / 4 / 30 | 0.267 / 0.100 |
-| `image_decomposed` vs `vector` | 35 | 0.444 / 0.506 | 6 / 6 / 23 | 0.267 / 0.067 |
+| | ndcg_bin (new / base) | wins / ties / losses | HNRR (new / base) |
+|---|---|---|---|
+| `image_joint` vs `image` | 0.457 / 0.584 | 8 / 2 / 25 | 0.133 / 0.100 |
+| `image_joint` vs `vector` | 0.457 / 0.506 | 7 / 6 / 22 | 0.133 / 0.067 |
+| `image_decomposed` vs `image` | 0.444 / 0.584 | 4 / 3 / 28 | 0.267 / 0.100 |
+| `image_decomposed` vs `vector` | 0.444 / 0.506 | 6 / 6 / 23 | 0.267 / 0.067 |
+
+On the 3 queries `vector` left empty, binary nDCG@10 is 0.641 for `image_joint` and 0.817 for `image_decomposed`, against 0.974 for `image`.
 
 On natural-language dev queries, the two zero-shot image modes are below the BiomedCLIP probe. Closing that gap is the fine-tune's job (D30, FT6).
 
