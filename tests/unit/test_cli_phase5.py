@@ -9,6 +9,7 @@ import pytest
 
 from src.cli.main import build_parser, main
 from src.common.config import load_config
+from src.embeddings import index
 from src.query.parser import QueryParser
 from src.query.rule_parser import RuleParser
 from src.retrieval.hybrid import FusionParams
@@ -76,7 +77,7 @@ def world(tmp_path, monkeypatch):
         report_meta={"studies": "1"}, image_status="ok", image_reason=None,
         labels=SimpleNamespace(study_ids=["s1"]),
         images={"i1": SimpleNamespace(projection="PA")}, study_image={"s1": "i1"},
-        manifest={"build_id": "b1"}, parser=parser,
+        manifest={"build_id": "b1", "encoder": "fake"}, parser=parser,
         fusion=FusionParams(60, {"vector": 1.0, "report": 1.0}, 100, 100))
     monkeypatch.setattr("src.api.dependencies.build_state", lambda settings: state)
     canonical = tmp_path / "canonical"
@@ -138,6 +139,7 @@ def test_eval_retrieval_writes_the_eval_section_and_prints_ascii(world, monkeypa
     data = json.loads(world.out.read_text(encoding="utf-8"))["eval"]
     assert data["benchmark"]["split"] == "dev" and len(data["benchmark"]["sha256"]) == 64
     assert data["build_id"] == "b1" and data["report_index"] == {"studies": "1"}
+    assert data["encoder"] == "fake"
     assert data["fusion"] == FUSION
     assert "llm" not in data and data["verdict"] == PASSING
     assert seen["ids"] == ["en-001"] and seen["parsers"] == ["gold", "rule"]
@@ -192,6 +194,46 @@ def test_eval_retrieval_builds_the_state_from_the_canonical_dir_flag(world, monk
     monkeypatch.setattr("src.evaluation.retrieval_eval.verdict", lambda report, t: PASSING)
     assert run(world, "--split", "dev", "--parsers", "gold") == 0
     assert seen["settings"].canonical_dir == world.canonical
+
+
+def test_eval_retrieval_scores_the_build_of_the_encoder_flag(world, monkeypatch, tmp_path):
+    """Two encoders' builds side by side; --encoder picks which one the state serves."""
+    indexes = tmp_path / "indexes"
+    for build_id, encoder in (("b_fake", "fake"), ("b_other", "other")):
+        index.write_manifest(index.manifest_path(indexes, build_id),
+                             {"build_id": build_id, "encoder": encoder})
+    monkeypatch.setenv("INDEXES_DIR", str(indexes))
+    seen = {}
+
+    def fake_build_state(settings):
+        seen["settings"] = settings
+        return world.state
+
+    monkeypatch.setattr("src.api.dependencies.build_state", fake_build_state)
+    monkeypatch.setattr("src.evaluation.retrieval_eval.evaluate_retrieval",
+                        lambda rows, **kw: canned(kw["parsers"], kw["modes"]))
+    monkeypatch.setattr("src.evaluation.retrieval_eval.verdict", lambda report, t: PASSING)
+    assert run(world, "--split", "dev", "--parsers", "gold", "--encoder", "other") == 0
+    assert seen["settings"].build_id == "b_other"
+
+
+def test_eval_retrieval_refuses_a_build_id_and_an_encoder_that_disagree(world, monkeypatch,
+                                                                         tmp_path, capsys):
+    indexes = tmp_path / "indexes"
+    index.write_manifest(index.manifest_path(indexes, "b_fake"),
+                         {"build_id": "b_fake", "encoder": "fake"})
+    monkeypatch.setenv("INDEXES_DIR", str(indexes))
+    assert run(world, "--split", "dev", "--parsers", "gold",
+               "--build-id", "b_fake", "--encoder", "other") == 1
+    assert "build b_fake was embedded by 'fake', not 'other'" in capsys.readouterr().err
+    assert not world.out.exists()
+
+
+def test_eval_retrieval_refuses_an_encoder_without_a_build(world, monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("INDEXES_DIR", str(tmp_path / "empty"))
+    assert run(world, "--split", "dev", "--parsers", "gold", "--encoder", "other") == 1
+    assert "0 registered builds of encoder 'other'" in capsys.readouterr().err
+    assert not world.out.exists()
 
 
 def test_eval_retrieval_grid_writes_the_grid_section(world, monkeypatch, capsys):

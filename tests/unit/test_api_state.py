@@ -78,11 +78,12 @@ def world(tmp_path):
                     batch_size=4, library_versions={}, git_commit=None)
     client = QdrantClient(":memory:")
     manifest = index.run_index(client, out, images, "cxr_images", recreate=False,
-                               config_hash="c", git_commit=None, dataset={}, library_versions={})
+                               config_hash="c", git_commit=None, dataset={}, library_versions={},
+                               encoder="fake")
     indexes = tmp_path / "indexes"
-    index.write_manifest(indexes / index.MANIFEST_FILE, manifest)
+    index.write_manifest(index.manifest_path(indexes, BUILD), manifest)
     settings = Settings(_env_file=None, canonical_dir=canonical, image_root=tmp_path / "root",
-                        fts_db_path=indexes / "x.sqlite", indexes_dir=indexes,
+                        fts_db_path=indexes / "x.sqlite", indexes_dir=indexes, build_id=BUILD,
                         image_probe_dir=indexes / "image_probe", llm_disabled=True)
     build_report_index(reports_frame(ROWS), settings.fts_db_path, concepts_sha256="x",
                        git_commit=None)
@@ -108,11 +109,20 @@ class TestBuildState:
         assert len(state.images) == 8
         assert state.images[next(iter(state.images))].path_to_image.startswith("train/")
 
-    def test_not_ready_without_a_manifest(self, world, tmp_path):
+    def test_not_ready_when_the_build_is_not_registered(self, world, tmp_path):
         settings, client, _ = world
         settings = settings.model_copy(update={"indexes_dir": tmp_path / "nowhere"})
         state = _state(world, settings=settings)
-        assert not state.ready and "build_manifest.json" in state.not_ready_reason
+        assert not state.ready and f"build {BUILD} is not registered" in state.not_ready_reason
+
+    def test_loads_the_encoder_the_build_s_manifest_names(self, world):
+        """Builds of several encoders share the registry; `selected` does not pick the model."""
+        settings, client, _ = world
+        seen = []
+        state = deps.build_state(
+            settings, client_factory=lambda url: client,
+            encoder_loader=lambda name, cand, device: seen.append(name) or FakeEncoder())
+        assert state.ready and seen == ["fake"]
 
     def test_not_ready_when_the_collection_is_missing(self, world):
         state = _state(world, client=QdrantClient(":memory:"))

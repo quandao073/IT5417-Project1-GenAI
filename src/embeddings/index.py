@@ -1,7 +1,9 @@
-"""Upsert embedding shards into a Qdrant collection and write the build manifest.
+"""Upsert embedding shards into a Qdrant collection and register the build.
 
 The collection is named by build_id, so a stale index can never be served under
-a current build (plan section 16). The manifest is what the API checks against
+a current build (plan section 16). Every build has its own manifest in the registry,
+`<indexes_dir>/builds/<build_id>/manifest.json`, naming the encoder that embedded it, so
+builds of several encoders live side by side. The manifest is what the API checks against
 at startup and what `cxr validate-indexes` cross-checks with the shards.
 """
 
@@ -20,13 +22,72 @@ from src.common.config import VECTOR_INDEX_CONFIGS
 from src.common.ids import qdrant_point_id
 from src.embeddings import embed
 
-MANIFEST_FILE = "build_manifest.json"
+BUILDS_DIR = "builds"
+MANIFEST_FILE = "manifest.json"
 PAYLOAD_FIELDS = ("image_id", "study_id", "patient_id", "projection", "path_to_image")
 UPSERT_BATCH = 500
 
 
 def collection_name(prefix: str, build_id: str) -> str:
     return f"{prefix}_{build_id}"
+
+
+def manifest_path(indexes_dir: Path, build_id: str) -> Path:
+    return indexes_dir / BUILDS_DIR / build_id / MANIFEST_FILE
+
+
+def resolve_build(indexes_dir: Path, *, build_id: str | None = None,
+                  encoder: str | None = None) -> dict:
+    """The manifest of `build_id`, else of the one registered build of `encoder`; with both,
+    `encoder` must be the one that embedded `build_id`."""
+    if build_id:
+        path = manifest_path(indexes_dir, build_id)
+        if not path.is_file():
+            raise LookupError(f"build {build_id} is not registered ({path} not found); "
+                              f"run cxr index --build-id {build_id}")
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        if encoder and manifest["encoder"] != encoder:
+            raise LookupError(f"build {build_id} was embedded by {manifest['encoder']!r}, "
+                              f"not {encoder!r}")
+        return manifest
+    builds = [json.loads(p.read_text(encoding="utf-8"))
+              for p in sorted((indexes_dir / BUILDS_DIR).glob(f"*/{MANIFEST_FILE}"))]
+    matches = [m for m in builds if m.get("encoder") == encoder]
+    if len(matches) != 1:
+        raise LookupError(f"{len(matches)} registered builds of encoder {encoder!r} under "
+                          f"{indexes_dir / BUILDS_DIR}; set BUILD_ID to choose one")
+    return matches[0]
+
+
+def build_encoder(manifest: dict, candidates: dict, device: str, *, loader=None):
+    """The encoder that embedded a registered build. Every text query against a build's
+    vectors goes through here: another encoder's text vectors have the same size and would
+    score without an error, so a revision that differs from the build's is refused."""
+    name = manifest["encoder"]
+    encoder = (loader or _load_candidate)(name, candidates.get(name), device)
+    want = manifest["embedding_model"]["revision"]
+    if encoder.revision != want:
+        raise ValueError(f"encoder {name} revision {encoder.revision} != build "
+                         f"{manifest['build_id']} revision {want}")
+    return encoder
+
+
+def _load_candidate(name: str, candidate: dict | None, device: str):
+    from src.embeddings.base import load_encoder
+
+    if candidate is None:
+        raise ValueError(f"build encoder {name!r} is no models.yaml image_encoder candidate")
+    return load_encoder(name, candidate, device)
+
+
+def encoder_of(shards: dict, candidates: dict) -> str:
+    """The models.yaml candidate pinned to the model and revision that embedded `shards`."""
+    names = [name for name, c in candidates.items()
+             if (c.get("model_id"), c.get("revision")) == (shards["model_id"], shards["revision"])]
+    if len(names) != 1:
+        raise ValueError(f"shards of {shards['model_id']}@{shards['revision']} match "
+                         f"{len(names)} models.yaml candidates; pin exactly one")
+    return names[0]
 
 
 def shards_digest(manifest: dict) -> str:
@@ -94,6 +155,7 @@ def run_index(
     git_commit: str | None,
     dataset: dict,
     library_versions: dict,
+    encoder: str,
     config_scope: Sequence[str] = VECTOR_INDEX_CONFIGS,
 ) -> dict:
     from qdrant_client import models
@@ -126,6 +188,7 @@ def run_index(
     return {
         "build_id": manifest["build_id"],
         "collection": name,
+        "encoder": encoder,
         "git_commit": git_commit,
         "config_hash": config_hash,
         "config_scope": list(config_scope),

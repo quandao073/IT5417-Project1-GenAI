@@ -20,6 +20,7 @@ def test_index_defaults():
 def test_validate_indexes_defaults():
     args = build_parser().parse_args(["validate-indexes"])
     assert args.indexes_dir == "data/indexes" and args.embeddings == "data/indexes/embeddings"
+    assert args.build_id is None   # the selected encoder's registered build
 
 
 def test_bench_vector_defaults():

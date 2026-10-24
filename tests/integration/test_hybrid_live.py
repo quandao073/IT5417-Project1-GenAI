@@ -8,7 +8,6 @@ The faithfulness check reads data/canonical only; `-s` shows its per-concept cov
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import polars as pl
@@ -38,11 +37,12 @@ def _subset_world(client, tmp_path: Path, encoder) -> tuple[Path, Path, pl.DataF
                     shard_size=20, batch_size=16, library_versions={}, git_commit=None)
     built = index.run_index(client, shards, images, "cxr_images", recreate=True,
                             config_hash=config_hash(), git_commit=None, dataset={},
-                            library_versions={})
+                            library_versions={},
+                            encoder=load_config("models")["image_encoder"]["selected"])
     canonical, indexes = tmp_path / "canonical", tmp_path / "indexes"
     canonical.mkdir()
     indexes.mkdir()
-    (indexes / index.MANIFEST_FILE).write_text(json.dumps(built), encoding="utf-8")
+    index.write_manifest(index.manifest_path(indexes, BUILD), built)
     images.write_parquet(canonical / "images.parquet")
     studies = images["study_id"].unique().to_list()
     for table in ("studies", "labels", "reports"):
@@ -61,7 +61,7 @@ def test_hybrid_fifty_images_round_trip(qdrant, tmp_path):  # noqa: F811 - the f
     fts = tmp_path / "report_search.sqlite"
     build_report_index(reports, fts, concepts_sha256="itest", git_commit=None)
     settings = Settings(_env_file=None, qdrant_url=Settings().qdrant_url, canonical_dir=canonical,
-                        indexes_dir=indexes, fts_db_path=fts, llm_disabled=True)
+                        indexes_dir=indexes, build_id=BUILD, fts_db_path=fts, llm_disabled=True)
     state = build_state(settings, encoder_loader=lambda *_: encoder)
     try:
         assert state.ready, state.not_ready_reason

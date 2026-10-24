@@ -9,7 +9,6 @@ search without the report leg and without evidence (spec 9.3).
 
 from __future__ import annotations
 
-import json
 import logging
 import sqlite3
 import threading
@@ -111,12 +110,6 @@ def _default_client(url: str):
     return QdrantClient(url=url, timeout=30)
 
 
-def _default_encoder(name: str, candidate: dict, device: str):
-    from src.embeddings.base import load_encoder
-
-    return load_encoder(name, candidate, device)
-
-
 def build_query_parser(settings: Settings, *, llm_factory=None,
                        warm_up: bool = False) -> tuple[QueryParser, str]:
     """The parser and the LLM status (ok | disabled | unreachable | missing_model).
@@ -161,16 +154,13 @@ def build_query_parser(settings: Settings, *, llm_factory=None,
 def build_state(settings: Settings, *, encoder_loader=None, client_factory=None,
                 llm_factory=None, warm_up: bool = False) -> AppState:
     state = AppState(settings=settings)
-    encoder_loader = encoder_loader or _default_encoder
     client_factory = client_factory or _default_client
     try:
-        manifest_path = settings.indexes_dir / index.MANIFEST_FILE
-        if not manifest_path.is_file():
-            raise RuntimeError(f"{manifest_path} not found: run cxr index")
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        if settings.build_id and settings.build_id != manifest["build_id"]:
-            raise RuntimeError(
-                f"BUILD_ID {settings.build_id} != manifest {manifest['build_id']}")
+        cfg = load_config("models")["image_encoder"]
+        # BUILD_ID picks a registered build; without it, the selected encoder's only build.
+        manifest = index.resolve_build(
+            settings.indexes_dir, build_id=settings.build_id,
+            encoder=None if settings.build_id else cfg["selected"])
         collection = index.collection_name(settings.qdrant_collection_prefix, manifest["build_id"])
 
         client = client_factory(settings.qdrant_url)
@@ -208,12 +198,8 @@ def build_state(settings: Settings, *, encoder_loader=None, client_factory=None,
         parser, llm_status = build_query_parser(settings, llm_factory=llm_factory,
                                                 warm_up=warm_up)
 
-        cfg = load_config("models")["image_encoder"]
-        encoder = encoder_loader(cfg["selected"], cfg["candidates"][cfg["selected"]],
-                                 settings.embedding_device)
-        if encoder.revision != manifest["embedding_model"]["revision"]:
-            raise RuntimeError(f"encoder revision {encoder.revision} != manifest "
-                               f"{manifest['embedding_model']['revision']}")
+        encoder = index.build_encoder(manifest, cfg["candidates"], settings.embedding_device,
+                                      loader=encoder_loader)
         _open_image_probe(state, build_id=manifest["build_id"], revision=encoder.revision,
                           study_ids=studies["study_id"].to_list())
 

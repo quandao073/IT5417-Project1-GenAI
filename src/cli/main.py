@@ -289,7 +289,7 @@ def _qdrant_client(url: str | None):
 
 
 def _cmd_index(args: argparse.Namespace) -> int:
-    from src.common.config import config_hash
+    from src.common.config import config_hash, index_config_scope
 
     shards_dir = _resolve_build_dir(Path(args.embeddings), args.build_id)
     images = pl.read_parquet(Path(args.canonical_dir) / "images.parquet")
@@ -298,32 +298,66 @@ def _cmd_index(args: argparse.Namespace) -> int:
                "plus_csv": Path(data_cfg["plus_metadata"]["csv"]).name}
     client = _qdrant_client(args.qdrant_url)
     try:
+        encoder = index.encoder_of(embed.load_shards_manifest(shards_dir),
+                                   load_config("models")["image_encoder"]["candidates"])
+        scope = index_config_scope(encoder)
         manifest = index.run_index(
             client, shards_dir, images, Settings().qdrant_collection_prefix,
-            recreate=args.recreate, config_hash=config_hash(), git_commit=_git_commit(),
-            dataset=dataset, library_versions=_library_versions(),
+            recreate=args.recreate, config_hash=config_hash(scope), git_commit=_git_commit(),
+            dataset=dataset, library_versions=_library_versions(), encoder=encoder,
+            config_scope=scope,
         )
     except (ValueError, FileNotFoundError) as exc:
         print(f"INDEX FAILED: {exc}", file=sys.stderr)
         return 1
-    out = Path(args.indexes_dir) / index.MANIFEST_FILE
+    out = index.manifest_path(Path(args.indexes_dir), manifest["build_id"])
     index.write_manifest(out, manifest)
-    print(f"collection : {manifest['collection']}")
+    print(f"collection : {manifest['collection']}  encoder {manifest['encoder']}")
     print(f"vectors    : {manifest['counts']['vectors']:,}  "
           f"dim {manifest['embedding_model']['dimension']}")
     print(f"manifest   : {out}")
     return 0
 
 
+def _add_build_args(parser: argparse.ArgumentParser) -> None:
+    """Which registered build a command reads; both unset: the selected encoder's build."""
+    parser.add_argument("--build-id", default=None, help="a registered build")
+    parser.add_argument("--encoder", default=None,
+                        help="shorthand for this encoder's only registered build; with "
+                             "--build-id, it must be the encoder that embedded that build")
+
+
+def _registered_build(args: argparse.Namespace, indexes_dir: Path) -> dict | None:
+    """The build `--build-id` / `--encoder` name, else the selected encoder's; None after
+    printing why there is none."""
+    encoder = args.encoder or (
+        None if args.build_id else load_config("models")["image_encoder"]["selected"])
+    try:
+        return index.resolve_build(indexes_dir, build_id=args.build_id, encoder=encoder)
+    except LookupError as exc:
+        print(f"FAIL manifest    : {exc}", file=sys.stderr)
+        return None
+
+
+def _build_encoder(manifest: dict, device: str = "cpu"):
+    """The encoder that embedded `manifest`'s build (index.build_encoder); None after printing
+    why it cannot be used."""
+    try:
+        return index.build_encoder(
+            manifest, load_config("models")["image_encoder"]["candidates"], device)
+    except ValueError as exc:
+        print(f"ENCODER MISMATCH: {exc}", file=sys.stderr)
+        return None
+
+
 def _cmd_validate_indexes(args: argparse.Namespace) -> int:
-    manifest_path = Path(args.indexes_dir) / index.MANIFEST_FILE
-    if not manifest_path.is_file():
-        print(f"FAIL manifest    : {manifest_path} not found; run cxr index", file=sys.stderr)
+    manifest = _registered_build(args, Path(args.indexes_dir))
+    if manifest is None:
         return 1
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     shards_dir = Path(args.embeddings) / manifest["build_id"]
     images = pl.read_parquet(Path(args.canonical_dir) / "images.parquet")
-    expected_revision = load_config("models")["image_encoder"]["revision"]
+    candidates = load_config("models")["image_encoder"]["candidates"]
+    expected_revision = candidates[manifest["encoder"]]["revision"]
     # Hash over the scope this manifest recorded, not today's default, so an
     # index stays checkable across a change of scope (see D16).
     checks = validate.validate_indexes(
@@ -413,12 +447,17 @@ def _cmd_bench_vector(args: argparse.Namespace) -> int:
 def _cmd_score_corpus(args: argparse.Namespace) -> int:
     if _report_is_corrupt(Path(args.out)):
         return 1
-    shards_dir = _resolve_build_dir(Path(args.embeddings), args.build_id)
+    manifest = _registered_build(args, Path(args.indexes_dir))
+    if manifest is None:
+        return 1
+    encoder = _build_encoder(manifest)
+    if encoder is None:
+        return 1
+    shards_dir = Path(args.embeddings) / manifest["build_id"]
     canonical_dir = Path(args.canonical_dir)
     images = pl.read_parquet(canonical_dir / "images.parquet")
     labels = pl.read_parquet(canonical_dir / "labels.parquet")
     cfg = load_config("models")["image_encoder"]
-    _, encoder = _selected_encoder("cpu")
     prompts = spike.build_prompts(load_config("concepts"), cfg["text_prompt_template"])
     priority = load_config("retrieval")["label_resolution"]["source_priority"]
     report = vb.score_corpus(shards_dir, encoder, labels, images, prompts, priority,
@@ -481,8 +520,12 @@ def _corpus_rows(args: argparse.Namespace, manifest: dict, studies: pl.DataFrame
 def _cmd_train_probe(args: argparse.Namespace) -> int:
     if _report_is_corrupt(Path(args.report)):
         return 1
-    manifest = json.loads(
-        (Path(args.indexes_dir) / index.MANIFEST_FILE).read_text(encoding="utf-8"))
+    manifest = _registered_build(args, Path(args.indexes_dir))
+    if manifest is None:
+        return 1
+    encoder = _build_encoder(manifest)   # before training, so a mismatch costs nothing
+    if encoder is None:
+        return 1
     canonical_dir = Path(args.canonical_dir)
     error, pool = _load_pool(args, manifest, pl.read_parquet(canonical_dir / "images.parquet"))
     if error:
@@ -500,7 +543,6 @@ def _cmd_train_probe(args: argparse.Namespace) -> int:
     })
 
     template = load_config("models")["image_encoder"]["text_prompt_template"]
-    _, encoder = _selected_encoder("cpu")
     text = probe_eval.text_scores(corpus_vectors, encoder, load_config("concepts"), template)
     priority = load_config("retrieval")["label_resolution"]["source_priority"]
     statuses = spike.status_matrix(
@@ -676,8 +718,15 @@ def _cmd_eval_retrieval(args: argparse.Namespace) -> int:
     if need_llm and status == "ok":
         with contextlib.suppress(ParseError):      # pay the cold start outside the scored rows
             parser.parse("chest x-ray", mode="llm")
-    # The flag wins over CANONICAL_DIR in .env, so the state and the agreement matrix agree.
-    state = build_state(Settings(canonical_dir=Path(args.canonical_dir)))
+    # The flags win over .env: the canonical dir, so the state and the agreement matrix agree,
+    # and --build-id / --encoder, whose build the state then serves instead of BUILD_ID's.
+    overrides = {"canonical_dir": Path(args.canonical_dir)}
+    if args.build_id or args.encoder:
+        manifest = _registered_build(args, Settings().indexes_dir)
+        if manifest is None:
+            return 1
+        overrides["build_id"] = manifest["build_id"]
+    state = build_state(Settings(**overrides))
     if not state.ready:
         print(f"API state not ready: {state.not_ready_reason}", file=sys.stderr)
         return 1
@@ -698,7 +747,7 @@ def _cmd_eval_retrieval(args: argparse.Namespace) -> int:
                                 for s, i in state.study_image.items()}}
     digest = hashlib.sha256(Path(args.benchmark).read_bytes()).hexdigest()
     extras = {"benchmark": {"file": args.benchmark, "split": args.split, "sha256": digest},
-              "build_id": state.manifest["build_id"]}
+              "build_id": state.manifest["build_id"], "encoder": state.manifest["encoder"]}
     fusion = dataclasses.asdict(state.fusion)
     if args.grid:
         grid = rev.grid_search(rows, baseline=state.fusion, **shared)
@@ -801,7 +850,7 @@ def build_parser() -> argparse.ArgumentParser:
                      help="override the generated <YYYYMMDD>_chexpert25k_<model>_v1")
     emb.set_defaults(func=_cmd_embed)
 
-    idx = sub.add_parser("index", help="Phase 3: upsert shards into Qdrant, write manifest")
+    idx = sub.add_parser("index", help="Phase 3: upsert shards into Qdrant, register the build")
     idx.add_argument("--embeddings", default="data/indexes/embeddings")
     idx.add_argument("--build-id", default=None, help="required when several builds exist")
     idx.add_argument("--canonical-dir", default="data/canonical")
@@ -812,6 +861,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     val = sub.add_parser("validate-indexes", help="Phase 3: cross-check manifest, shards, Qdrant")
     val.add_argument("--indexes-dir", default="data/indexes")
+    _add_build_args(val)
     val.add_argument("--embeddings", default="data/indexes/embeddings")
     val.add_argument("--canonical-dir", default="data/canonical")
     val.add_argument("--qdrant-url", default=None)
@@ -838,7 +888,8 @@ def build_parser() -> argparse.ArgumentParser:
     score = sub.add_parser("score-corpus",
                            help="Phase 3: zero-shot AUROC on all embedded studies")
     score.add_argument("--embeddings", default="data/indexes/embeddings")
-    score.add_argument("--build-id", default=None)
+    score.add_argument("--indexes-dir", default="data/indexes")
+    _add_build_args(score)
     score.add_argument("--canonical-dir", default="data/canonical")
     score.add_argument("--n-boot", type=int, default=1000)
     score.add_argument("--out", default="artifacts/metrics/vector_baseline.json")
@@ -851,6 +902,7 @@ def build_parser() -> argparse.ArgumentParser:
     tp.add_argument("--pool-build-id", default="20261023_pool88k_biomedclip_v1")
     tp.add_argument("--embeddings", default="data/indexes/embeddings")
     tp.add_argument("--indexes-dir", default="data/indexes")
+    _add_build_args(tp)
     tp.add_argument("--canonical-dir", default="data/canonical")
     tp.add_argument("--out", default="data/indexes/image_probe")
     tp.add_argument("--report", default="artifacts/metrics/image_probe.json")
@@ -883,6 +935,7 @@ def build_parser() -> argparse.ArgumentParser:
     er.add_argument("--parsers", nargs="+", choices=["gold", "rule", "auto"],
                     default=["gold", "rule", "auto"])
     er.add_argument("--policies", choices=["default", "negation_both"], default="negation_both")
+    _add_build_args(er)   # both unset: BUILD_ID, else the selected encoder's build
     only = er.add_mutually_exclusive_group()
     only.add_argument("--grid", action="store_true",
                       help="fusion grid on gold + hybrid; dev split only")

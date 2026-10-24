@@ -1,4 +1,4 @@
-"""Shards -> Qdrant collection -> build_manifest.json, in memory."""
+"""Shards -> Qdrant collection -> the build registry, in memory."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ def shards(tmp_path):
 def _index(client, shards_dir, images, recreate=False):
     return index.run_index(
         client, shards_dir, images, "cxr_images", recreate=recreate, config_hash="cfg",
-        git_commit="abc", dataset=DATASET, library_versions={"torch": "x"},
+        git_commit="abc", dataset=DATASET, library_versions={"torch": "x"}, encoder="fake",
     )
 
 
@@ -58,9 +58,13 @@ class TestRunIndex:
         scoped = index.run_index(
             QdrantClient(":memory:"), out, images, "cxr_images", recreate=False,
             config_hash="cfg", git_commit=None, dataset=DATASET, library_versions={},
-            config_scope=("data",),
+            config_scope=("data",), encoder="fake",
         )
         assert scoped["config_scope"] == ["data"]
+
+    def test_manifest_names_the_encoder_that_embedded_the_shards(self, shards):
+        images, out = shards
+        assert _index(QdrantClient(":memory:"), out, images)["encoder"] == "fake"
 
     def test_point_ids_follow_d7_and_payload_has_five_fields(self, shards):
         images, out = shards
@@ -154,3 +158,74 @@ def test_write_manifest_round_trips(tmp_path):
     written = json.loads((tmp_path / index.MANIFEST_FILE).read_text(encoding="utf-8"))
     assert written["build_id"] == "x"
     assert not list(tmp_path.glob("*.part"))
+
+
+CANDIDATES = {"fake": {"model_id": "fake/model", "revision": "fakerev0"},
+              "fake_ft": {"model_id": "fake/model", "revision": "ftrev"}}
+
+
+class TestEncoderOf:
+    def test_names_the_candidate_pinned_to_the_shards_revision(self, shards):
+        assert index.encoder_of(embed.load_shards_manifest(shards[1]), CANDIDATES) == "fake"
+
+    def test_refuses_shards_that_no_candidate_pins(self, shards):
+        with pytest.raises(ValueError, match="fakerev0"):
+            index.encoder_of(embed.load_shards_manifest(shards[1]),
+                             {"fake_ft": CANDIDATES["fake_ft"]})
+
+
+def _register(root: Path, build_id: str, encoder: str) -> None:
+    index.write_manifest(index.manifest_path(root, build_id),
+                         {"build_id": build_id, "encoder": encoder})
+
+
+class TestRegistry:
+    def test_a_build_s_manifest_lives_under_its_own_id(self, tmp_path):
+        assert index.manifest_path(tmp_path, "b1") == tmp_path / "builds" / "b1" / "manifest.json"
+
+    def test_resolves_a_build_by_id(self, tmp_path):
+        _register(tmp_path, "b1", "a")
+        _register(tmp_path, "b2", "a")
+        assert index.resolve_build(tmp_path, build_id="b2", encoder="a")["build_id"] == "b2"
+
+    def test_an_unregistered_build_id_names_the_build_and_the_fix(self, tmp_path):
+        with pytest.raises(LookupError, match=r"b9.*cxr index"):
+            index.resolve_build(tmp_path, build_id="b9", encoder="a")
+
+    def test_without_an_id_serves_the_encoder_s_only_build(self, tmp_path):
+        _register(tmp_path, "b1", "a")
+        _register(tmp_path, "b2", "b")
+        assert index.resolve_build(tmp_path, encoder="b")["build_id"] == "b2"
+
+    @pytest.mark.parametrize("builds", [[], [("b1", "a"), ("b2", "a")]])
+    def test_without_an_id_needs_exactly_one_build_of_the_encoder(self, tmp_path, builds):
+        for build_id, encoder in builds:
+            _register(tmp_path, build_id, encoder)
+        with pytest.raises(LookupError, match="BUILD_ID"):
+            index.resolve_build(tmp_path, encoder="a")
+
+    def test_refuses_a_build_id_and_an_encoder_that_disagree(self, tmp_path):
+        _register(tmp_path, "b1", "a")
+        with pytest.raises(LookupError, match=r"b1 was embedded by 'a', not 'b'"):
+            index.resolve_build(tmp_path, build_id="b1", encoder="b")
+
+
+class TestBuildEncoder:
+    BUILT = {"build_id": "b1", "encoder": "fake", "embedding_model": {"revision": "fakerev0"}}
+
+    def test_loads_the_encoder_the_manifest_names_with_its_candidate(self):
+        seen = []
+        encoder = index.build_encoder(
+            self.BUILT, CANDIDATES, "cpu",
+            loader=lambda name, candidate, device: seen.append((name, candidate)) or FakeEncoder())
+        assert seen == [("fake", CANDIDATES["fake"])] and encoder.revision == "fakerev0"
+
+    def test_refuses_an_encoder_whose_revision_differs_from_the_build(self):
+        other = FakeEncoder()
+        other.revision = "ftrev"
+        with pytest.raises(ValueError, match=r"ftrev != build b1 revision fakerev0"):
+            index.build_encoder(self.BUILT, CANDIDATES, "cpu", loader=lambda *a: other)
+
+    def test_refuses_a_build_whose_encoder_is_no_candidate(self):
+        with pytest.raises(ValueError, match="'fake' is no models.yaml"):
+            index.build_encoder(self.BUILT, {}, "cpu")

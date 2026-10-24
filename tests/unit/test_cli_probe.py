@@ -11,7 +11,7 @@ import pytest
 
 from src.cli.main import build_parser, main
 from src.data.labels import CHEXPERT_LABELS
-from src.embeddings import embed, probe
+from src.embeddings import embed, index, probe
 from src.embeddings.validate import Check
 from src.retrieval.report_index import build_report_index
 from tests.unit.fakes import FakeEncoder
@@ -56,7 +56,8 @@ def _eight_check_setup(tmp_path, monkeypatch):
     canonical = _canonical(tmp_path)
     indexes = tmp_path / "indexes"
     indexes.mkdir()
-    (indexes / "build_manifest.json").write_text(json.dumps({"build_id": BUILD}), encoding="utf-8")
+    index.write_manifest(index.manifest_path(indexes, BUILD),
+                         {"build_id": BUILD, "encoder": "fake"})
     images = images_frame(8)
     images.write_parquet(canonical / "images.parquet")
     studies = studies_frame(images)
@@ -68,8 +69,8 @@ def _eight_check_setup(tmp_path, monkeypatch):
     monkeypatch.setattr("src.cli.main.validate.validate_indexes", lambda *a, **k: six)
     monkeypatch.setattr("src.cli.main.validate.expected_config_hash", lambda *a, **k: "x")
     monkeypatch.setattr("src.cli.main._qdrant_client", lambda *a, **k: None)
-    monkeypatch.setattr("src.cli.main.load_config",
-                        lambda name: {"image_encoder": {"revision": "fakerev0"}})
+    monkeypatch.setattr("src.cli.main.load_config", lambda name: {"image_encoder": {
+        "selected": "fake", "candidates": {"fake": {"revision": "fakerev0"}}}})
     argv = ["validate-indexes", "--indexes-dir", str(indexes), "--canonical-dir", str(canonical),
             "--embeddings", str(tmp_path / "emb")]
     return argv, indexes, studies
@@ -108,7 +109,7 @@ def test_train_probe_defaults_use_new_paths_only():
     assert args.pool_build_id == "20261023_pool88k_biomedclip_v1"
     assert args.embeddings == "data/indexes/embeddings"
     assert args.indexes_dir == "data/indexes" and args.canonical_dir == "data/canonical"
-    assert args.n_boot == 1000
+    assert args.n_boot == 1000 and args.build_id is None
 
 
 POOL_BUILD = "pool_fake_v1"
@@ -159,37 +160,45 @@ def _train_world(tmp_path, *, shared_patient=False, valid_path=False, revision="
                     shard_size=16, batch_size=4, library_versions={}, git_commit=None)
     indexes = tmp_path / "indexes"
     indexes.mkdir()
-    (indexes / "build_manifest.json").write_text(json.dumps({
-        "build_id": BUILD,
-        "embedding_model": {"model_id": "fake/model", "revision": revision, "dimension": 4}}))
-    return ["train-probe", "--pool-dir", str(pool_dir), "--pool-build-id", POOL_BUILD,
+    index.write_manifest(index.manifest_path(indexes, BUILD), {
+        "build_id": BUILD, "encoder": "fake",
+        "embedding_model": {"model_id": "fake/model", "revision": revision, "dimension": 4}})
+    return ["train-probe", "--build-id", BUILD, "--pool-dir", str(pool_dir),
+            "--pool-build-id", POOL_BUILD,
             "--embeddings", str(embeddings), "--indexes-dir", str(indexes),
             "--canonical-dir", str(canonical), "--out", str(tmp_path / "probe"),
             "--report", str(tmp_path / "report.json"), "--n-boot", "20"]
 
 
-def test_train_probe_refuses_a_pool_that_overlaps_the_corpus(tmp_path, capsys):
+@pytest.fixture
+def build_encoder(monkeypatch):
+    """The build's encoder; `fake` is no candidate of the real models.yaml."""
+    monkeypatch.setattr("src.cli.main._build_encoder", lambda manifest, device="cpu": FakeEncoder())
+
+
+def test_train_probe_refuses_a_pool_that_overlaps_the_corpus(tmp_path, capsys, build_encoder):
     argv = _train_world(tmp_path, shared_patient=True)
     assert main(argv) == 1
     assert "POOL OVERLAPS CORPUS: 1 patients" in capsys.readouterr().err
     assert not (tmp_path / "probe").exists() and not (tmp_path / "report.json").exists()
 
 
-def test_train_probe_refuses_a_pool_embedded_by_another_revision(tmp_path, capsys):
+def test_train_probe_refuses_a_pool_embedded_by_another_revision(tmp_path, capsys, build_encoder):
     argv = _train_world(tmp_path, revision="otherrev")
     assert main(argv) == 1
     assert "POOL BUILD MISMATCH" in capsys.readouterr().err
     assert not (tmp_path / "probe").exists() and not (tmp_path / "report.json").exists()
 
 
-def test_train_probe_refuses_a_pool_with_a_valid_study(tmp_path, capsys):
+def test_train_probe_refuses_a_pool_with_a_valid_study(tmp_path, capsys, build_encoder):
     argv = _train_world(tmp_path, valid_path=True)
     assert main(argv) == 1
     assert "valid/" in capsys.readouterr().err
     assert not (tmp_path / "probe").exists() and not (tmp_path / "report.json").exists()
 
 
-def test_train_probe_writes_the_artifact_and_merges_the_report(tmp_path, capsys, monkeypatch):
+def test_train_probe_writes_the_artifact_and_merges_the_report(tmp_path, capsys, monkeypatch,
+                                                            build_encoder):
     argv = _train_world(tmp_path)
     seen = {}
 
@@ -200,7 +209,6 @@ def test_train_probe_writes_the_artifact_and_merges_the_report(tmp_path, capsys,
         return zero, {"lambda": 10, "selection": {"per_lambda": {"10": 0.7}}, "n_train": {}}
 
     monkeypatch.setattr("src.cli.main.train_probe", fake_train)
-    monkeypatch.setattr("src.cli.main._selected_encoder", lambda device: ("fake", FakeEncoder()))
     (tmp_path / "report.json").write_text('{"quality": {"keep": 1}}')
 
     assert main(argv) == 0

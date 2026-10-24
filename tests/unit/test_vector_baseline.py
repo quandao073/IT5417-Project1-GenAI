@@ -61,7 +61,8 @@ def indexed(tmp_path):
                     library_versions={}, git_commit=None)
     client = QdrantClient(":memory:")
     manifest = index.run_index(client, out, images, "cxr_images", recreate=False,
-                               config_hash="c", git_commit=None, dataset={}, library_versions={})
+                               config_hash="c", git_commit=None, dataset={}, library_versions={},
+                               encoder="fake")
     return FakeEncoder(), client, manifest["collection"], out, images
 
 
