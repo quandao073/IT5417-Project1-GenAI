@@ -80,12 +80,14 @@ def test_encoder_produces_matching_unit_vectors(name, xray):
     assert encoder.weights_bytes > 50 * 2**20
 
 
-def test_selected_preprocessing_matches_the_adapter():
-    name = ENCODER_CFG["selected"]
+@pytest.mark.parametrize("name", [n for n, c in CANDIDATES.items() if "preprocessing" in c])
+def test_recorded_preprocessing_matches_the_adapter(name):
+    """A candidate's `preprocessing` record in models.yaml is what its adapter really does."""
     if not AVAILABLE[name]():
         pytest.skip(f"{name} weights not downloaded")
     actual = load_encoder(name, CANDIDATES[name]).preprocessing
-    assert json.loads(json.dumps(actual)) == json.loads(json.dumps(ENCODER_CFG["preprocessing"]))
+    assert json.loads(json.dumps(actual)) == json.loads(
+        json.dumps(CANDIDATES[name]["preprocessing"]))
 
 
 def _cxrclip_reference(candidate: dict):
