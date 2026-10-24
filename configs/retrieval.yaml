@@ -5,9 +5,10 @@
 pipeline:
   steps: [parse, retrieve, fuse, rerank, build_evidence]
 
-# One API, four retrieval modes (plan 11.1-11.3; `image` added 2026-10-23). `label` and `vector` are the
-# baselines that `hybrid` has to beat; they are not user conveniences.
-modes: [label, vector, image, hybrid]
+# One API, six retrieval modes (plan 11.1-11.3; `image` added 2026-10-23, `image_joint` and
+# `image_decomposed` 2026-10-24, WORKLOG D31). `label` and `vector` are the baselines that
+# `hybrid` has to beat; they are not user conveniences.
+modes: [label, vector, image, hybrid, image_joint, image_decomposed]
 
 candidates:
   vector_top_k: 100

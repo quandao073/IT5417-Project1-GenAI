@@ -31,6 +31,7 @@ from src.retrieval.image_concepts import ImageProbeError, ImageScores, open_imag
 from src.retrieval.label_filter import LabelMatrix, build_label_matrix
 from src.retrieval.report_index import ReportIndexError, open_report_index, read_meta
 from src.retrieval.report_search import report_terms_from_config
+from src.retrieval.templates import training_concepts
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,9 @@ class AppState:
     decomposed_meta: dict = field(default_factory=dict)
     decomposed_status: Literal["ok", "disabled"] = "disabled"
     decomposed_reason: str | None = None
+    # The image modes' text side: H1 templates read concepts.yaml; H2 is training.yaml:concepts.
+    concepts_cfg: dict = field(default_factory=dict)
+    trained_concepts: tuple[str, ...] = ()
 
 
 def _open_report_index(state: AppState, studies: int) -> None:
@@ -289,6 +293,8 @@ def build_state(settings: Settings, *, encoder_loader=None, client_factory=None,
         state.report_terms = report_terms_from_config(concepts_cfg)
         state.report_min_token_chars = retrieval_cfg["report_search"]["min_token_chars"]
         state.evidence = EvidenceMatcher(concepts_cfg)
+        state.concepts_cfg = concepts_cfg
+        state.trained_concepts = tuple(training_concepts(load_config("training")))
     except Exception as exc:  # noqa: BLE001 - every failure is a readiness reason
         state.ready = False
         state.not_ready_reason = str(exc)

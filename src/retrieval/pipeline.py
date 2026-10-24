@@ -1,25 +1,29 @@
-"""The search behind /api/v1/search (spec 8.2, 9.2): rank in one of four modes, then quote.
+"""The search behind /api/v1/search (spec 8.2, 9.2): rank in one of six modes, then quote.
 
 `label` and `vector` keep their Phase 4 ranking, because they are the baselines `hybrid` has
 to beat: `label` returns the label-filtered studies in the fixed D18 order, `vector` ranks
 images by cosine with only the view facet (G3) and now flags each hit's constraint violations.
 `image` ranks the whole corpus by per-concept probe logits (`image_concepts`), no labels, no
 reports. `hybrid` filters on labels first (D23) and fuses the vector, report and image legs
-inside the allowed set (`hybrid.search_hybrid`). Every mode then quotes report sentences as
+inside the allowed set (`hybrid.search_hybrid`). The image modes (WORKLOG D31) use the second
+encoder and collection: `image_joint` ranks by cosine with the H1 template of the constraints,
+`image_decomposed` by the H6 per-concept scores. Every mode then quotes report sentences as
 evidence; without the report index search still answers, with a warning instead of evidence.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field, replace
 from functools import partial
 from typing import TYPE_CHECKING, Literal
 
+import numpy as np
+
 from src.query.schema import SearchQuery
 from src.retrieval.evidence import Evidence
 from src.retrieval.hybrid import FusionParams, search_hybrid
-from src.retrieval.image_concepts import rank_studies
+from src.retrieval.image_concepts import ImageScores, rank_studies
 from src.retrieval.image_search import ImageCandidate, search_image_embeddings
 from src.retrieval.label_filter import (
     filter_studies_by_labels,
@@ -34,6 +38,7 @@ from src.retrieval.report_search import (
     free_text_tokens,
     search_reports,
 )
+from src.retrieval.templates import NO_FINDING, render
 
 if TYPE_CHECKING:
     from src.api.dependencies import AppState
@@ -41,6 +46,11 @@ if TYPE_CHECKING:
 _VECTOR_SKIPPED = "semantic query is empty; vector leg skipped"
 _NO_EVIDENCE = "report index unavailable; no evidence"
 _UNCERTAIN_AS_PRESENT = "image score treats UNCERTAIN as PRESENT"
+_NO_FINDING_DROPPED = "No Finding cannot be negated in the image template; dropped"
+_NO_CONCEPT_JOINT = "no concept; ranked by text-image cosine on the image collection"
+_JOINT_SKIPPED = "semantic query is empty; image_joint skipped"
+
+Mode = Literal["label", "vector", "image", "hybrid", "image_joint", "image_decomposed"]
 
 
 class VectorLegError(RuntimeError):
@@ -60,6 +70,7 @@ class Hit:
     label_match: bool | None = None
     constraints_satisfied: bool | None = None
     labels: list[dict] = field(default_factory=list)   # status of each constrained concept
+    concept_scores: dict[str, float] | None = None      # image_decomposed: each concept's term
     evidence: list[Evidence] = field(default_factory=list)
 
 
@@ -70,8 +81,7 @@ class SearchOutcome:
     warnings: list[str]
 
 
-def run_search(state: AppState, query: SearchQuery,
-               mode: Literal["label", "vector", "image", "hybrid"], *, top_k: int,
+def run_search(state: AppState, query: SearchQuery, mode: Mode, *, top_k: int,
                views: Sequence[str], absence_policy: str, uncertainty_policy: str,
                fusion: FusionParams | None = None) -> SearchOutcome:
     policies = {"absence_policy": absence_policy, "uncertainty_policy": uncertainty_policy}
@@ -82,6 +92,10 @@ def run_search(state: AppState, query: SearchQuery,
         hits, total = _image_hits(state, query, views, top_k, policies, warnings), None
     elif mode == "label":
         hits, total = _label_hits(state, query, views, top_k, policies, warnings)
+    elif mode == "image_joint":
+        hits, total = _image_joint_hits(state, query, views, top_k, policies, warnings), None
+    elif mode == "image_decomposed":
+        hits, total = _image_decomposed_hits(state, query, views, top_k, policies, warnings), None
     else:
         hits, total = _hybrid_hits(state, query, views, top_k, policies,
                                    fusion or state.fusion, warnings)
@@ -140,15 +154,107 @@ def _image_hits(state: AppState, query: SearchQuery, views: Sequence[str], top_k
         return []
     if any(c.status == "UNCERTAIN" for c in query.include):
         warnings.append(_UNCERTAIN_AS_PRESENT)
-    wanted = set(views)
-    allowed = [s for s, image_id in state.study_image.items()
-               if state.images[image_id].projection in wanted] if views else None
     ranked = rank_studies(state.image_scores, query.include, query.exclude,
-                          allowed=allowed, limit=top_k)
+                          allowed=_studies_in_views(state, views), limit=top_k)
     return [Hit(rank, study, state.study_image[study], score, image_rank=rank,
                 constraints_satisfied=satisfies(state.labels, study, query.include,
                                                 query.exclude, **policies))
             for rank, (study, score) in enumerate(ranked, start=1)]
+
+
+def _studies_in_views(state: AppState, views: Sequence[str]) -> list[str] | None:
+    """Studies whose selected image has one of `views`; None (no restriction) without views."""
+    if not views:
+        return None
+    wanted = set(views)
+    return [s for s, image_id in state.study_image.items()
+            if state.images[image_id].projection in wanted]
+
+
+def image_query_text(query: SearchQuery, concepts_cfg: dict, warnings: list[str], *,
+                     trained: Collection[str]) -> tuple[str | None, list[str]]:
+    """(the text the image modes' encoder reads, the excludes kept).
+
+    The text is the H1 template `render(include, exclude)`, the form the encoder is tuned on,
+    never the raw query. No Finding is never negated in a template (H1), so an exclude of it
+    is dropped with a warning; a concept outside H2 (`trained`) is scored but flagged. None
+    when no constraint is left: the caller falls back to the semantic query."""
+    exclude = [c for c in query.exclude if c != NO_FINDING]
+    if len(exclude) != len(query.exclude):
+        warnings.append(_NO_FINDING_DROPPED)
+    include = [c.concept for c in query.include]
+    for concept in [*include, *exclude]:
+        if concept not in trained:
+            warnings.append(f"concept outside the training set: {concept}")
+    if not include and not exclude:
+        return None, exclude
+    return render(include, exclude, concepts_cfg), exclude
+
+
+def _image_joint_hits(state: AppState, query: SearchQuery, views: Sequence[str], top_k: int,
+                      policies: dict, warnings: list[str],
+                      rendered: tuple[str | None, list[str]] | None = None) -> list[Hit]:
+    """Cosine between the template and the image collection; `rendered` is the
+    `image_query_text` a caller already computed (its warnings are already in place)."""
+    if state.joint_status != "ok":
+        warnings.append(f"image mode unavailable: {state.joint_reason}")
+        return []
+    text, _ = rendered or image_query_text(query, state.concepts_cfg, warnings,
+                                           trained=state.trained_concepts)
+    if text is None:
+        if not query.semantic_query:
+            warnings.append(_JOINT_SKIPPED)
+            return []
+        warnings.append(_NO_CONCEPT_JOINT)
+        text = query.semantic_query
+    if any(c.status == "UNCERTAIN" for c in query.include):
+        warnings.append(_UNCERTAIN_AS_PRESENT)
+    try:
+        candidates = search_image_embeddings(
+            text, views or None, top_k, encoder=state.joint_encoder, client=state.client,
+            collection=state.joint_collection, lock=state.joint_lock)
+    except Exception as exc:  # noqa: BLE001 - a dead dependency is a 503, as in vector mode
+        raise VectorLegError(str(exc)) from exc
+    constrained = bool(query.include or query.exclude)
+    return [
+        Hit(c.rank, c.study_id, c.image_id, c.score, image_rank=c.rank,
+            constraints_satisfied=satisfies(state.labels, c.study_id, query.include,
+                                            query.exclude, **policies) if constrained else None)
+        for c in candidates
+    ]
+
+
+def _image_decomposed_hits(state: AppState, query: SearchQuery, views: Sequence[str],
+                           top_k: int, policies: dict, warnings: list[str]) -> list[Hit]:
+    """The H6 scores ranked like mode `image`, each hit carrying its per-concept terms;
+    without a constraint the joint path answers."""
+    if state.decomposed_status != "ok":
+        warnings.append(f"image mode unavailable: {state.decomposed_reason}")
+        return []
+    rendered = image_query_text(query, state.concepts_cfg, warnings,
+                                trained=state.trained_concepts)
+    if rendered[0] is None:
+        return _image_joint_hits(state, query, views, top_k, policies, warnings, rendered)
+    exclude = rendered[1]
+    if any(c.status == "UNCERTAIN" for c in query.include):
+        warnings.append(_UNCERTAIN_AS_PRESENT)
+    ranked = rank_studies(state.decomposed_scores, query.include, exclude,
+                          allowed=_studies_in_views(state, views), limit=top_k)
+    return [Hit(rank, study, state.study_image[study], score, image_rank=rank,
+                constraints_satisfied=satisfies(state.labels, study, query.include,
+                                                query.exclude, **policies),
+                concept_scores=_concept_terms(state.decomposed_scores, study, query, exclude))
+            for rank, (study, score) in enumerate(ranked, start=1)]
+
+
+def _concept_terms(scores: ImageScores, study: str, query: SearchQuery,
+                   exclude: Sequence[str]) -> dict[str, float]:
+    """log σ(z) per include and log(1 - σ(z)) per exclude; they sum to the hit's score."""
+    row = scores.logits[scores.row_of[study]].astype(np.float64)
+    terms = {c.concept: -float(np.logaddexp(0.0, -row[scores.col_of[c.concept]]))
+             for c in query.include}
+    terms.update({c: -float(np.logaddexp(0.0, row[scores.col_of[c]])) for c in exclude})
+    return terms
 
 
 def _label_hits(state: AppState, query: SearchQuery, views: Sequence[str], top_k: int,

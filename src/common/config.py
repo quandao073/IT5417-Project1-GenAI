@@ -106,6 +106,9 @@ class Settings(BaseSettings):
     llm_disabled: bool = False
 
     api_host: str = "0.0.0.0"
+    # Origins the web UI is served from (Next.js dev and the compose `web` service publish :3000).
+    # The browser calls the API directly (web/lib/api.ts), so without CORS every call is blocked.
+    cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
     api_port: int = 8000
     log_level: str = "INFO"
     disclaimer_text: str = "Research/education POC - not for diagnosis"

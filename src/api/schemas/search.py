@@ -51,7 +51,8 @@ UncertaintyPolicy = Literal["EXCLUDE", "INCLUDE"]
 class SearchRequest(BaseModel):
     query: str = Field(min_length=1, max_length=500,
                        description="English or Vietnamese request; parsed by /query/parse rules")
-    mode: Literal["vector", "label", "image", "hybrid"] = "vector"
+    mode: Literal["vector", "label", "image", "hybrid", "image_joint", "image_decomposed"] = (
+        "vector")
     top_k: int = Field(10, ge=1, le=50)
     views: list[View] | None = Field(
         None, description="AP/PA facet; overrides the views the parser found when given")
@@ -85,6 +86,9 @@ class ScoreBreakdown(BaseModel):
         "hybrid/label: always true by construction; vector and image: whether every constrained "
         "concept's resolved status satisfies the request's policies, informational only; null "
         "without constraints"))
+    concept_scores: dict[str, float] | None = Field(None, description=(
+        "image_decomposed: each constrained concept's term, log σ(z) for an include and "
+        "log(1−σ(z)) for an exclude, from the H6 scores; they sum to `score`. null otherwise"))
 
 
 class SearchResult(BaseModel):
@@ -92,13 +96,17 @@ class SearchResult(BaseModel):
     study_id: str
     image_id: str
     image_url: str
+    projection: View | None = Field(None, description="AP or PA view of the image")
     score: float | None = Field(description=(
         "vector mode: cosine similarity between the query and the image embedding, a ranking "
         "signal, NOT a probability (roughly 0.2-0.5 on this corpus). image mode: "
         "Σ log σ(z) over included concepts + Σ log(1−σ(z)) over excluded, from the image "
         "probe logits; ≤ 0, a ranking signal, NOT a probability (the vector-mode cosine "
-        "when the query has no concept). hybrid mode: the RRF score, also a ranking "
-        "signal (0.0 when no leg ranked anything). label mode: null."))
+        "when the query has no concept). image_joint: cosine between the H1 template of the "
+        "constraints (the semantic query without one) and the image collection of the image "
+        "modes' encoder. image_decomposed: the sum of `score_breakdown.concept_scores`. hybrid "
+        "mode: the RRF score, also a ranking signal (0.0 when no leg ranked anything). label "
+        "mode: null."))
     score_breakdown: ScoreBreakdown
     labels: list[LabelAssertion] = Field(
         description="resolved status of every constrained concept, in every mode")

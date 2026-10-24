@@ -1,4 +1,5 @@
-"""POST /api/v1/search - modes `label`, `vector` and `hybrid` (spec 9.2).
+"""POST /api/v1/search - modes `label`, `vector`, `image`, `hybrid`, `image_joint` and
+`image_decomposed` (spec 9.2, WORKLOG D31).
 
 A thin adapter: parse the request, run `src.retrieval.pipeline.run_search`, map its hits to
 the response. The modes, the evidence and the degradation warnings live in the pipeline. A
@@ -46,21 +47,28 @@ def search(
         request_id=uuid.uuid4().hex,
         build_id=state.manifest["build_id"],
         parsed_query=ParsedQuery.from_result(parsed),
-        results=[_result(hit) for hit in outcome.hits],
+        results=[_result(hit, state) for hit in outcome.hits],
         total_matches=outcome.total_matches,
         warnings=[*parsed.warnings, *outcome.warnings],
         latency_ms=int((time.perf_counter() - started) * 1000),
     )
 
 
-def _result(hit: pipeline.Hit) -> SearchResult:
+def projection_of(state: AppState, image_id: str) -> str | None:
+    projection = state.images[image_id].projection
+    return projection if projection in ("AP", "PA") else None
+
+
+def _result(hit: pipeline.Hit, state: AppState) -> SearchResult:
     return SearchResult(
         rank=hit.rank, study_id=hit.study_id, image_id=hit.image_id,
-        image_url=f"/api/v1/images/{hit.image_id}", score=hit.score,
+        image_url=f"/api/v1/images/{hit.image_id}",
+        projection=projection_of(state, hit.image_id), score=hit.score,
         score_breakdown=ScoreBreakdown(
             vector_rank=hit.vector_rank, report_rank=hit.report_rank, image_rank=hit.image_rank,
             rrf_score=hit.rrf_score,
-            label_match=hit.label_match, constraints_satisfied=hit.constraints_satisfied),
+            label_match=hit.label_match, constraints_satisfied=hit.constraints_satisfied,
+            concept_scores=hit.concept_scores),
         labels=[LabelAssertion(**a) for a in hit.labels],
         report_evidence=[e.model_dump() for e in hit.evidence],
     )

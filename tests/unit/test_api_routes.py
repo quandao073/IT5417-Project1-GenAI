@@ -16,6 +16,7 @@ from src.query import llm_parser as llm
 from tests.unit.fakes import FakeOllama
 from tests.unit.test_api_state import _state
 from tests.unit.test_api_state import world as _world_fixture
+from tests.unit.test_report_index import ROWS
 
 # Re-exported under its own name so pytest finds it here (an import would trip ruff F811).
 world = _world_fixture
@@ -55,7 +56,8 @@ class TestSearch:
         assert first["score_breakdown"] == {"vector_rank": 1, "report_rank": None,
                                             "image_rank": None, "rrf_score": None,
                                             "label_match": None,
-                                            "constraints_satisfied": False}
+                                            "constraints_satisfied": False,
+                                            "concept_scores": None}
         assert first["labels"][0]["status"] == "NOT_MENTIONED"
         assert isinstance(first["report_evidence"], list)
         assert first["study_id"] == state.images[first["image_id"]].study_id
@@ -171,7 +173,8 @@ class TestLabelMode:
         assert r["score_breakdown"] == {"vector_rank": None, "report_rank": None,
                                         "image_rank": None, "rrf_score": None,
                                         "label_match": True,
-                                        "constraints_satisfied": True}
+                                        "constraints_satisfied": True,
+                                        "concept_scores": None}
         assert r["image_id"] == state.study_image["patient00000/study1"]
         assert r["image_url"] == f"/api/v1/images/{r['image_id']}"
         assert r["labels"] == [
@@ -461,3 +464,74 @@ def test_request_defaults_match_retrieval_yaml():
     assert req.absence_policy == cfg["constraints"]["absence_policy_default"]
     assert req.uncertainty_policy == cfg["constraints"]["uncertainty_policy_default"]
     assert req.top_k == cfg["results"]["default_top_k"]
+
+
+class TestImageModesRoute:
+    def test_request_modes_match_retrieval_yaml(self):
+        modes = SearchRequest.model_fields["mode"].annotation.__args__
+        assert set(modes) == set(load_config("retrieval")["modes"])
+        assert {"image_joint", "image_decomposed"} <= set(modes)
+
+    def test_image_decomposed_returns_concept_scores(self, client):
+        c, _, _ = client
+        body = _search(c, "edema without pleural effusion", "image_decomposed", top_k=4)
+        breakdown = body["results"][0]["score_breakdown"]
+        assert set(breakdown["concept_scores"]) == {"Edema", "Pleural Effusion"}
+        assert breakdown["image_rank"] == 1 and breakdown["vector_rank"] is None
+        joint = _search(c, "edema without pleural effusion", "image_joint", top_k=4)
+        assert joint["results"][0]["score_breakdown"]["concept_scores"] is None
+
+    def test_search_result_has_projection(self, client):
+        c, state, _ = client
+        for mode in ("vector", "image_joint"):
+            results = _search(c, "edema", mode, top_k=8)["results"]
+            assert results and all(
+                r["projection"] == state.images[r["image_id"]].projection for r in results)
+
+
+class TestStudies:
+    def test_studies_endpoint_returns_labels_and_report(self, client):
+        c, state, _ = client
+        study = "patient00000/study1"
+        for path in (study, study.replace("/", "%2F")):
+            r = c.get(f"/api/v1/studies/{path}")
+            assert r.status_code == 200, path
+            body = r.json()
+            assert body["study_id"] == study and body["build_id"] == state.manifest["build_id"]
+            assert body["image_id"] == state.study_image[study]
+            assert body["projection"] == state.images[body["image_id"]].projection
+            labels = {a["concept"]: a for a in body["labels"]}
+            assert len(body["labels"]) == 14
+            assert labels["Edema"] == {"concept": "Edema", "status": "PRESENT",
+                                       "source": "CHEXBERT_IMPRESSION"}
+            assert labels["Pleural Effusion"]["status"] == "ABSENT"
+            assert labels["Pneumonia"]["status"] == "NOT_MENTIONED"
+            assert body["report"] == {"impression": ROWS[0][1], "findings": None,
+                                      "search_text": ROWS[0][1]}
+
+    def test_studies_unknown_is_404(self, client):
+        c, _, _ = client
+        r = c.get("/api/v1/studies/patient99999/study9")
+        assert r.status_code == 404
+        assert r.json()["detail"] == {"reason": "unknown study patient99999/study9"}
+
+    def test_studies_without_reports_parquet_has_no_report(self, client):
+        c, state, _ = client
+        (state.settings.canonical_dir / "reports.parquet").unlink()
+        body = c.get("/api/v1/studies/patient00000/study1").json()
+        assert body["report"] is None and len(body["labels"]) == 14
+
+
+class TestCors:
+    def test_the_web_origin_may_call_the_api(self, client):
+        c, _, _ = client
+        r = c.options("/api/v1/search", headers={
+            "Origin": "http://localhost:3000", "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type"})
+        assert r.status_code == 200
+        assert r.headers["access-control-allow-origin"] == "http://localhost:3000"
+
+    def test_another_origin_gets_no_cors_header(self, client):
+        c, _, _ = client
+        r = c.get("/api/v1/health", headers={"Origin": "http://evil.example"})
+        assert "access-control-allow-origin" not in r.headers
