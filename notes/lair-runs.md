@@ -1,5 +1,35 @@
 # V1.1 runs on real data (WP6/WP7)
 
+## B16: FT6 lr 1e-4 (2026-10-24)
+
+**Method.** `runs/FT6_lr1e-04` from Colab (T4, epoch 7 of 10, `model.pt` sha256 `3de67645…`, code `a1aec2f`), registered as
+`cxrclip_ft6_lr1e-04` and run through the procedure below on CPU (`notes/b16_ft6.log`, 21 min). Selection on pool-val by the
+D33 rule (P@5 mean of the three S12 kinds, policy default); then one corpus bench of the chosen scoring. Paired deltas:
+`template_bench.paired_delta`, 1,000 bootstrap resamples over queries.
+
+| pool-val (9,037), S12, default | single | pair | negation | mean | neg HNRR@5 | neg viol@10 |
+|---|---|---|---|---|---|---|
+| CXR-CLIP zero-shot joint | 0.650 | 0.196 | 0.267 | 0.371 | 0.125 | 0.271 |
+| **FT6 joint** (chosen) | 0.717 | 0.327 | 0.485 | **0.510** | 0.140 | 0.216 |
+| FT6 decomposed (H6, in-sample on pool-val) | 0.717 | 0.284 | 0.516 | 0.506 | 0.104 | 0.190 |
+
+Joint wins by 0.004, within noise; decomposed is better on negation and HNRR. No concept saturated.
+
+| corpus (25,000), S12, default | single | pair | negation | neg HNRR@5 | neg viol@10 |
+|---|---|---|---|---|---|
+| CXR-CLIP zero-shot joint (K reference) | 0.633 | 0.255 | 0.260 | 0.095 | 0.252 |
+| probe-CXR-CLIP (no fine-tune) | 0.700 | 0.367 | 0.542 | 0.151 | 0.231 |
+| **FT6 joint** | 0.650 | 0.320 | 0.402 | 0.142 | 0.237 |
+| Δ FT6 − zero-shot [CI95] | +0.017 [−0.133, 0.167] | +0.065 [−0.007, 0.145] | **+0.142 [0.082, 0.205]** | +0.047 [0.005, 0.087] | |
+| Δ FT6 − probe [CI95] | −0.050 [−0.183, 0.100] | −0.047 [−0.113, 0.025] | **−0.140 [−0.187, −0.093]** | | |
+
+- **K1 FAIL (narrowly):** negation passes (0.402 ≥ 0.310, CI > 0); pair reaches 0.320 ≥ 0.305 but its CI lower bound is −0.007.
+- **K2 PASS:** single 0.650 ≥ 0.583.
+- **K3 FAIL:** negation HNRR@5 0.142 > 0.095; the CI of the difference excludes 0.
+- The probe on frozen CXR-CLIP features beats FT6 joint on negation by 0.14 (significant).
+- The gains shrink from pool-val to corpus (negation +0.218 → +0.142, while zero-shot is 0.267 vs 0.260 on both): part of it is the
+  optimism of choosing one of 30 checkpoints (3 lr × 10 epochs) on pool-val.
+
 ## B16 dry run: from a Colab `model.pt` to the pool-val bench (2026-10-24)
 
 **Method.** Tooling `64a1c5c` (a fine-tune candidate loads through its base's adapter, `framework`) and `9d3cc05` (`register-run`, `embed --pool-val`), with D37 (`f5f70de`). It ran on CPU in the main venv; the log is `notes/b16_rehearsal.log`. Both checks use CXR-CLIP zero-shot, so the right answer is known in advance.
