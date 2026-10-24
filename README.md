@@ -66,14 +66,12 @@ Mở http://localhost:3000.
 make audit-data           # đo tỉ lệ join — CỔNG CHẶN
 make build-corpus         # canonical Parquet tables + sample manifest
 make embed                # embed 25k ảnh ra shard file, chạy trực tiếp trên CPU, resume được
-make index                # upsert shard vào Qdrant + build_manifest.json (cần `docker compose up -d qdrant`)
+make index                # upsert shard vào Qdrant + data/indexes/builds/<build_id>/manifest.json (cần `docker compose up -d qdrant`)
 make build-report-index   # SQLite FTS5
-uv run cxr build-probe-pool   # image probe: pool ngoài corpus -> data/probe_pool/
-uv run cxr embed --images data/probe_pool/pool_images.parquet --out data/probe_pool/embeddings --build-id 20261023_pool88k_biomedclip_v1
-uv run cxr train-probe        # 14 probe ảnh -> data/indexes/image_probe/ (cần build_manifest.json)
+uv run cxr build-probe-pool   # pool ngoài corpus -> data/probe_pool/ (dữ liệu cho fine-tune)
 make validate-indexes     # kiểm tra build_id khớp nhau trước khi phục vụ
 make eval-parser          # chấm parser trên benchmark held-out (cần Ollama)
-make eval-retrieval       # chấm label / vector / hybrid trên benchmark held-out (cần Qdrant + report index; key OpenAI cho `auto`)
+make eval-retrieval       # chấm đường tìm kiếm duy nhất trên benchmark held-out (cần Qdrant + report index; key OpenAI cho `auto`)
 make up                   # web + api + qdrant
 make evaluate             # benchmark ba trục
 ```
@@ -85,19 +83,18 @@ chưa tính nạp model); đường GPU qua Docker worker nằm trong comment c�
 heldout ngày 2026-10-14 được đóng băng ở `artifacts/metrics/parser_eval_heldout_20261014.json`. Số dev
 lấy từ `uv run cxr eval-parser --split dev --out artifacts/metrics/parser_eval_dev.json`.
 
-Thứ tự dựng lại chỉ mục: `cxr embed` → `cxr index` → `cxr build-report-index` → `cxr train-probe` →
-`cxr validate-indexes` (8 check; check thứ 7 so report index với `reports.parquet`: số dòng, tập `study_id`,
-`corpus_sha256`; check thứ 8 so image probe với `build_id`, revision encoder và tập study). Report index gắn với
-corpus canonical chứ không với `build_id`, nên đổi encoder không phải dựng lại nó.
+Thứ tự dựng lại chỉ mục: `cxr embed` → `cxr index` → `cxr build-report-index` →
+`cxr validate-indexes` (7 check; check thứ 7 so report index với `reports.parquet`: số dòng, tập `study_id`,
+`corpus_sha256`). Mỗi build có manifest riêng `data/indexes/builds/<build_id>/manifest.json`, ghi encoder đã
+embed nó; `validate-indexes`, `score-corpus` và `eval-retrieval` nhận `--build-id` hoặc `--encoder` (mặc định:
+build duy nhất của encoder `selected`). Report index gắn với corpus canonical chứ không với `build_id`, nên đổi
+encoder không phải dựng lại nó.
 
-`make eval-retrieval` (tức `cxr eval-retrieval`; mặc định heldout, ba cấu hình parser `gold`/`rule`/`auto`
-× ba mode, nhóm negation dưới hai policy) cũng **ghi đè** `artifacts/metrics/retrieval_eval.json`. Hai lần
-chạy heldout ngày 2026-10-21 được đóng băng ở `artifacts/metrics/retrieval_eval_heldout_20261021.json` và
-`artifacts/metrics/retrieval_eval_heldout_20261021_run2.json` (lần được trích dẫn). Lưới fusion chỉ chạy
-trên dev: `uv run cxr eval-retrieval --split dev --parsers gold --modes hybrid --grid --out
-artifacts/metrics/retrieval_dev.json`. Mode `image` không nằm trong ba mode mặc định của `make eval-retrieval`:
-muốn chấm nó thì gọi thẳng `uv run cxr eval-retrieval` và truyền `--modes label vector image hybrid` (lệnh đầy
-đủ của nhánh, với `--out` riêng: `docs/image-probe.md`, *Tái lập*). `auto` cần key OpenAI trong `.env` (WORKLOG D22). Report index tắt,
+`make eval-retrieval` (tức `cxr eval-retrieval`; mặc định heldout, ba cấu hình parser `gold`/`rule`/`auto`,
+nhóm negation dưới hai policy; số chính là nDCG@10 nhị phân, graded là số phụ) cũng **ghi đè**
+`artifacts/metrics/retrieval_eval.json`; chạy dev bằng `--split dev --out <file khác>`. Các lần heldout cũ
+(`artifacts/metrics/retrieval_eval_heldout_20261021*.json`) chấm các mode đã gỡ (WORKLOG D39). `auto` cần key
+OpenAI trong `.env` (WORKLOG D22). Report index tắt,
 hoặc có `auto` mà LLM không `ok`, thì lệnh thoát mã 1. Số đo: [docs/retrieval-evaluation.md](docs/retrieval-evaluation.md).
 
 Chạy native (không qua Docker): `make setup` chép `.env.example` thành `.env` với
@@ -116,20 +113,17 @@ Không ghi đè `LLM_BASE_URL` thì `cxr parse` và API chỉ chạy rule parser
 ## Truy vấn
 
 `POST /api/v1/query/parse` trả `SearchQuery` đã validate kèm `parser` (llm | rule), `fallback_used`
-và `warnings`. `POST /api/v1/search` nhận `mode` `vector` (mặc định), `label`, `image` hoặc `hybrid`,
-`absence_policy` (`exclude_present` mặc định — `NOT_MENTIONED` không bị coi là có bệnh — hoặc
-`explicit_absence_required`) và `uncertainty_policy` (`EXCLUDE` | `INCLUDE`). Kết quả mode `label`
-không xếp hạng: trả theo thứ tự giả ngẫu nhiên cố định kèm `total_matches`. Mode `hybrid` lọc nhãn như
-`label` (cùng `total_matches`) rồi xếp hạng trong tập đó bằng RRF của nhánh vector và nhánh report
-(SQLite FTS5, bm25); `score_breakdown` ghi `vector_rank`, `report_rank`, `rrf_score`. Mode `image` xếp toàn corpus bằng điểm của 14 probe ảnh, không dùng nhãn hay
-report; câu không có concept thì lùi về cosine text–ảnh như `vector`; thiếu probe thì câu có concept trả rỗng
-kèm warning, API vẫn ready và `/health` báo `image_probe: "disabled"`. Hybrid có nhánh
-`image` nhưng trọng số 0 (lưới dev không chọn), nên không chạy. Số đo: [docs/image-probe.md](docs/image-probe.md).
-Mọi mode trả
+và `warnings`. `POST /api/v1/search` nhận `query`, `top_k` và `views` (AP/PA), không gì khác: còn gửi `mode`
+(hay trường lạ nào) thì trả 422. Chỉ có một đường (WORKLOG D39): parser → câu mẫu của các ràng buộc
+(`templates.render`, vd "pulmonary edema and no pleural effusion"; No Finding là "normal chest") → text
+encoder của build đang phục vụ → cosine trên Qdrant, chỉ lọc view → top-k. Response ghi `query_text` (chuỗi
+encoder đã đọc) và kết quả; không có nhãn, API cũng không nạp `labels.parquet`. Encoder chọn ở server bằng
+`BUILD_ID`, `/health` báo `encoder`. Câu không có concept thì encode câu tự do của parser; câu chỉ phủ định,
+UNCERTAIN, câu trên hai ràng buộc và No Finding bị phủ định đều có warning. Mỗi kết quả kèm
 `report_evidence`: câu nguyên văn của report (offset vào `search_text`) cho mỗi concept bị ràng buộc, kèm
-polarity (`affirmed`, `negated`, `uncertain`). Thiếu report index, hoặc `meta.studies` của nó lệch số
-study của manifest, thì API vẫn chạy: `/health` báo `report_index: "disabled"`, hybrid chạy không có nhánh
-report và trả warning. Lúc khởi động API chỉ so số study; nội dung lệch corpus (cùng số study) thì không bị
+polarity (`affirmed`, `negated`, `uncertain`); trích sau khi xếp hạng, chỉ để hiển thị, không đổi thứ hạng.
+Thiếu report index, hoặc `meta.studies` của nó lệch số study của manifest, thì API vẫn chạy: `/health` báo
+`report_index: "disabled"`, kết quả không có bằng chứng và có warning. Lúc khởi động API chỉ so số study; nội dung lệch corpus (cùng số study) thì không bị
 phát hiện, chỉ `uv run cxr validate-indexes` bắt được (so `corpus_sha256`). Số đo parser:
 [docs/parser-evaluation.md](docs/parser-evaluation.md), số đo retrieval:
 [docs/retrieval-evaluation.md](docs/retrieval-evaluation.md). Thử nhanh: `uv run cxr parse "tim to nhưng không có tràn dịch"`.
