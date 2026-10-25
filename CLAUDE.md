@@ -6,35 +6,33 @@ Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-s
 
 ## 0. Read WORKLOG First
 
-**`WORKLOG.md` is the project's context file. Read it before changing anything.**
+**`WORKLOG.md` is the project's context file. Read all of it before changing anything**
+(it is capped at 150 lines, so this is cheap).
 
-Minimum: *Trạng thái hiện tại*, *Quyết định đang có hiệu lực*, *Bẫy đã biết*.
-Those three sections are enough to avoid breaking something.
+**WORKLOG and `docs/scope-and-non-goals.md` override the plan document.**
+`docs/ke-hoach-du-an-nho-cxr-semantic-retrieval-v1.md` was written before the data was
+measured and before the scope changed; it is history only. Don't implement from it.
 
-**WORKLOG overrides the plan document.** `docs/ke-hoach-du-an-nho-cxr-semantic-retrieval-v1.md`
-was written before the data was measured, so several of its requirements have been
-deliberately overridden. Implementing a plan section verbatim without checking
-*Quyết định đang có hiệu lực* will produce wrong work.
+### Keep it current and short
 
-### Update it when something significant lands
-
-Log it when you:
+Update WORKLOG when you:
 - finish a phase, or a self-contained chunk of one
-- make, change or reverse a decision — especially one that deviates from the plan
-- establish a fact by measuring real data
+- make, change or reverse a decision
 - hit a trap that cost time, or would cost the next agent time
 - resolve something listed under *Đang chờ quyết định*
 
-Do **not** log routine edits, added tests, or no-op refactors. `git log` already
-covers what changed; WORKLOG covers **why it is the way it is**.
+Do **not** update it for routine edits, added tests, or no-op refactors.
 
-Rules for an entry:
-- Newest first, dated, at most ~10 lines
-- Answer *why*, not *what*
-- **Update *Trạng thái hiện tại* in the same edit.** A stale status header is worse
-  than none, because it is trusted
-- A measured number goes in *Sự thật đã đo* with the method used to measure it,
-  never copied from a paper or from the plan
+Rules:
+- **Edit in place, don't append.** Rewrite *Trạng thái hiện tại* in the same edit; a stale
+  status is worse than none, because it is trusted
+- **Delete what no longer holds**: superseded decisions, fixed traps, closed questions.
+  Don't strike them through or keep them "as history"; git keeps history
+- No journal: `git log` covers what changed and when; WORKLOG covers what is true now and why
+- Stay under 150 lines; if an edit would cross that, cut something stale first. One line per
+  decision or trap where possible; details live in the spec or doc it points to
+- A measured number goes in `docs/measured-facts.md` (append-only) with the method used to
+  measure it, never copied from a paper or from the plan
 
 ---
 

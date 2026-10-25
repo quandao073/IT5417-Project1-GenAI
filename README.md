@@ -2,9 +2,6 @@
 
 Tìm ảnh X-quang ngực bằng câu hỏi tự nhiên, tiếng Anh hoặc tiếng Việt, chỉ dựa vào ảnh.
 
-> **Công cụ nghiên cứu và học tập, không dùng để chẩn đoán.** Điểm số trả về là tín hiệu xếp hạng,
-> không phải xác suất bệnh.
-
 ## Bài toán
 
 Đầu vào là một câu như "tim to và tràn dịch màng phổi, phim PA" hoặc "pulmonary edema without
@@ -40,6 +37,13 @@ câu hỏi (EN/VI)
   ca `valid/`). Một ảnh là đúng khi nhãn của nó thỏa ràng buộc của câu hỏi. Số chính là nDCG@10 nhị
   phân, báo cáo thêm P@10, MRR và tỉ lệ kết quả mang bệnh bị loại trừ. Benchmark gồm 200 câu
   EN/VI chia dev và heldout.
+
+## Đang mở rộng: tri thức y khoa
+
+Đề tài thêm một Knowledge Graph tri thức y khoa (giải phẫu phổi, bệnh lý, dấu hiệu hình ảnh, triệu chứng) làm trung
+gian giữa câu hỏi và ảnh: LLM ánh xạ câu hỏi vào khái niệm của KG và diễn giải kết quả bằng tri thức tra được, ví dụ
+nối một ca tràn dịch màng phổi với dấu hiệu và triệu chứng của bệnh này. Phần này chưa được xây; phạm vi và dữ liệu
+còn thiếu nằm ở `docs/scope-and-non-goals.md`.
 
 ## Dữ liệu
 

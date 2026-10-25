@@ -15,9 +15,9 @@
   giờ được đặt làm điều kiện bắt buộc.
 - Report là tiếng Anh. Truy vấn tiếng Việt đi tới report search và evidence
   extraction thông qua 14 tên nhãn chuẩn, không phải bằng dịch tự do.
-- RadGraph-XL có sẵn trong `data/raw/chexpert-plus/radgraph_xl/` nhưng **không**
-  được ingest trong V1 — nó thuộc phần Knowledge Graph hoãn sang V2. File không
-  thiếu, chỉ là chưa dùng.
+- RadGraph-XL (`data/raw/chexpert-plus/radgraph_xl/`) chưa được ingest. Từ D41 nó là
+  nguồn cho tầng ca của Knowledge Graph, nhưng là output của model (không phải nhãn
+  người), không có mã UMLS, và phải nối với CSV bằng text (WORKLOG T29).
 - Relevance graded của đánh giá retrieval là proxy suy từ report: bậc là số nguồn nhãn
   (CheXpert/CheXbert, đều đọc cùng report) khẳng định trạng thái yêu cầu. Study có findings có tối
   đa 4 nguồn, không có findings tối đa 3, nên proxy thiên về study có findings. Report leg cũng đọc

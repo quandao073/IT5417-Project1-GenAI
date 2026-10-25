@@ -1,5 +1,9 @@
 # Kế hoạch chi tiết V1: Hệ thống truy vấn ngữ nghĩa ảnh X-quang ngực sử dụng VLM và LLM
 
+> **Tài liệu lịch sử, đừng làm theo.** Viết trước khi đo dữ liệu và trước khi đổi scope (2026-10-24 gỡ hybrid và lọc
+> nhãn; 2026-10-25 thêm Knowledge Graph). Phạm vi hiện hành: `docs/scope-and-non-goals.md`; quyết định còn hiệu lực:
+> `WORKLOG.md`.
+
 > **Tên tiếng Anh:** Semantic Chest X-ray Retrieval using Vision-Language Models and LLM-based Query Understanding  
 > **Phiên bản tài liệu:** 1.0  
 > **Mục tiêu:** Xây dựng POC hoàn chỉnh, chạy local bằng Docker, làm nền móng cho đồ án tốt nghiệp có Knowledge Graph  

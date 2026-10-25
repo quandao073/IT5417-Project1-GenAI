@@ -12,7 +12,7 @@ Qdrant, lọc view → top-k. Bỏ lọc nhãn và mode `label`/`hybrid`/`image`
 | # | Bước | Trạng thái | Kết quả |
 |---|---|---|---|
 | 1 | Index CXR-CLIP + sổ đăng ký build `data/indexes/builds/<build_id>/manifest.json` | ✅ đã duyệt | adapter từ `b71e587`; `selected: cxrclip`; hai build đăng ký: cxrclip 7/8 PASS (`image_probe` FAIL: probe là của BiomedCLIP, đi cùng mode `image` ở bước 2), biomedclip 8/8 PASS; manifest cũ của nhánh V1.1 không đổi (sha256); 940 passed, ruff sạch; integration 3/4 (probe live FAIL như trên, PASS với `BUILD_ID` BiomedCLIP). Sau review: mọi lệnh encode text nạp encoder qua `index.build_encoder` (từ chối revision khác build); `--build-id`/`--encoder` dùng chung, mâu thuẫn thì từ chối; `score-corpus --encoder biomedclip` ra lại 0,599; `.gitignore` chỉ bỏ `notes/*.log`; D38 trong WORKLOG; 952 passed |
-| 2 | Rút pipeline/API về một đường; chốt hành vi: không khái niệm, chỉ phủ định, UNCERTAIN, ≥ 3 ý | ✅ chờ review + commit | `templates.render` (no X, normal chest, thứ tự chuẩn, từ chối A and no A); pipeline một đường, warning cho các biên; request bỏ `mode` (422 nói rõ), response bỏ nhãn, API không nạp `labels.parquet`; gỡ hybrid / mode `image` / FTS / mode `label` / `train-probe`; `eval-retrieval` một đường (số chính nDCG@10 nhị phân). 865 passed, integration 3, model 6, ruff sạch; `validate-indexes` 7/7 PASS cả hai build; smoke 7 câu qua API thật (`notes/cxrclip_step2_smoke.log`); dev CXR-CLIP nDCG@10 nhị phân 0,482, trùng `image_joint` V1.1 ở 36/38 câu. WORKLOG: D39, D40, T36. Sửa luôn một model test bước 1 để lọt (khối `preprocessing` dời vào candidate) |
+| 2 | Rút pipeline/API về một đường; chốt hành vi: không khái niệm, chỉ phủ định, UNCERTAIN, ≥ 3 ý | ✅ đã merge (PR #6) | `templates.render` (no X, normal chest, thứ tự chuẩn, từ chối A and no A); pipeline một đường, warning cho các biên; request bỏ `mode` (422 nói rõ), response bỏ nhãn, API không nạp `labels.parquet`; gỡ hybrid / mode `image` / FTS / mode `label` / `train-probe`; `eval-retrieval` một đường (số chính nDCG@10 nhị phân). 865 passed, integration 3, model 6, ruff sạch; `validate-indexes` 7/7 PASS cả hai build; smoke 7 câu qua API thật (`notes/cxrclip_step2_smoke.log`); dev CXR-CLIP nDCG@10 nhị phân 0,482, trùng `image_joint` V1.1 ở 36/38 câu. WORKLOG: D39, D40, T36. Sửa luôn một model test bước 1 để lọt (khối `preprocessing` dời vào candidate) |
 | 3 | Port benchmark câu mẫu: `template_bench` (R10, S12, P@k, hit@k, HNRR) + phần chấm mode ảnh của `retrieval_eval` từ `feat/label-aware-image-retrieval`; câu mẫu qua `templates.render` | ⏳ | |
 | 4 | Đo zero-shot CXR-CLIP và BiomedCLIP trên cùng pipeline (`--encoder`): dev, câu mẫu trên corpus, pool-val. **Không heldout** | ⏳ | |
 | 5 | WORKLOG: ghi số đo của bước 4 (các quyết định bị đảo đã ghi ở bước 1–2: D38–D40) | ⏳ | |
@@ -60,8 +60,9 @@ uv run pytest -m integration    # cần Qdrant Docker
 uv run cxr validate-indexes && uv run cxr validate-indexes --encoder biomedclip
 ```
 
-## Điểm dừng (2026-10-24 tối)
+## Điểm dừng (2026-10-25)
 
-Dừng sau bước 2 theo yêu cầu. Người dùng review, gọi `/commit`, rồi merge vào `main`.
+Bước 2 đã merge vào `main` (PR #6). Ngày 2026-10-25 scope mở rộng sang Knowledge Graph (WORKLOG D41) và người dùng
+tạm dừng bước 3–6 để xây KG trước (D42).
 
-**TIẾP THEO:** bước 3 (benchmark câu mẫu) khi người dùng mở lại.
+**TIẾP THEO:** không có; bảng này nghỉ tới khi người dùng mở lại fine-tune.
