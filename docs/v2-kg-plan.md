@@ -10,7 +10,7 @@ ghi vào `docs/measured-facts.md`, quyết định vào `WORKLOG.md`. Ngưỡng 
 | Task | Việc | Phụ thuộc | Trạng thái |
 |---|---|---|---|
 | V2-1 | Kiểm kê đầu vào, lọc UMLS thành Parquet | — | ✅ |
-| V2-2 | Probe từ vựng trên pool; ánh xạ 14 nhãn sang CUI | V2-1 | 🔄 đo xong, cổng PASS; chờ duyệt ứng viên 14 nhãn |
+| V2-2 | Probe từ vựng trên pool; ánh xạ 14 nhãn sang CUI | V2-1 | ✅ |
 | V2-5 | Ma trận điểm CXR-CLIP FT6, hiệu chỉnh trên pool-val | V2-2 (sau phần đo) | ⏳ TIP đã duyệt |
 | V2-5b | Đăng ký build corpus FT6 cho B1; zero-shot thành dòng phụ (D51) | V2-5 | ⏳ TIP đã duyệt |
 | V2-3 | Linker chuỗi → CUI | V2-2 | ⏳ |
@@ -20,8 +20,7 @@ ghi vào `docs/measured-facts.md`, quyết định vào `WORKLOG.md`. Ngưỡng 
 | V2-8 | Đánh giá chính thức, heldout một lần | V2-7 | ⏳ |
 | V2-9 | Agent (ablation) và UI | V2-8; UI chờ `pnpm` (T5) | ⏳ |
 
-**TIẾP THEO:** người dùng duyệt `data/kg/vocab/chexpert_candidates.csv`, rồi ghi `configs/kg/chexpert_cuis.yaml`
-(V2-2 bước 5). Phần đo của V2-2 đã xong nên V2-5 bắt đầu được. TIP nằm ở `notes/tip-*.md` (gitignored).
+**TIẾP THEO:** V2-5 (`notes/tip-v2-5.md`), rồi V2-5b. TIP nằm ở `notes/tip-*.md` (gitignored).
 
 ## Dữ liệu
 
@@ -54,16 +53,18 @@ TIP của người dùng ngày 2026-10-27. Ra: `data/umls/2026AA/*.parquet` + `m
 `configs/kg.yaml`, `src/kg/umls_filter.py`, `cxr kg-filter-umls`, `tests/kg/`. Quyết định D45–D50, bẫy T39.
 MD5 khớp; đủ MSH, NCI, FMA, HPO; không có tiếng Việt; MRCONSO còn 5.681.716 dòng, MRREL 6.111.416 dòng.
 
-### V2-2 · Probe từ vựng trên pool, ánh xạ 14 nhãn
+### V2-2 · Probe từ vựng trên pool, ánh xạ 14 nhãn (xong)
 
 - Đo độ phủ RadGraph-XL trên toàn pool (join text theo T29); không tách, vì trọng số KG dùng cả pool-train lẫn
   pool-val (thiết kế, *Chia dữ liệu*).
 - Đếm chuỗi observation (ghép modifier theo `modify`) và chuỗi anatomy trên pool; vẽ đường cong độ phủ; lấy phần đầu
   phủ 90–95% số lần nhắc.
-- Ánh xạ 14 nhãn CheXpert sang CUI, hoặc `PRJ:<tên>` kèm `IS_A` tới CUI gần nhất; người dùng duyệt. File chỉ chứa mã.
+- Ánh xạ 14 nhãn CheXpert sang CUI, hoặc `PRJ:<tên>` kèm `IS_A` tới CUI gần nhất và các CUI con (D53); người dùng
+  duyệt. File chỉ chứa mã.
 - **Cổng:** cả 14 nhãn có CUI hoặc ID dự án (cổng bước 1 của thiết kế); phần đầu phủ 90% đủ nhỏ để duyệt tay.
 - **Đo 2026-10-27:** impression khớp 99,997%, findings 97,6%; Observation theo D52 phủ 90% lượt nhắc bằng 265 chuỗi
-  (cổng PASS); 13 nhãn có ứng viên CUI khớp chính xác, No Finding là `PRJ:no_finding`. Chờ duyệt ứng viên.
+  (cổng PASS); 13 nhãn có ứng viên CUI khớp chính xác. Người dùng chọn `PRJ` cho 3 nhãn chỉ khớp khái niệm hẹp hơn
+  (D53). Ra: `configs/kg/chexpert_cuis.yaml` (10 CUI, 3 `PRJ` kèm `is_a` và `children`, `PRJ:no_finding`).
 
 ### V2-3 · Linker chuỗi → CUI
 

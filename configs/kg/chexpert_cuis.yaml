@@ -1,0 +1,34 @@
+# The 14 CheXpert labels as KG concepts (TIP V2-2 step 5; WORKLOG D53).
+#
+# Codes only: UMLS names stay under data/ (T38). Chosen by the user on 2026-10-27 from
+# data/kg/vocab/chexpert_candidates.csv (cxr kg-chexpert-candidates) and
+# data/kg/vocab/prj_proposals.csv; codes and reasons in notes/v2-vocab.md (local only).
+#
+# id: a CUI, or PRJ:<name> for a label whose own name is not in UMLS and that matched only
+# narrower concepts. A PRJ id has one is_a CUI and may list children: narrower CUIs that get
+# IS_A to it. src/kg/chexpert_candidates.py:check_mapping validates this file.
+
+labels:
+  No Finding: {id: "PRJ:no_finding"}
+  Enlarged Cardiomediastinum:
+    id: "PRJ:enlarged_cardiomediastinum"
+    is_a: C4022395
+    children: [C0746459, C0018800]   # C0018800 is Cardiomegaly (CheXpert hierarchy)
+  Cardiomegaly: {id: C0018800}
+  Lung Opacity: {id: C4531104}
+  Lung Lesion: {id: C0577916}
+  Edema: {id: C0034063}
+  Consolidation: {id: C0521530}
+  Pneumonia: {id: C0032285}
+  Atelectasis: {id: C0004144}
+  Pneumothorax: {id: C0032326}
+  Pleural Effusion: {id: C0032227}
+  Pleural Other:
+    id: "PRJ:pleural_other"
+    is_a: C4025726
+    children: [C0340030, C0264545]
+  Fracture: {id: C0016658}
+  Support Devices:
+    id: "PRJ:support_devices"
+    is_a: C0025080
+    children: [C0008034, C0336630, C0030163, C0085590, C1145640, C0179740]

@@ -24,11 +24,10 @@ thì xóa (git giữ lịch sử); không có nhật ký; mã D/T/P không đán
   nDCG@10 nhị phân 0,482. Đây là baseline B1 của V2.
 - **Scope:** KG theo thiết kế V2 `docs/v2-kg-design.md` (D41, D45–D50). Fine-tune tạm dừng (D42); checkpoint FT6 và
   lệnh `cxr build-image-scores` chỉ có trên nhánh `feat/label-aware-image-retrieval`, chưa có trên `main`.
-- **Đang làm:** V2-2 (`notes/tip-v2-2.md`): phần đo xong, cổng PASS (Observation phủ 90% lượt nhắc bằng 265 chuỗi,
-  ngưỡng 500); kết quả ở `data/kg/vocab/`, số đo ở `docs/measured-facts.md`. Chờ người dùng duyệt
-  `data/kg/vocab/chexpert_candidates.csv` để ghi `configs/kg/chexpert_cuis.yaml`. V2-1 xong: UMLS đã lọc vào
-  `data/umls/2026AA/`. TIP V2-5, V2-5b đã duyệt. TIP và ghi chú đo nằm ở `notes/` (gitignored, chỉ có trên máy). Bảng
-  trạng thái và các task sau: `docs/v2-kg-plan.md`.
+- **Đang làm:** V2-2 xong: từ vựng pool đo xong, cổng PASS (Observation phủ 90% lượt nhắc bằng 265 chuỗi, ngưỡng
+  500); 14 nhãn đã ánh xạ ở `configs/kg/chexpert_cuis.yaml` (D53). Ghi chú cho V2-3, V2-4: `notes/v2-vocab.md`. Tiếp
+  theo là V2-5, rồi V2-5b (TIP đã duyệt). V2-1 xong: UMLS đã lọc vào `data/umls/2026AA/`. TIP và ghi chú đo nằm ở
+  `notes/` (gitignored, chỉ có trên máy). Bảng trạng thái và các task sau: `docs/v2-kg-plan.md`.
 - **Chặn:** web UI chờ `pnpm` (T5).
 
 Dữ liệu, chỉ mục, artifact đều gitignored; lệnh dựng lại ở README. README không nói:
@@ -42,7 +41,7 @@ Dữ liệu, chỉ mục, artifact đều gitignored; lệnh dựng lại ở RE
 Kiểm tra sau mỗi thay đổi:
 
 ```bash
-uv run pytest -q                 # 897 passed; model/integration/llm bị bỏ chọn mặc định
+uv run pytest -q                 # 902 passed; model/integration/llm bị bỏ chọn mặc định
 uv run pytest -m model           # bắt buộc khi đổi configs/models.yaml hoặc src/embeddings/ (T37)
 uv run pytest -m integration     # cần `docker compose up -d qdrant`
 uv run pytest -m llm             # parse thật qua LLM, đọc .env
@@ -68,6 +67,7 @@ nào lệch thì bảng này và `docs/scope-and-non-goals.md` đúng.
 | D49 | Dữ liệu UMLS nằm trong `data/umls/` (gitignored qua `data/*`), không bao giờ commit, không đưa vào Docker image; container chỉ mount lúc chạy | License UMLS cấm phát tán dữ liệu hoặc subset; repo public (T38) |
 | D50 | File gốc ở `data/umls/raw/` (zip và `2026AA/META/`, chỉ đọc); Parquet đã lọc và `manifest.json` ở `data/umls/<version>/`, ghi bởi `cxr kg-filter-umls` | Tách bản gốc của NLM khỏi bản đã lọc; manifest ghi MD5 zip, config, sha256 và số dòng trước, sau khi lọc |
 | D52 | Chốt của V2-2, ghi trước khi đo: từ vựng chỉ đo trên pool (88.853 study). Ghép modifier hai bước: (a) bỏ theo `configs/kg.yaml: vocab.drop_modifiers` (Observation bỏ mức độ, diễn tiến, vị trí, bên; Anatomy chỉ bỏ bên); (b) modifier còn lại chỉ giữ khi chuỗi ghép khớp chính xác một tên trong MRCONSO (thử cả chuỗi, rồi từng modifier), không thì chỉ giữ từ chính. Đưa về số ít chỉ khi dạng số ít có trong pool hoặc MRCONSO, không đổi đuôi `as`, `ss`, `us`, `is`. Cổng: Observation theo quy tắc trên phủ 90% lượt nhắc bằng ≤ 500 chuỗi | TIP V2-2 người dùng duyệt 2026-10-27 (`notes/tip-v2-2.md`) |
+| D53 | 14 nhãn CheXpert → `configs/kg/chexpert_cuis.yaml`, chỉ mã, `check_mapping` kiểm: 10 nhãn là CUI, No Finding là `PRJ:no_finding`. Nhãn mà tên không có trong UMLS và chỉ khớp khái niệm hẹp hơn dùng `PRJ:<tên>`, kèm `is_a` (một CUI cha) và `children` (các CUI hẹp hơn khớp chính xác dạng `en`, nối `IS_A` → PRJ; không lấy CUI thứ hai của cùng dạng): Enlarged Cardiomediastinum, Pleural Other, Support Devices. Cardiomegaly là con của `PRJ:enlarged_cardiomediastinum` (phân cấp CheXpert) | Người dùng chốt 2026-10-27 trên ứng viên V2-2 (xếp theo khớp đúng tên nhãn trước); mã và lý do ở `notes/v2-vocab.md` |
 | D51 | Trong đánh giá V2, **B1 dùng CXR-CLIP FT6**, cùng encoder với ma trận điểm của B2; B1 zero-shot giữ làm dòng phụ. Build corpus FT6 được đăng ký ở V2-5b | Người dùng 2026-10-27: hiệu B2 − B1 phải là đóng góp riêng của KG, không lẫn đóng góp của fine-tune |
 | D39 | Một đường tìm kiếm; **thứ hạng chỉ từ ảnh, API không đọc nhãn**. Câu mẫu do code dựng (`templates.render`: "no X", No Finding là "normal chest", thứ tự CHEXPERT_LABELS, từ chối "A and no A"); lọc view là lọc metadata; câu report trích sau xếp hạng, chỉ để hiển thị. Không khái niệm → câu tự do của parser; chỉ phủ định → "no X" kèm warning; UNCERTAIN như PRESENT; trên 2 ràng buộc kèm warning | Hybrid thỏa ràng buộc nhờ lọc trên chính nhãn làm đáp án; một đường áp dụng được cho ảnh chưa có report |
 | D38 | Encoder mặc định CXR-CLIP SwinT bản M (sha256 ghim trong `models.yaml`, CC BY-NC 4.0); BiomedCLIP vẫn là candidate | Hòa zero-shot trên dev, CXR-CLIP nhanh hơn 2,4 lần (luật hòa của gate Phase 2) |

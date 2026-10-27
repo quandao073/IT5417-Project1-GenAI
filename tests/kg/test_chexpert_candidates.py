@@ -7,11 +7,12 @@ import pytest
 import yaml
 
 from src.cli.main import main
+from src.common.config import default_config_dir
 from src.data.labels import CHEXPERT_LABELS
 from src.kg import chexpert_candidates as cc
 
 CONCEPTS = {"concepts": {
-    "Pleural Effusion": {"en": ["pleural effusion", "effusion"]},
+    "Pleural Effusion": {"en": ["pleural effusion", "effusion", "pleural fluid"]},
     "Support Devices": {"en": ["support devices", "lines and tubes"]},
     "No Finding": {"en": ["no finding"]},
 }}
@@ -26,6 +27,7 @@ ROWS = [
     conso("C9000001", "Pleural effusion", "MSH", preferred=True),
     conso("C9000001", "Effusion", "MSH"),
     conso("C9000002", "Effusion", "NCI", preferred=True),
+    conso("C9000002", "Pleural fluid", "NCI"),
     conso("C9000003", "pleural effusion", "HPO"),
     conso("C9000005", "effusion", "FMA"),
     conso("C9000010", "Device", "NCI", preferred=True),
@@ -47,8 +49,9 @@ def umls(tmp_path):
 def test_exact_matches_are_ranked_and_cut_at_three(umls):
     found = cc.candidates(CONCEPTS, umls / "mrconso.parquet", umls / "mrsty.parquet")
     effusion = found.filter(pl.col("label") == "Pleural Effusion").sort("rank")
-    # 2 forms > preferred > number of sources > CUI; C9000005 is the fourth and is cut
-    assert effusion["cui"].to_list() == ["C9000001", "C9000002", "C9000003"]
+    # own name > forms matched > preferred > number of sources > CUI: C9000003 matches only the
+    # label's own name and still beats C9000002's two other forms; C9000005 is the fourth and is cut
+    assert effusion["cui"].to_list() == ["C9000001", "C9000003", "C9000002"]
     assert effusion["kind"].unique().to_list() == ["cui"]
     first = effusion.row(0, named=True)
     assert first["name"] == "Pleural effusion" and "T046" in first["semantic_types"]
@@ -77,7 +80,8 @@ def test_a_label_with_neither_kind_of_candidate_stops(umls):
 
 def valid_mapping():
     labels = {label: {"id": f"C90000{i:02d}"} for i, label in enumerate(CHEXPERT_LABELS)}
-    labels["Support Devices"] = {"id": "PRJ:support_devices", "is_a": "C9000010"}
+    labels["Support Devices"] = {"id": "PRJ:support_devices", "is_a": "C9000010",
+                                 "children": ["C9000011", "C9000012"]}
     labels["No Finding"] = {"id": "PRJ:no_finding"}
     return {"labels": labels}
 
@@ -91,7 +95,13 @@ def test_check_mapping_accepts_codes_only():
     ("Edema", {"id": "C9000099", "is_a": "C9000010"}, "is_a"),
     ("Support Devices", {"id": "PRJ:support_devices"}, "is_a"),
     ("No Finding", {"id": "PRJ:no_finding", "is_a": "C9000010"}, "No Finding"),
+    ("No Finding", {"id": "PRJ:no_finding", "children": ["C9000010"]}, "No Finding"),
     ("Edema", {"id": "pulmonary edema"}, "neither"),
+    ("Edema", {"id": "C9000099", "children": ["C9000010"]}, "children"),
+    ("Support Devices", {"id": "PRJ:support_devices", "is_a": "C9000010",
+                         "children": ["chest tube"]}, "children"),
+    ("Support Devices", {"id": "PRJ:support_devices", "is_a": "C9000010", "children": []},
+     "children"),
 ])
 def test_check_mapping_names_each_problem(label, entry, problem):
     mapping = valid_mapping()
@@ -100,6 +110,16 @@ def test_check_mapping_names_each_problem(label, entry, problem):
     else:
         mapping["labels"][label] = entry
     assert any(problem in p and label in p for p in cc.check_mapping(mapping))
+
+
+def test_the_reviewed_mapping_file_is_valid_and_holds_codes_only():
+    path = default_config_dir() / "kg" / "chexpert_cuis.yaml"
+    mapping = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert cc.check_mapping(mapping) == []
+    labels = mapping["labels"]
+    assert all(set(entry) <= {"id", "is_a", "children"} for entry in labels.values())
+    # CheXpert hierarchy (D53): Cardiomegaly is a child of Enlarged Cardiomediastinum
+    assert labels["Cardiomegaly"]["id"] in labels["Enlarged Cardiomediastinum"]["children"]
 
 
 def test_cli_writes_the_candidate_file_without_printing_names(umls, tmp_path, monkeypatch,
