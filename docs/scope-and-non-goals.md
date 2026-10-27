@@ -1,8 +1,8 @@
 # Scope và non-goals
 
-> Phạm vi có hiệu lực từ 2026-10-25 (WORKLOG D41). Bản trước hoãn Knowledge Graph sang V2 (D28); bản này đưa KG
-> vào đề tài. [Kế hoạch V1](ke-hoach-du-an-nho-cxr-semantic-retrieval-v1.md) viết trước thay đổi này: chỗ nào lệch
-> thì `WORKLOG.md` và file này đúng.
+> Phạm vi hiện hành theo thiết kế V2 `docs/v2-kg-design.md` (WORKLOG D41, D45–D50); tiến độ ở `docs/v2-kg-plan.md`.
+> [Kế hoạch V1](ke-hoach-du-an-nho-cxr-semantic-retrieval-v1.md) là tài liệu lịch sử: chỗ nào lệch thì `WORKLOG.md` và
+> file này đúng.
 
 ## Đề tài
 
@@ -16,71 +16,62 @@ Mô tả đề tài, nguyên văn:
 > retrieval, xây dựng Knowledge Graph y khoa (UMLS, RadGraph), và LLM/RAG pipeline. Đề tài thiên về ứng dụng nhưng có
 > giá trị thực tiễn cao trong hỗ trợ chẩn đoán và quản lý dữ liệu y tế.
 
-Người dùng nói thêm (2026-10-25): khi bàn về một bệnh, ví dụ tràn dịch màng phổi, hệ thống phải liên kết ảnh với các
-dấu hiệu và triệu chứng của bệnh đó. Khi người dùng hỏi, hệ thống tra tri thức y khoa để hỗ trợ diễn giải kết quả.
+Người dùng nói thêm (2026-10-25): khi bàn về một bệnh, ví dụ tràn dịch màng phổi, hệ thống phải nối ảnh với các dấu
+hiệu hình ảnh của bệnh đó. Triệu chứng lâm sàng nằm ngoài phạm vi (2026-10-27, xem *Không thực hiện*).
 
-## Hệ thống khi xong
+## Hiện trạng
 
-```
-câu hỏi (EN/VI)
-  → LLM phân tích câu hỏi, ánh xạ sang khái niệm của KG (bệnh, dấu hiệu hình ảnh, giải phẫu, triệu chứng)
-  → KG quy khái niệm về thứ encoder ảnh tìm được (vd "góc sườn hoành tù" → tràn dịch màng phổi)
-  → câu mẫu → text encoder → cosine với vector ảnh trong Qdrant, lọc tư thế chụp → top-k      [đã có, D38–D39]
-  → mỗi kết quả: tra KG (dấu hiệu, triệu chứng, vị trí của bệnh liên quan)
-                 + câu trích report và fact RadGraph của chính ca đó
-  → LLM diễn giải kết quả chỉ từ những gì đã tra được (RAG), kèm nguồn của từng ý
-```
+**Đang chạy (B1, baseline của V2):** câu hỏi EN/VI → parser LLM theo 14 nhãn CheXpert → câu mẫu → text encoder
+CXR-CLIP → cosine trên Qdrant, lọc tư thế chụp → top-k, kèm câu trích report chỉ để hiển thị (D38–D40). Thứ hạng chỉ
+dựa trên ảnh (D39).
 
-Ba ràng buộc giữ từ phần đã làm:
+**Đang xây (V2):** Knowledge Graph tri thức y khoa từ UMLS và RadGraph, làm trung gian giữa câu hỏi và điểm ảnh của
+CXR-CLIP. Mới xong bước lọc UMLS thành Parquet (V2-1). KG, ma trận điểm, các tool và phần diễn giải chưa có.
 
-- **Thứ hạng chỉ từ ảnh** (D39): KG làm việc ở phía câu hỏi và ở phần diễn giải sau xếp hạng, không đọc nhãn hay report
-  của ca để xếp hạng. Có nới ràng buộc này không là câu hỏi P16.
-- **Câu đưa vào encoder do code dựng**, không do LLM viết (D39). LLM chỉ phân tích câu hỏi và viết phần diễn giải.
-- **Triệu chứng là tri thức về bệnh**, không phải khẳng định về bệnh nhân trong ảnh: ảnh không cho biết bệnh nhân có
-  khó thở hay không. Dữ liệu từng ca cũng hầu như không ghi triệu chứng (`docs/measured-facts.md`, *Dữ liệu cho KG*), nên triệu chứng
-  chỉ nối với ảnh qua bệnh: ảnh → bệnh → triệu chứng trong KG.
+## Phạm vi V2
 
-## Bắt buộc
-
-| Hạng mục | Hiện trạng |
+| Hạng mục (theo thiết kế V2) | Trạng thái |
 |---|---|
-| Corpus 25.000 study, ảnh kèm report | Đã có (Phase 1) |
-| Image embedding và semantic retrieval từ câu tự nhiên | Đã có: CXR-CLIP, một đường tìm kiếm (D38–D39) |
-| LLM phân tích câu hỏi EN/VI | Đã có cho 14 khái niệm CheXpert (D22); phải mở rộng sang khái niệm của KG |
-| KG tri thức y khoa trong Neo4j, dựng từ UMLS và RadGraph: giải phẫu phổi, bệnh lý, dấu hiệu hình ảnh, triệu chứng của **mọi bệnh có trong corpus** | Chưa có; thiết kế chờ duyệt: `docs/superpowers/specs/2026-10-25-medical-knowledge-graph-design.md`; cần license UMLS (P14) |
-| Nối ca với KG | Chưa có. Qua bệnh (14 khái niệm) và qua RadGraph-XL của report |
-| Ánh xạ câu hỏi → khái niệm KG | Chưa có |
-| Diễn giải kết quả bằng LLM trên tri thức tra từ KG và report (RAG), có trích nguồn | Chưa có |
-| Đánh giá: retrieval, ánh xạ câu hỏi, diễn giải | Retrieval và parser đã có; phần KG chưa có (P18) |
-| API, web UI, Docker Compose | API đã có; web UI chưa (WORKLOG T5) |
+| Corpus 25.000 study; pool 88.853 study ngoài corpus | Có |
+| Truy vấn ảnh bằng câu tự nhiên EN/VI (B1) | Có |
+| UMLS 2026AA Level 0 Subset lọc thành Parquet | Có (V2-1) |
+| Từ vựng lõi từ RadGraph trên pool; 14 nhãn CheXpert ánh xạ sang CUI | Chưa có (V2-2) |
+| KG: khái niệm giải phẫu, bệnh, finding, thiết bị từ UMLS; trọng số `SUGGESTS`, `TYPICALLY_AT` tính trên pool | Chưa có (V2-3, V2-4) |
+| Ma trận điểm CXR-CLIP đã hiệu chỉnh trên pool-val | Chưa có (V2-5) |
+| LLM phân tích câu hỏi, chọn khái niệm trong ứng viên của KG, diễn giải kết quả từ đường đi trong KG | Chưa có (V2-6) |
+| Benchmark mới, đánh giá B0–B3 | Chưa có (V2-7, V2-8) |
+| Web UI | Chưa có; chờ `pnpm` (WORKLOG T5) |
+
+## Ràng buộc
+
+- Report không vào đường truy vấn (D45); thứ hạng chỉ từ ảnh (D39); LLM không quyết định thứ hạng (D47).
+- KG chỉ chứa tri thức, không có tầng dữ kiện theo study (D46); mọi trọng số của KG lấy từ pool, không lấy từ corpus.
+- Dữ liệu UMLS không vào git, không vào Docker image (D49, T38).
 
 ## Không thực hiện
 
-- Tự động chẩn đoán hay đề xuất điều trị. Hệ thống là công cụ tìm kiếm và tra cứu, không phải thiết bị y tế.
-- Bệnh không có trong corpus; nguồn tri thức ngoài UMLS và RadGraph.
-- Sinh report từ ảnh.
-- Tích hợp PACS/HIS/FHIR, triển khai cloud.
+- Chẩn đoán hay đề xuất điều trị. Điểm là độ khớp truy vấn, không phải xác suất bệnh.
+- Triệu chứng lâm sàng (ho, sốt…): ảnh không có tín hiệu về chúng, và suy từ triệu chứng sang bệnh là suy luận chẩn
+  đoán.
+- Đọc report hay nhãn của ca lúc truy vấn.
+- Vị trí, bên, mức độ của tổn thương, cho tới khi model ảnh học được; khoanh vùng trên ảnh.
+- Nguồn tri thức ngoài UMLS và RadGraph (RadLex để sau); SNOMED CT chỉ khi đã khai báo MLDS (D48).
+- Sinh report từ ảnh; tích hợp PACS/HIS/FHIR; triển khai cloud.
 
 ## Dữ liệu và nguồn tri thức
 
-Kiểm ngày 2026-10-25. Số đo và cách đo nằm ở `docs/measured-facts.md`.
-
-| Thành phần | Trên đĩa | Ghi chú |
+| Thành phần | Trạng thái | Ghi chú |
 |---|---|---|
-| Ảnh: CheXpert-v1.0-small | Có | Corpus 25.000 study; pool 88.853 study ngoài corpus |
-| Report: CheXpert Plus | Có | Impression 100% corpus, findings 25,7%, clinical history 78,2% (nhưng chỉ 1–4% ghi một triệu chứng) |
+| Ảnh CheXpert-v1.0-small | Có | Corpus 25.000 study; pool 88.853 study |
+| Report CheXpert Plus | Có | Chỉ dùng offline: trọng số KG và đánh giá (D45) |
 | Nhãn 14 bệnh | Có | CheXpert/CheXbert trích từ report; 200 ca `valid/` có nhãn bác sĩ |
-| RadGraph | Có (RadGraph-XL) | Phủ 25.000/25.000 impression; entity giải phẫu/quan sát có present/absent/uncertain, quan hệ `located_at`/`modify`/`suggestive_of`. Không có mã UMLS, là output của model, phải nối với CSV bằng text (WORKLOG T29) |
-| UMLS | **Không** | License cấp cho cá nhân, miễn phí, cần đăng ký tài khoản UTS (P14). Không được commit dữ liệu trích ra vì repo public (WORKLOG T38) |
-| Quan hệ bệnh → dấu hiệu → triệu chứng | **Chưa biết** | UMLS có những quan hệ này tới đâu thì chỉ xem được khi có license. Report ít khi tả dấu hiệu (góc sườn hoành tù 3,3%), nên không trích được từ corpus. Chỗ UMLS thiếu, 14 nhãn CheXpert có một lõi nhỏ tuyển tay giữa các khái niệm UMLS |
-| Ground truth cho phần KG | **Không** | Cần benchmark mới (P18) |
-| LLM | Có | `gpt-5-mini` qua OpenAI (D22) |
-
-**Kết luận:** đủ để bắt đầu tầng ca (ảnh, report, RadGraph, nhãn). Tầng tri thức chờ license UMLS; đánh giá phần KG
-cần benchmark mới.
+| RadGraph-XL | Có | Output của model; phủ 25.000/25.000 ca corpus, độ phủ trên pool đo ở V2-2; nối với CSV bằng text (WORKLOG T29) |
+| UMLS 2026AA Level 0 Subset | Có | MD5 khớp; lọc ở `data/umls/2026AA/`; không có tiếng Việt (`docs/measured-facts.md`, *UMLS 2026AA*) |
+| CXR-CLIP fine-tune FT6 | Có trên đĩa | Candidate và lệnh dựng ma trận điểm chỉ có trên nhánh `feat/label-aware-image-retrieval` (V2-5) |
+| Ground truth cho V2 | Chưa có | Benchmark mới và pooling (V2-7) |
 
 ## Câu hỏi nghiên cứu
 
-Đề xuất, chốt ở bước thiết kế: *KG tri thức y khoa làm trung gian có giúp (1) tìm đúng ảnh khi câu hỏi nói bằng dấu
-hiệu, triệu chứng hay vị trí giải phẫu thay vì tên bệnh, và (2) diễn giải kết quả đúng với tri thức và report hơn LLM
-không có KG hay không?*
+Theo thiết kế V2: *KG có cải thiện truy vấn chứa khái niệm mà model ảnh không học trực tiếp không (từ đồng nghĩa, khái
+niệm hẹp hơn, rộng hơn, vị trí giải phẫu, bệnh không thấy trực tiếp trên phim), so với pipeline hiện tại (B1)?* Các câu
+hỏi phụ ở `docs/v2-kg-design.md`.

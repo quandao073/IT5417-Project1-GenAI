@@ -38,12 +38,19 @@ câu hỏi (EN/VI)
   phân, báo cáo thêm P@10, MRR và tỉ lệ kết quả mang bệnh bị loại trừ. Benchmark gồm 200 câu
   EN/VI chia dev và heldout.
 
-## Đang mở rộng: tri thức y khoa
+## Đang xây: V2 với Knowledge Graph
 
-Đề tài thêm một Knowledge Graph tri thức y khoa (giải phẫu phổi, bệnh lý, dấu hiệu hình ảnh, triệu chứng) làm trung
-gian giữa câu hỏi và ảnh: LLM ánh xạ câu hỏi vào khái niệm của KG và diễn giải kết quả bằng tri thức tra được, ví dụ
-nối một ca tràn dịch màng phổi với dấu hiệu và triệu chứng của bệnh này. Phần này chưa được xây; phạm vi và dữ liệu
-còn thiếu nằm ở `docs/scope-and-non-goals.md`.
+V2 thêm một Knowledge Graph tri thức y khoa dựng từ UMLS và RadGraph, làm trung gian giữa câu hỏi và điểm ảnh của
+CXR-CLIP. Thiết kế ở `docs/v2-kg-design.md`, tiến độ ở `docs/v2-kg-plan.md`. Hiện mới có bước lọc UMLS:
+
+```bash
+# Cần license UMLS của chính bạn. Giải nén Metathesaurus Level 0 Subset 2026AA vào data/umls/raw/
+# (đường dẫn khác thì đặt UMLS_ZIP, UMLS_META_DIR trong .env)
+uv run cxr kg-filter-umls     # ghi data/umls/2026AA/{mrconso,mrsty,mrrel,mrsab}.parquet và manifest.json
+```
+
+Dữ liệu UMLS chỉ nằm trong `data/umls/` (gitignored), không bao giờ vào git hay Docker image. Nguồn UMLS dùng: tên tiếng
+Anh từ các nguồn mức 0 (`SRL = 0`), quan hệ từ MSH, NCI, FMA, HPO (`configs/kg.yaml`).
 
 ## Dữ liệu
 

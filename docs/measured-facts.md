@@ -438,3 +438,22 @@ tổng 30.594 descriptor, khớp quy mô MeSH; không lọc thì endpoint trộn
 C08 **254** · bệnh tim C14.280 196 · u vùng ngực C04.588.894 24 · bệnh động mạch chủ C14.907.109 23 · chấn thương ngực
 C26.891 7 · **hợp năm nhánh 482**. Triệu chứng: hô hấp C23.888.852 30 · đau C23.888.592.612 50 · thay đổi thân nhiệt
 C23.888.119 8.
+
+## UMLS 2026AA Level 0 Subset (đo 2026-10-27, V2-1)
+
+**Cách đo:** MD5 bằng `hashlib.md5` trên `data/umls/raw/umls-2026AA-metathesaurus-level0.zip`; đếm dòng và group-by
+bằng polars streaming qua `src/kg/umls_filter.scan_rrf` (tên cột theo MRFILES.RRF), trên MRCONSO trước khi lọc; lọc
+bằng `uv run cxr kg-filter-umls` (manifest `data/umls/2026AA/manifest.json`). Bảng đầy đủ (file trong META, CUI theo
+SAB, LAT, REL × RELA) ở `notes/v2-inventory.md`, chỉ có trên máy vì `notes/` gitignored. Chỉ số đếm, không có chuỗi
+nào lấy từ UMLS (T38).
+
+| Hạng mục | Giá trị |
+|---|---|
+| Zip | 2.012.898.307 byte; MD5 `7c37d94ed322c244edc060384cd16027`, khớp thiết kế; giải nén 10,43 GiB, 56 file `.RRF` |
+| Số dòng (đếm được = MRFILES) | MRCONSO 7.668.674 · MRREL 23.920.986 · MRSTY 2.820.576 · MRSAB 201 |
+| SAB trong MRCONSO | 91; MSH 464.015 CUI · NCI 213.759 · FMA 102.597 · HPO 21.569; không có SNOMEDCT_US |
+| Ngôn ngữ | 24 giá trị LAT; ENG 6.127.262 dòng; không có `VIE` |
+| MRREL của MSH, NCI, FMA, HPO | 432 cặp (SAB, REL, RELA): FMA 131 · MSH 19 · NCI 272 · HPO 10 |
+| Phân cấp | `PAR`/`CHD` với RELA `inverse_isa`/`isa`: NCI 234.295 · FMA 104.341 · HPO 23.749; MSH dùng RELA rỗng: 42.746 |
+| Bộ phận trong FMA | `regional_part_of` 27.672 · `constitutional_part_of` 21.492 · `part_of` 23 |
+| Sau `cxr kg-filter-umls` | MRCONSO 5.681.716 dòng (2.381.838 CUI, 52 SAB; chỉ `ENG`, `SUPPRESS = N`, `SRL` 0) · MRREL 6.111.416 (MSH, NCI, FMA, HPO) · MRSTY 2.820.576 (127 TUI) · MRSAB 201; Parquet 152,1 + 72,7 + 14,9 MiB |

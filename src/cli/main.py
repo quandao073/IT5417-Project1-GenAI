@@ -21,6 +21,7 @@ from src.embeddings import embed, index, spike, validate
 from src.evaluation import parser_benchmark as pb
 from src.evaluation import parser_eval as pe
 from src.evaluation import vector_baseline as vb
+from src.kg import umls_filter
 from src.query.schema import ParseError
 from src.retrieval import label_filter as lf
 from src.retrieval import report_index
@@ -631,6 +632,23 @@ def _f(value: float | None) -> str:
     return "n/a" if value is None else f"{value:.3f}"
 
 
+def _cmd_kg_filter_umls(args: argparse.Namespace) -> int:
+    cfg = load_config("kg")["umls"]
+    paths = umls_filter.UmlsPaths()   # UMLS_ZIP, UMLS_META_DIR
+    out = Path(args.out_dir) if args.out_dir else Path("data/umls") / cfg["version"]
+    try:
+        manifest = umls_filter.filter_umls(paths.umls_meta_dir, paths.umls_zip, out, cfg)
+    except umls_filter.UmlsFilterError as exc:
+        print(f"kg-filter-umls: {exc}", file=sys.stderr)
+        return 1
+    print(f"UMLS {manifest['umls_version']}, zip md5 {manifest['zip_md5']}")
+    for name, entry in manifest["files"].items():
+        print(f"{name:8s} {entry['rows_before']:>12,} -> {entry['rows_after']:>12,} rows"
+              f"  {entry['bytes'] / 2**20:9.1f} MiB")
+    print(f"written: {out}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cxr", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -757,6 +775,11 @@ def build_parser() -> argparse.ArgumentParser:
     er.add_argument("--out", default="artifacts/metrics/retrieval_eval.json")
     er.add_argument("--verbose", action="store_true", help="print every per-query row (ASCII)")
     er.set_defaults(func=_cmd_eval_retrieval)
+
+    kgu = sub.add_parser("kg-filter-umls",
+                         help="V2-1: filter the UMLS RRF files (UMLS_META_DIR) into Parquet")
+    kgu.add_argument("--out-dir", default=None, help="default: data/umls/<umls.version>")
+    kgu.set_defaults(func=_cmd_kg_filter_umls)
 
     return parser
 

@@ -1,36 +1,31 @@
-# Giới hạn của POC
+# Giới hạn
 
-> Cập nhật liên tục. Bắt buộc có trước khi bảo vệ.
+> Cập nhật liên tục. Bắt buộc có trước khi bảo vệ. Phần đầu là giới hạn của hệ thống đang chạy (B1); phần sau là giới
+> hạn đã biết của dữ liệu và nguồn mà V2 dùng. V2 đang xây (`docs/v2-kg-plan.md`); giới hạn của các tính năng V2 sẽ ghi
+> khi chúng có.
+
+## Hệ thống đang chạy (B1)
 
 - Ảnh dùng bản CheXpert-v1.0-small đã downsample: không dùng được cho chi tiết mảnh.
-- Nhãn CheXbert sinh tự động từ report, không phải ground truth lâm sàng. Chỉ 200
-  study trong `valid/` (234 ảnh) có nhãn do bác sĩ gán.
-- Nhãn CheXbert suy từ section `findings` chỉ dùng được cho 25,6% study thực sự
-  có section đó. Với study không có, labeler chạy trên chuỗi rỗng và luôn xuất
-  `No Finding = present`; những assertion đó bị loại khỏi `labels.parquet`.
-- Trục 1 và trục 2 của đánh giá cùng suy ra từ report nên còn tương quan; human
-  review tồn tại để bù phần đó.
-- Một ảnh frontal đại diện cho mỗi study: report có thể mô tả ảnh khác trong cùng study.
-- `search_text` ưu tiên impression. Findings chỉ có ở 26,6% số dòng nên không bao
-  giờ được đặt làm điều kiện bắt buộc.
-- Report là tiếng Anh. Truy vấn tiếng Việt đi tới report search và evidence
-  extraction thông qua 14 tên nhãn chuẩn, không phải bằng dịch tự do.
-- RadGraph-XL (`data/raw/chexpert-plus/radgraph_xl/`) chưa được ingest. Từ D41 nó là
-  nguồn cho tầng ca của Knowledge Graph, nhưng là output của model (không phải nhãn
-  người), không có mã UMLS, và phải nối với CSV bằng text (WORKLOG T29).
-- Relevance graded của đánh giá retrieval là proxy suy từ report: bậc là số nguồn nhãn
-  (CheXpert/CheXbert, đều đọc cùng report) khẳng định trạng thái yêu cầu. Study có findings có tối
-  đa 4 nguồn, không có findings tối đa 3, nên proxy thiên về study có findings. Report leg cũng đọc
-  chính report đó, nên phần hybrid hơn label-only trên nDCG (0,607 so với 0,531) không phải bằng
-  chứng độc lập; human review (Phase 7) mới là trục độc lập.
-- Từ vựng report (`concepts.yaml:report`) phủ không đều. Probe thiết kế: recall 0,27 (Pleural Other)
-  đến 0,76 (Support Devices) trên study PRESENT. Với từ vựng cuối, trên 1.000 report thật chỉ 62,5%
-  cặp (study, concept PRESENT) có câu evidence, từ 4,4% (Enlarged Cardiomediastinum) đến 77,9%
-  (Support Devices). Concept mà report ít dùng đúng từ thì report leg ít tín hiệu.
-- Câu tiếng Việt chỉ có exclude không có vector leg: `semantic_query` rỗng nên không có gì để
-  encode, và cũng không có term tiếng Anh cho report leg. Mode `vector` trả rỗng; `hybrid` trả theo
-  thứ tự cố định của mode `label`, kèm warning.
-- Evidence là câu **đầu tiên** khớp, không phải câu "tốt nhất": mỗi concept lấy câu đầu tiên có
-  polarity mong muốn, không có thì câu đầu tiên nhắc tới concept. Polarity do rule parser gán trên
-  từng câu, nên hedge kiểu "question … versus …" có thể bị đọc là `affirmed`.
-- Không phải thiết bị y tế, không dùng để chẩn đoán.
+- Mỗi study một ảnh frontal đại diện: report có thể mô tả ảnh khác trong cùng study.
+- Parser chỉ biết 14 nhãn CheXpert. Khái niệm khác chỉ được tìm khi câu không có nhãn nào (câu tự do của parser, kèm
+  cảnh báo); đi cùng một nhãn thì bị bỏ. Câu tiếng Việt không có nhãn nào thì không có gì để tìm.
+- Model ảnh zero-shot hiểu phủ định kém: câu "không có tràn khí màng phổi" cho 4/10 ảnh đầu mang chính tràn khí, trong
+  khi nền của corpus là 14,4% (thử ngày 2026-10-24, `docs/measured-facts.md`). Câu chỉ có phủ định được tìm kèm cảnh
+  báo.
+- Câu trích report chỉ để hiển thị, không đổi thứ hạng. Đó là câu **đầu tiên** khớp, không phải câu "tốt nhất";
+  polarity do rule parser gán trên từng câu, nên hedge kiểu "question … versus …" có thể bị đọc là `affirmed`.
+- Đáp án của đánh giá là nhãn suy từ report: nhãn CheXbert do máy trích, không phải ground truth lâm sàng; chỉ 200
+  study `valid/` (234 ảnh) có nhãn bác sĩ. Nhãn CheXbert theo section `findings` chỉ có ở study có section đó (25,7%
+  corpus); labeler chạy trên chuỗi rỗng luôn ra `No Finding = present`, nên những dòng đó bị loại.
+- Không phải thiết bị y tế, không dùng để chẩn đoán. Điểm là độ khớp truy vấn, không phải xác suất bệnh.
+
+## Dữ liệu và nguồn của V2
+
+- RadGraph-XL là output của model, chưa ai kiểm: chỉ dùng làm trọng số của KG và nhãn bạc khi đánh giá, không coi là
+  sự thật. Nhãn bạc và nhãn CheXbert cùng đọc một report, nên các trục đánh giá dựa trên chúng còn tương quan; người
+  chấm một mẫu là trục độc lập.
+- UMLS không có tiếng Việt (bản 2026AA Level 0 có 24 ngôn ngữ, không có `VIE`): mọi alias tiếng Việt do dự án soạn.
+- Level 0 Subset không có SNOMED CT, nguồn có phân cấp finding và giải phẫu tốt nhất. Phân cấp lấy từ MSH, NCI, FMA,
+  HPO, và mỗi nguồn ghi quan hệ một kiểu (WORKLOG T39).
+- KG không có triệu chứng lâm sàng; không xét bên, vị trí chi tiết hay mức độ của tổn thương.

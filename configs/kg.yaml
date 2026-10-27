@@ -1,0 +1,11 @@
+# Knowledge graph build (docs/v2-kg-design.md; WORKLOG D48-D50).
+#
+# UMLS data never enters git or a Docker image (D49): the NLM release stays in data/umls/raw/,
+# the filtered Parquet in data/umls/<version>/. The input paths come from .env (UMLS_ZIP,
+# UMLS_META_DIR), not from this file.
+
+umls:
+  version: 2026AA
+  max_srl: 0                       # MRCONSO source restriction level kept (Level 0 Subset)
+  include_snomed: false            # true only after MLDS registration and the Full Subset (D48)
+  rel_sabs: [MSH, NCI, FMA, HPO]   # MRREL sources kept
