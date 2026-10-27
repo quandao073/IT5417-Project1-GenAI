@@ -54,7 +54,7 @@ Thumbs.db
 docs/superpowers/
 .superpowers/
 
-# --- Run logs and task instruction packs; the other notes are committed ---
+# --- Notes stay on this machine: run logs, task instruction packs, inventories; never committed ---
 notes/
 
 # --- Fine-tuning runs: adapters and merged weights, CC BY-NC, never committed ---

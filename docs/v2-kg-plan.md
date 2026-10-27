@@ -10,9 +10,9 @@ ghi vào `docs/measured-facts.md`, quyết định vào `WORKLOG.md`. Ngưỡng 
 | Task | Việc | Phụ thuộc | Trạng thái |
 |---|---|---|---|
 | V2-1 | Kiểm kê đầu vào, lọc UMLS thành Parquet | — | ✅ |
-| V2-2 | Probe từ vựng trên pool; ánh xạ 14 nhãn sang CUI | V2-1 | ⏳ TIP đã duyệt |
+| V2-2 | Probe từ vựng trên pool; ánh xạ 14 nhãn sang CUI | V2-1 | 🔄 đo xong, cổng PASS; chờ duyệt ứng viên 14 nhãn |
 | V2-5 | Ma trận điểm CXR-CLIP FT6, hiệu chỉnh trên pool-val | V2-2 (sau phần đo) | ⏳ TIP đã duyệt |
-| V2-5b | Đăng ký build corpus FT6 cho B1; zero-shot thành dòng phụ (D51) | V2-5 | ⏳ TIP chờ duyệt |
+| V2-5b | Đăng ký build corpus FT6 cho B1; zero-shot thành dòng phụ (D51) | V2-5 | ⏳ TIP đã duyệt |
 | V2-3 | Linker chuỗi → CUI | V2-2 | ⏳ |
 | V2-4 | Mở rộng có kiểm soát; trọng số `SUGGESTS`, `TYPICALLY_AT` trên pool | V2-3 | ⏳ |
 | V2-6 | Neo4j, bốn tool, LLM chọn khái niệm và diễn giải; B2 chạy end-to-end | V2-4, V2-5 | ⏳ |
@@ -20,7 +20,8 @@ ghi vào `docs/measured-facts.md`, quyết định vào `WORKLOG.md`. Ngưỡng 
 | V2-8 | Đánh giá chính thức, heldout một lần | V2-7 | ⏳ |
 | V2-9 | Agent (ablation) và UI | V2-8; UI chờ `pnpm` (T5) | ⏳ |
 
-**TIẾP THEO:** V2-2 (`notes/tip-v2-2.md`). TIP nằm ở `notes/tip-*.md` (gitignored).
+**TIẾP THEO:** người dùng duyệt `data/kg/vocab/chexpert_candidates.csv`, rồi ghi `configs/kg/chexpert_cuis.yaml`
+(V2-2 bước 5). Phần đo của V2-2 đã xong nên V2-5 bắt đầu được. TIP nằm ở `notes/tip-*.md` (gitignored).
 
 ## Dữ liệu
 
@@ -40,7 +41,7 @@ Cả hai thư mục nằm dưới `data/` (gitignored). Không commit, không đ
 | Thành phần | Có gì | Thiếu gì |
 |---|---|---|
 | Pool, patient split | `cxr build-probe-pool` → `data/probe_pool/` (88.853 study); `src/embeddings/probe.py:patient_split` (sha256 của `seed:patient`, chia theo bệnh nhân) | — |
-| RadGraph-XL | Khớp text CSV 100% ở cả hai section; phủ 25.000/25.000 ca corpus | Độ phủ trên pool chưa đo (V2-2) |
+| RadGraph-XL | Khớp text CSV 100% ở cả hai section; phủ 25.000/25.000 ca corpus; độ phủ trên pool đo ở V2-2 | — |
 | CXR-CLIP | Zero-shot `data/cache/models/cxrclip/swint_m.pt`, build corpus `20261023_chexpert25k_cxrclip_v1` đã đăng ký | Bản fine-tune FT6 (`runs/FT6_lr1e-04/model.pt`) và candidate `cxrclip_ft6_lr1e-04` chỉ có trên nhánh `feat/label-aware-image-retrieval` |
 | Embedding | Pool 88.853 ảnh (zero-shot); pool-val 9.037 ảnh (zero-shot và FT6); corpus FT6 25.000 ảnh | Build corpus FT6 chưa đăng ký trên `main` |
 | Ma trận điểm | — | `cxr build-image-scores` (hiệu chỉnh trên pool-val) chỉ có trên nhánh V1.1 (V2-5) |
@@ -55,11 +56,14 @@ MD5 khớp; đủ MSH, NCI, FMA, HPO; không có tiếng Việt; MRCONSO còn 5.
 
 ### V2-2 · Probe từ vựng trên pool, ánh xạ 14 nhãn
 
-- Đo độ phủ RadGraph-XL trên pool (join text theo T29), tách pool-train và pool-val bằng `patient_split`.
+- Đo độ phủ RadGraph-XL trên toàn pool (join text theo T29); không tách, vì trọng số KG dùng cả pool-train lẫn
+  pool-val (thiết kế, *Chia dữ liệu*).
 - Đếm chuỗi observation (ghép modifier theo `modify`) và chuỗi anatomy trên pool; vẽ đường cong độ phủ; lấy phần đầu
   phủ 90–95% số lần nhắc.
 - Ánh xạ 14 nhãn CheXpert sang CUI, hoặc `PRJ:<tên>` kèm `IS_A` tới CUI gần nhất; người dùng duyệt. File chỉ chứa mã.
 - **Cổng:** cả 14 nhãn có CUI hoặc ID dự án (cổng bước 1 của thiết kế); phần đầu phủ 90% đủ nhỏ để duyệt tay.
+- **Đo 2026-10-27:** impression khớp 99,997%, findings 97,6%; Observation theo D52 phủ 90% lượt nhắc bằng 265 chuỗi
+  (cổng PASS); 13 nhãn có ứng viên CUI khớp chính xác, No Finding là `PRJ:no_finding`. Chờ duyệt ứng viên.
 
 ### V2-3 · Linker chuỗi → CUI
 

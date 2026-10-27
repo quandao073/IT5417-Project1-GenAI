@@ -420,6 +420,8 @@ ontology nào (`find data -maxdepth 4`); `radgraph_xl/` chỉ có `section_findi
 dữ liệu; triệu chứng chỉ nối với ảnh qua bệnh (ảnh → bệnh → triệu chứng trong KG). Report gọi tên bệnh, ít khi tả dấu
 hiệu, nên cạnh bệnh → dấu hiệu hình ảnh phải đến từ nguồn tri thức ngoài (P15), không trích được từ corpus.
 
+> Ghi chú 2026-10-27: hệ quả về triệu chứng ở trên đã được thay: triệu chứng lâm sàng nằm ngoài phạm vi (D41, `docs/scope-and-non-goals.md`).
+
 **Từ vựng RadGraph-XL trên corpus** (`uv run python artifacts/metrics/radgraph_vocab_probe.py <out>`, cùng phép nối text
 T29, đếm theo lần nhắc, token viết thường):
 
@@ -457,3 +459,37 @@ nào lấy từ UMLS (T38).
 | Phân cấp | `PAR`/`CHD` với RELA `inverse_isa`/`isa`: NCI 234.295 · FMA 104.341 · HPO 23.749; MSH dùng RELA rỗng: 42.746 |
 | Bộ phận trong FMA | `regional_part_of` 27.672 · `constitutional_part_of` 21.492 · `part_of` 23 |
 | Sau `cxr kg-filter-umls` | MRCONSO 5.681.716 dòng (2.381.838 CUI, 52 SAB; chỉ `ENG`, `SUPPRESS = N`, `SRL` 0) · MRREL 6.111.416 (MSH, NCI, FMA, HPO) · MRSTY 2.820.576 (127 TUI) · MRSAB 201; Parquet 152,1 + 72,7 + 14,9 MiB |
+
+## Từ vựng RadGraph-XL trên pool (đo 2026-10-27, V2-2)
+
+**Cách đo:** `uv run cxr kg-pool-vocab` rồi `uv run cxr kg-chexpert-candidates` (quy tắc D52; kết quả ở `data/kg/vocab/`,
+pool `pool_sha256` `a9cca8ae…`). Pool nối Plus CSV qua `path_to_image` đã chuẩn hóa, section nối RadGraph-XL qua text
+đã chuẩn hóa (T29). Một lượt nhắc là một entity không bổ nghĩa cho entity nào; entity có quan hệ `modify` thuộc về
+cụm của từ chính nó trỏ tới. Đếm mọi polarity. Chỉ số đếm, không có chuỗi nào lấy từ UMLS (T38).
+
+| Hạng mục | Giá trị |
+|---|---|
+| Pool nối Plus CSV | 88.853 / 88.853 study |
+| Impression khớp RadGraph | 88.850 / 88.853 (99,997%); 3 study không khớp có impression dài 2–6 ký tự |
+| Findings khớp RadGraph | 24.988 / 25.603 study có findings (97,6%); 615 study không khớp chỉ có 2 chuỗi findings phân biệt, dài 1–3 ký tự; mọi findings dài hơn đều khớp (so khóa T29 của từng text không khớp với mọi bản ghi RadGraph-XL, chỉ đếm độ dài) |
+| Lượt nhắc Observation | 765.194; từ chính nằm trong danh sách bỏ 20.503 (2,7%), còn 744.691 |
+| Lượt nhắc Anatomy | 582.255; từ chính nằm trong danh sách bỏ 25.704 (4,4%), còn 556.551 |
+| Polarity của Observation (744.691) | có 520.482 (69,9%) · không 135.866 (18,2%) · nghi ngờ 88.343 (11,9%) |
+| Quy tắc ghép đổi chuỗi | Observation 52.412 lượt (7,0%) giữ modifier; Anatomy 89.174 (16,0%) |
+| Đưa về số ít | Observation 115.655 lượt; Anatomy 34.322 |
+
+| Đường cong (số chuỗi phủ 80 / 90 / 95 / 99% lượt nhắc) | Số chuỗi | 80% | 90% | 95% | 99% |
+|---|---:|---:|---:|---:|---:|
+| Observation, chỉ từ chính | 10.058 | 67 | 213 | 549 | 3.609 |
+| **Observation, theo quy tắc** | 10.474 | 90 | **265** | 645 | 3.957 |
+| Anatomy, chỉ từ chính | 5.121 | 62 | 133 | 274 | 1.262 |
+| Anatomy, theo quy tắc | 5.645 | 76 | 175 | 346 | 1.591 |
+
+**Cổng V2-2:** Observation theo quy tắc phủ 90% lượt nhắc bằng 265 chuỗi, dưới mức 500: **PASS**. Mười chuỗi Observation
+đầu bảng có ba từ mô tả không phải finding: "low" 18.117, "clear" 17.053, "normal" 13.565.
+
+**14 nhãn → CUI (khớp chính xác tên nhãn và các dạng `en`):** cả 13 nhãn (trừ No Finding) có ứng viên CUI khớp
+chính xác. Số ứng viên: Enlarged Cardiomediastinum 1, Cardiomegaly 1, Lung Opacity 2,
+Lung Lesion 3, Edema 3, Consolidation 2, Pneumonia 3, Atelectasis 3, Pneumothorax 1, Pleural Effusion 3, Pleural Other 2,
+Fracture 3, Support Devices 3. Bốn nhãn chỉ khớp qua dạng hẹp hơn, không khớp chính tên nhãn: Enlarged Cardiomediastinum,
+Lung Opacity, Pleural Other, Support Devices.

@@ -21,7 +21,7 @@ from src.embeddings import embed, index, spike, validate
 from src.evaluation import parser_benchmark as pb
 from src.evaluation import parser_eval as pe
 from src.evaluation import vector_baseline as vb
-from src.kg import umls_filter
+from src.kg import chexpert_candidates, umls_filter, vocab
 from src.query.schema import ParseError
 from src.retrieval import label_filter as lf
 from src.retrieval import report_index
@@ -649,6 +649,70 @@ def _cmd_kg_filter_umls(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_kg_pool_vocab(args: argparse.Namespace) -> int:
+    cfg = load_config("kg")["vocab"]
+    pool_dir = Path(args.pool_dir)
+    pool = pl.read_parquet(pool_dir / probe_pool.POOL_IMAGES)
+    meta = json.loads((pool_dir / probe_pool.POOL_META).read_text(encoding="utf-8"))
+    try:
+        sections = vocab.pool_sections(pool, Path(args.plus_csv))
+    except vocab.VocabError as exc:
+        print(f"STOP: {exc}", file=sys.stderr)
+        return 1
+    found, stats = vocab.read_mentions(sections, Path(args.radgraph_dir))
+    names = vocab.mrconso_names(Path(args.umls_dir) / "mrconso.parquet")
+    found = vocab.apply_rules(found, cfg, names)
+    report = {"pool_sha256": meta["pool_sha256"], "pool_studies": pool.height, "radgraph": stats,
+              **vocab.summarize(found, cfg)}
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    found.write_parquet(out / "mentions.parquet")
+    vocab.vocab_table(found, "head").write_parquet(out / "vocab_head.parquet")
+    vocab.vocab_table(found, "joined").write_parquet(out / "vocab_joined.parquet")
+    (out / "coverage.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+
+    for section, s in stats.items():
+        print(f"radgraph {section:10s} {s['matched']:>7,} / {s['texts']:>7,} pool texts matched")
+    for name, c in report["curves"].items():
+        levels = "  ".join(f"{float(k):.0%} {v:>6,}" for k, v in c["levels"].items())
+        print(f"{name:22s} {c['strings']:>7,} strings  {c['mentions']:>9,} mentions  {levels}")
+    for kind, d in report["dropped_heads"].items():
+        print(f"heads on the drop lists, {kind}: {d['mentions']:,} of {d['of']:,} mentions")
+    gate = report["gate"]
+    print(f"gate: {gate['kind']} {gate['coverage']:.0%} of mentions in {gate['strings']} strings "
+          f"(max {gate['max_strings']}): {'PASS' if gate['passed'] else 'FAIL'}")
+    print(f"written: {out}")
+    impression = stats["impression"]
+    if impression["matched"] < 0.99 * impression["texts"]:
+        print("STOP: under 99% of pool impressions found their RadGraph record", file=sys.stderr)
+        return 1
+    return 0 if gate["passed"] else 1
+
+
+def _cmd_kg_chexpert_candidates(args: argparse.Namespace) -> int:
+    concepts = load_config("concepts")
+    umls = Path(args.umls_dir)
+    try:
+        found = chexpert_candidates.candidates(concepts, umls / "mrconso.parquet",
+                                               umls / "mrsty.parquet")
+    except chexpert_candidates.CandidateError as exc:
+        print(f"STOP: {exc}", file=sys.stderr)
+        return 1
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    found.write_csv(out)
+    # Label names and project ids only: the candidate names are UMLS content (T38).
+    for label in concepts["concepts"]:
+        rows = found.filter(pl.col("label") == label)
+        kinds = rows["kind"].to_list()
+        proposed = next(iter(rows["proposed_id"].drop_nulls().to_list()), "-")
+        print(f"{label:27s} exact {kinds.count('cui')}  is_a {kinds.count('is_a')}  "
+              f"proposed id {proposed}")
+    print(f"written: {out} (holds UMLS names: review it there, then write "
+          f"configs/kg/chexpert_cuis.yaml with codes only)")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cxr", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -780,6 +844,21 @@ def build_parser() -> argparse.ArgumentParser:
                          help="V2-1: filter the UMLS RRF files (UMLS_META_DIR) into Parquet")
     kgu.add_argument("--out-dir", default=None, help="default: data/umls/<umls.version>")
     kgu.set_defaults(func=_cmd_kg_filter_umls)
+
+    kgv = sub.add_parser("kg-pool-vocab",
+                         help="V2-2: RadGraph vocabulary of the pool, coverage curves and the gate")
+    kgv.add_argument("--pool-dir", default="data/probe_pool")
+    kgv.add_argument("--plus-csv", default="data/raw/chexpert-plus/df_chexpert_plus_240401.csv")
+    kgv.add_argument("--radgraph-dir", default="data/raw/chexpert-plus/radgraph_xl")
+    kgv.add_argument("--umls-dir", default="data/umls/2026AA")
+    kgv.add_argument("--out", default="data/kg/vocab")
+    kgv.set_defaults(func=_cmd_kg_pool_vocab)
+
+    kgc = sub.add_parser("kg-chexpert-candidates",
+                         help="V2-2: up to 3 CUI candidates per CheXpert label, for review")
+    kgc.add_argument("--umls-dir", default="data/umls/2026AA")
+    kgc.add_argument("--out", default="data/kg/vocab/chexpert_candidates.csv")
+    kgc.set_defaults(func=_cmd_kg_chexpert_candidates)
 
     return parser
 

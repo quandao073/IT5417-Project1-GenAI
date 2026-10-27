@@ -6,7 +6,6 @@ Ngữ cảnh dự án cho coding agent: đang ở đâu, quyết định nào c�
 |---|---|
 | Phạm vi đề tài | `docs/scope-and-non-goals.md` |
 | Thiết kế KG (V2), kế hoạch và bảng trạng thái | `docs/v2-kg-design.md`, `docs/v2-kg-plan.md` |
-| Thiết kế các phase trước | `docs/superpowers/specs/` |
 | Số đo kèm cách đo | `docs/measured-facts.md` |
 | Cách chạy | `README.md` |
 | Thay đổi gì, lúc nào; WORKLOG cũ (trước 2026-10-25) | `git log`, `git log -p WORKLOG.md` |
@@ -25,10 +24,11 @@ thì xóa (git giữ lịch sử); không có nhật ký; mã D/T/P không đán
   nDCG@10 nhị phân 0,482. Đây là baseline B1 của V2.
 - **Scope:** KG theo thiết kế V2 `docs/v2-kg-design.md` (D41, D45–D50). Fine-tune tạm dừng (D42); checkpoint FT6 và
   lệnh `cxr build-image-scores` chỉ có trên nhánh `feat/label-aware-image-retrieval`, chưa có trên `main`.
-- **Đang làm:** V2-1 xong và đã duyệt: UMLS 2026AA Level 0 (MD5 khớp) đã lọc vào `data/umls/2026AA/`
-  bằng `cxr kg-filter-umls`; số đo ở `docs/measured-facts.md` (bảng đầy đủ ở `notes/v2-inventory.md`, chỉ có trên máy:
-  `notes/` gitignored). TIP (`notes/tip-*.md`): V2-2 và V2-5 đã
-  duyệt, V2-5b chờ duyệt. Tiếp theo là V2-2. Bảng trạng thái và các task sau: `docs/v2-kg-plan.md`.
+- **Đang làm:** V2-2 (`notes/tip-v2-2.md`): phần đo xong, cổng PASS (Observation phủ 90% lượt nhắc bằng 265 chuỗi,
+  ngưỡng 500); kết quả ở `data/kg/vocab/`, số đo ở `docs/measured-facts.md`. Chờ người dùng duyệt
+  `data/kg/vocab/chexpert_candidates.csv` để ghi `configs/kg/chexpert_cuis.yaml`. V2-1 xong: UMLS đã lọc vào
+  `data/umls/2026AA/`. TIP V2-5, V2-5b đã duyệt. TIP và ghi chú đo nằm ở `notes/` (gitignored, chỉ có trên máy). Bảng
+  trạng thái và các task sau: `docs/v2-kg-plan.md`.
 - **Chặn:** web UI chờ `pnpm` (T5).
 
 Dữ liệu, chỉ mục, artifact đều gitignored; lệnh dựng lại ở README. README không nói:
@@ -42,7 +42,7 @@ Dữ liệu, chỉ mục, artifact đều gitignored; lệnh dựng lại ở RE
 Kiểm tra sau mỗi thay đổi:
 
 ```bash
-uv run pytest -q                 # 866 passed; model/integration/llm bị bỏ chọn mặc định
+uv run pytest -q                 # 897 passed; model/integration/llm bị bỏ chọn mặc định
 uv run pytest -m model           # bắt buộc khi đổi configs/models.yaml hoặc src/embeddings/ (T37)
 uv run pytest -m integration     # cần `docker compose up -d qdrant`
 uv run pytest -m llm             # parse thật qua LLM, đọc .env
@@ -59,7 +59,7 @@ nào lệch thì bảng này và `docs/scope-and-non-goals.md` đúng.
 
 | # | Quyết định | Vì sao |
 |---|---|---|
-| D41 | Đề tài có KG tri thức y khoa (giải phẫu, bệnh lý, dấu hiệu hình ảnh, triệu chứng) làm trung gian giữa câu hỏi và ảnh; LLM phân tích câu hỏi, ánh xạ vào KG và diễn giải kết quả (RAG). Nguồn: UMLS, RadGraph. Triệu chứng là tri thức về bệnh, không là khẳng định về bệnh nhân | Người dùng xác nhận 2026-10-25, bám sát mô tả đề tài (thay D28) |
+| D41 | Đề tài có KG tri thức y khoa (giải phẫu, bệnh lý, dấu hiệu hình ảnh) làm trung gian giữa câu hỏi và ảnh; LLM phân tích câu hỏi, ánh xạ vào KG và diễn giải kết quả (RAG). Nguồn: UMLS, RadGraph. Triệu chứng lâm sàng nằm ngoài phạm vi (`docs/scope-and-non-goals.md`) | Người dùng xác nhận 2026-10-25, bám sát mô tả đề tài (thay D28); bỏ triệu chứng ngày 2026-10-27 |
 | D42 | Fine-tune CXR-CLIP tạm dừng, xây KG trước | Người dùng 2026-10-25. Điểm yếu phủ định của encoder zero-shot còn nguyên |
 | D45 | **Report không vào đường truy vấn.** Report chỉ dùng offline: tính trọng số KG và đánh giá. Hệ thống nhắm tới ảnh chưa có report | Thiết kế V2, quyết định nền tảng 1; thay D43. Câu trích report để hiển thị (D25) là câu hỏi mở của V2 |
 | D46 | **KG chỉ chứa tri thức:** nút khái niệm (`Disease`, `Finding`, `Anatomy`, `Device`; ID là CUI) và tên gọi. Không có tầng dữ kiện theo study (`Study`, `Section`, `Fact`) | Thiết kế V2, quyết định nền tảng 2; thay D44 |
@@ -67,9 +67,8 @@ nào lệch thì bảng này và `docs/scope-and-non-goals.md` đúng.
 | D48 | UMLS 2026AA, Metathesaurus **Level 0 Subset**; SNOMED CT tắt mặc định (`configs/kg.yaml: umls.include_snomed: false`), chỉ bật sau khi khai báo MLDS và tải Full Subset | Nguồn mức 0 (MSH, NCI, FMA, HPO…) không có hạn chế ngoài license chuẩn; SNOMED CT có điều kiện riêng ngoài nước thành viên |
 | D49 | Dữ liệu UMLS nằm trong `data/umls/` (gitignored qua `data/*`), không bao giờ commit, không đưa vào Docker image; container chỉ mount lúc chạy | License UMLS cấm phát tán dữ liệu hoặc subset; repo public (T38) |
 | D50 | File gốc ở `data/umls/raw/` (zip và `2026AA/META/`, chỉ đọc); Parquet đã lọc và `manifest.json` ở `data/umls/<version>/`, ghi bởi `cxr kg-filter-umls` | Tách bản gốc của NLM khỏi bản đã lọc; manifest ghi MD5 zip, config, sha256 và số dòng trước, sau khi lọc |
+| D52 | Chốt của V2-2, ghi trước khi đo: từ vựng chỉ đo trên pool (88.853 study). Ghép modifier hai bước: (a) bỏ theo `configs/kg.yaml: vocab.drop_modifiers` (Observation bỏ mức độ, diễn tiến, vị trí, bên; Anatomy chỉ bỏ bên); (b) modifier còn lại chỉ giữ khi chuỗi ghép khớp chính xác một tên trong MRCONSO (thử cả chuỗi, rồi từng modifier), không thì chỉ giữ từ chính. Đưa về số ít chỉ khi dạng số ít có trong pool hoặc MRCONSO, không đổi đuôi `as`, `ss`, `us`, `is`. Cổng: Observation theo quy tắc trên phủ 90% lượt nhắc bằng ≤ 500 chuỗi | TIP V2-2 người dùng duyệt 2026-10-27 (`notes/tip-v2-2.md`) |
 | D51 | Trong đánh giá V2, **B1 dùng CXR-CLIP FT6**, cùng encoder với ma trận điểm của B2; B1 zero-shot giữ làm dòng phụ. Build corpus FT6 được đăng ký ở V2-5b | Người dùng 2026-10-27: hiệu B2 − B1 phải là đóng góp riêng của KG, không lẫn đóng góp của fine-tune |
-| D44 | Thiết kế KG ngày 25/10 (tầng study, nguồn UMLS + RadGraph + lõi tuyển tay). **Đã thay bằng D46, D47** | — |
-| D43 | `/explain` gửi report của ca tới LLM OpenAI. **Đã thay bằng D45** | — |
 | D39 | Một đường tìm kiếm; **thứ hạng chỉ từ ảnh, API không đọc nhãn**. Câu mẫu do code dựng (`templates.render`: "no X", No Finding là "normal chest", thứ tự CHEXPERT_LABELS, từ chối "A and no A"); lọc view là lọc metadata; câu report trích sau xếp hạng, chỉ để hiển thị. Không khái niệm → câu tự do của parser; chỉ phủ định → "no X" kèm warning; UNCERTAIN như PRESENT; trên 2 ràng buộc kèm warning | Hybrid thỏa ràng buộc nhờ lọc trên chính nhãn làm đáp án; một đường áp dụng được cho ảnh chưa có report |
 | D38 | Encoder mặc định CXR-CLIP SwinT bản M (sha256 ghim trong `models.yaml`, CC BY-NC 4.0); BiomedCLIP vẫn là candidate | Hòa zero-shot trên dev, CXR-CLIP nhanh hơn 2,4 lần (luật hòa của gate Phase 2) |
 | D40 | Sổ đăng ký build: manifest riêng mỗi build ghi encoder; `config_hash` chỉ phủ `data.yaml` + candidate của encoder + `normalize`; mọi lệnh encode text nạp encoder qua `index.build_encoder` (từ chối revision khác build) | Hai encoder so được trên cùng pipeline mà không làm hỏng build của nhau |
@@ -121,6 +120,5 @@ nào lệch thì bảng này và `docs/scope-and-non-goals.md` đúng.
 
 | # | Câu hỏi | Đang làm theo |
 |---|---|---|
-| P14 | Đăng ký license UMLS. **Đã thay bằng D48** (license có từ 2026-10-27) | — |
 | P5 | Đóng gói trọng số vào image API hay dựa vào volume `hf_cache` | Volume; chọn khi build image thật |
 | P8 | Người dùng duyệt gold heldout của `benchmarks/parser_queries_v1.jsonl` | Giữ như lúc đo (sha256 `8d19c619…`); đổi gold heldout thì khai báo một lần chạy mới |

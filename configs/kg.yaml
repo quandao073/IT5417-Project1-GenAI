@@ -9,3 +9,16 @@ umls:
   max_srl: 0                       # MRCONSO source restriction level kept (Level 0 Subset)
   include_snomed: false            # true only after MLDS registration and the Full Subset (D48)
   rel_sabs: [MSH, NCI, FMA, HPO]   # MRREL sources kept
+
+# Pool vocabulary probe, TIP V2-2 (WORKLOG D52). Modifiers of an Observation drop all four groups; modifiers of an
+# Anatomy drop only `laterality` (position words there are left to the MRCONSO check).
+vocab:
+  coverage_levels: [0.80, 0.90, 0.95, 0.99]
+  gate: {kind: Observation, coverage: 0.90, max_strings: 500}
+  drop_modifiers:
+    severity: [trace, tiny, minimal, minor, slight, slightly, subtle, small, mild, mildly, moderate, moderately,
+               large, severe, severely, marked, markedly, extensive, massive, significant]
+    temporal: [stable, unchanged, new, increased, increasing, decreased, decreasing, improved, improving, worsened,
+               worsening, resolved, resolving, persistent, persistently]
+    position: [basilar, bibasilar, basal, bibasal, upper, lower, middle, mid, apical, lateral, medial]
+    laterality: [left, right, bilateral, bilaterally, unilateral]
