@@ -493,3 +493,42 @@ chính xác. Số ứng viên: Enlarged Cardiomediastinum 1, Cardiomegaly 1, Lun
 Lung Lesion 3, Edema 3, Consolidation 2, Pneumonia 3, Atelectasis 3, Pneumothorax 1, Pleural Effusion 3, Pleural Other 2,
 Fracture 3, Support Devices 3. Bốn nhãn chỉ khớp qua dạng hẹp hơn, không khớp chính tên nhãn: Enlarged Cardiomediastinum,
 Lung Opacity, Pleural Other, Support Devices.
+
+## Ma trận điểm CXR-CLIP FT6, hiệu chỉnh trên pool-val (đo 2026-10-29, V2-5)
+
+**Cách đo:** `uv run cxr build-image-scores --encoder cxrclip_ft6_lr1e-04 --corpus-build-id
+20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1 --pool-build-id 20261024_poolval9k_cxrclip_ft6_lr1e-04_v1 --out
+data/indexes/image_scores/20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1` (6 giây trên CPU). Mỗi nhãn: cosine giữa ảnh và
+câu mẫu `render([nhãn], [])`, hiệu chỉnh bằng logistic một biến, λ 0, trên pool-val: 9.037 ảnh, cả 9.037 thuộc phần
+val của `patient_split` (`models.yaml: image_probe`, val_fraction 0,1, seed 20260101), pool `a9cca8ae…`. Đích của phép
+fit: PRESENT với ABSENT hoặc NOT_MENTIONED, bỏ UNCERTAIN. **AUROC strict** (in ra, ghi trong `probe.json`): PRESENT với
+ABSENT. **AUROC lenient**: PRESENT với ABSENT hoặc NOT_MENTIONED, tính lại từ `probe.npz` trên cùng shard pool-val bằng
+`zero_shot.label_masks` và `zero_shot.auroc`; strict tính lại khớp `probe.json` tới 4 chữ số. Checkpoint
+`runs/FT6_lr1e-04/model.pt` có sha256 `3de67645…`, khớp `model.sha256` và `revision` của candidate.
+
+| Nhãn | AUROC strict | AUROC lenient | PRESENT | ABSENT | NOT_MENTIONED | UNCERTAIN |
+|---|---:|---:|---:|---:|---:|---:|
+| No Finding | n/a (không có ABSENT) | 0,742 | 1.751 | 0 | 7.286 | 0 |
+| Enlarged Cardiomediastinum | 0,667 | 0,604 | 924 | 2.550 | 4.324 | 1.239 |
+| Cardiomegaly | 0,731 | 0,711 | 2.282 | 1.939 | 4.195 | 621 |
+| Lung Opacity | 0,772 | 0,684 | 6.324 | 488 | 1.982 | 243 |
+| Lung Lesion | **0,482** | 0,607 | 921 | 134 | 7.850 | 132 |
+| Edema | 0,752 | 0,733 | 3.327 | 1.607 | 3.208 | 895 |
+| Consolidation | 0,744 | 0,670 | 900 | 2.377 | 3.828 | 1.932 |
+| Pneumonia | 0,551 | 0,629 | 417 | 308 | 6.728 | 1.584 |
+| Atelectasis | 0,610 | 0,638 | 2.517 | 77 | 4.047 | 2.396 |
+| Pneumothorax | 0,699 | 0,707 | 1.033 | 4.719 | 3.110 | 175 |
+| Pleural Effusion | 0,860 | 0,829 | 4.452 | 2.724 | 1.268 | 593 |
+| Pleural Other | **0,479** | 0,583 | 428 | 11 | 8.354 | 244 |
+| Fracture | **0,474** | 0,616 | 919 | 458 | 7.595 | 65 |
+| Support Devices | 0,683 | 0,784 | 7.131 | 279 | 1.583 | 44 |
+
+- `uncalibrated` (dưới 10 ca mỗi lớp): không có. `saturated` (|logit| > 20 trên pool-val): không có.
+- Ma trận `corpus_scores.parquet`: 25.000 dòng, không trùng study, đúng thứ tự `data/canonical/studies.parquet`, đúng 14
+  cột nhãn, không có giá trị rỗng hay vô hạn; `probe.json` ghi `build_id` của build corpus FT6 và revision `3de67645…`.
+- **Nhóm yếu:** Lung Lesion 0,482, Pleural Other 0,479 (chỉ 11 ca ABSENT), Fracture 0,474 và Pneumonia 0,551 (strict).
+  Ba nhãn đầu dưới 0,5: câu mẫu xếp ảnh PRESENT dưới các ảnh có report ghi rõ "no X". Lenient của bốn nhãn: 0,58–0,63.
+- Ba nhãn yếu nhất cũng là ba nhãn yếu nhất ở khối *Image probe* (BiomedCLIP, đo 2026-10-23; bảng theo concept ở
+  `docs/image-probe.md`): zero-shot trên corpus Lung Lesion 0,469 · Pleural Other 0,496 · Fracture 0,520; probe trên
+  corpus 0,533 · 0,563 · 0,487; val AUROC của probe trên cùng lát pool-val (cùng số dương và âm strict như bảng trên)
+  0,495 · 0,222 · 0,476. Pneumonia đứng thứ tư ở probe (0,589) và ở val AUROC (0,578).

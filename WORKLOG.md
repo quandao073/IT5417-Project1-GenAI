@@ -22,12 +22,14 @@ thì xóa (git giữ lịch sử); không có nhật ký; mã D/T/P không đán
 - **Hệ thống đang chạy:** câu hỏi EN/VI → parser (gpt-5-mini, rule dự phòng) → câu mẫu `render(include, exclude)` →
   text encoder CXR-CLIP → cosine trên Qdrant, chỉ lọc view → top-k → trích câu report sau xếp hạng (D38–D40). Dev
   nDCG@10 nhị phân 0,482. Đây là baseline B1 của V2.
-- **Scope:** KG theo thiết kế V2 `docs/v2-kg-design.md` (D41, D45–D50). Fine-tune tạm dừng (D42); checkpoint FT6 và
-  lệnh `cxr build-image-scores` chỉ có trên nhánh `feat/label-aware-image-retrieval`, chưa có trên `main`.
-- **Đang làm:** V2-2 xong: từ vựng pool đo xong, cổng PASS (Observation phủ 90% lượt nhắc bằng 265 chuỗi, ngưỡng
-  500); 14 nhãn đã ánh xạ ở `configs/kg/chexpert_cuis.yaml` (D53). Ghi chú cho V2-3, V2-4: `notes/v2-vocab.md`. Tiếp
-  theo là V2-5, rồi V2-5b (TIP đã duyệt). V2-1 xong: UMLS đã lọc vào `data/umls/2026AA/`. TIP và ghi chú đo nằm ở
-  `notes/` (gitignored, chỉ có trên máy). Bảng trạng thái và các task sau: `docs/v2-kg-plan.md`.
+- **Scope:** KG theo thiết kế V2 `docs/v2-kg-design.md` (D41, D45–D50). Fine-tune tạm dừng (D42); checkpoint FT6
+  (candidate `cxrclip_ft6_lr1e-04`) và `cxr build-image-scores` đã mang về nhánh này ở V2-5; code fine-tune vẫn chỉ ở
+  `feat/label-aware-image-retrieval`.
+- **Đang làm:** V2-5 xong: ma trận điểm FT6, 25.000 study × 14 nhãn, hiệu chỉnh trên pool-val; AUROC pool-val từng
+  nhãn ở `docs/measured-facts.md` (ba nhãn có AUROC strict dưới 0,5); ghi chú cho V2-6 ở `notes/v2-scores.md`. Tiếp
+  theo là V2-5b (TIP đã duyệt). V2-1, V2-2 xong: UMLS đã lọc vào `data/umls/2026AA/`; 14 nhãn đã ánh xạ ở
+  `configs/kg/chexpert_cuis.yaml` (D53); ghi chú cho V2-3, V2-4 ở `notes/v2-vocab.md`. TIP và ghi chú đo nằm ở `notes/` (gitignored, chỉ có trên máy). Bảng trạng thái và
+  các task sau: `docs/v2-kg-plan.md`.
 - **Chặn:** web UI chờ `pnpm` (T5).
 
 Dữ liệu, chỉ mục, artifact đều gitignored; lệnh dựng lại ở README. README không nói:
@@ -37,11 +39,13 @@ Dữ liệu, chỉ mục, artifact đều gitignored; lệnh dựng lại ở RE
 - `cxr eval-parser` ghi đè `parser_eval.json`, `cxr eval-retrieval` ghi đè `retrieval_eval.json`; các bản heldout được
   trích dẫn đã đóng băng trong `artifacts/metrics/` (tên và sha256 ở `docs/measured-facts.md`).
 - Script thăm dò chỉ đọc nằm ở `artifacts/metrics/*.py` (gitignored); mỗi số đo ghi script của nó.
+- Ma trận điểm V2 nằm ở `data/indexes/image_scores/<build_id>/` (`cxr build-image-scores`). Ba file nằm thẳng trong
+  `data/indexes/image_scores/` là ma trận zero-shot cũ của nhánh V1.1 (câu mẫu cũ), không dùng cho V2.
 
 Kiểm tra sau mỗi thay đổi:
 
 ```bash
-uv run pytest -q                 # 902 passed; model/integration/llm bị bỏ chọn mặc định
+uv run pytest -q                 # 916 passed; model/integration/llm bị bỏ chọn mặc định
 uv run pytest -m model           # bắt buộc khi đổi configs/models.yaml hoặc src/embeddings/ (T37)
 uv run pytest -m integration     # cần `docker compose up -d qdrant`
 uv run pytest -m llm             # parse thật qua LLM, đọc .env
@@ -122,3 +126,4 @@ nào lệch thì bảng này và `docs/scope-and-non-goals.md` đúng.
 |---|---|---|
 | P5 | Đóng gói trọng số vào image API hay dựa vào volume `hf_cache` | Volume; chọn khi build image thật |
 | P8 | Người dùng duyệt gold heldout của `benchmarks/parser_queries_v1.jsonl` | Giữ như lúc đo (sha256 `8d19c619…`); đổi gold heldout thì khai báo một lần chạy mới |
+| P15 | Ngưỡng `quality` (AUROC lenient trên pool-val) của khái niệm scorable ở V2-6: 0,60 hay 0,65. Dưới ngưỡng: vẫn chấm khi hỏi trực tiếp hoặc leo `IS_A`, kèm cảnh báo; không làm đích của `SUGGESTS`, `TYPICALLY_AT`, mở rộng "rộng hơn" | Người dùng chốt, ghi vào đây trước khi đo dev; giữ đủ 14 cột, không hạ trọng số tay (`notes/v2-scores.md`) |

@@ -11,7 +11,7 @@ ghi vào `docs/measured-facts.md`, quyết định vào `WORKLOG.md`. Ngưỡng 
 |---|---|---|---|
 | V2-1 | Kiểm kê đầu vào, lọc UMLS thành Parquet | — | ✅ |
 | V2-2 | Probe từ vựng trên pool; ánh xạ 14 nhãn sang CUI | V2-1 | ✅ |
-| V2-5 | Ma trận điểm CXR-CLIP FT6, hiệu chỉnh trên pool-val | V2-2 (sau phần đo) | ⏳ TIP đã duyệt |
+| V2-5 | Ma trận điểm CXR-CLIP FT6, hiệu chỉnh trên pool-val | V2-2 (sau phần đo) | ✅ |
 | V2-5b | Đăng ký build corpus FT6 cho B1; zero-shot thành dòng phụ (D51) | V2-5 | ⏳ TIP đã duyệt |
 | V2-3 | Linker chuỗi → CUI | V2-2 | ⏳ |
 | V2-4 | Mở rộng có kiểm soát; trọng số `SUGGESTS`, `TYPICALLY_AT` trên pool | V2-3 | ⏳ |
@@ -20,7 +20,7 @@ ghi vào `docs/measured-facts.md`, quyết định vào `WORKLOG.md`. Ngưỡng 
 | V2-8 | Đánh giá chính thức, heldout một lần | V2-7 | ⏳ |
 | V2-9 | Agent (ablation) và UI | V2-8; UI chờ `pnpm` (T5) | ⏳ |
 
-**TIẾP THEO:** V2-5 (`notes/tip-v2-5.md`), rồi V2-5b. TIP nằm ở `notes/tip-*.md` (gitignored).
+**TIẾP THEO:** V2-5b (`notes/tip-v2-5b.md`). TIP nằm ở `notes/tip-*.md` (gitignored).
 
 ## Dữ liệu
 
@@ -41,9 +41,9 @@ Cả hai thư mục nằm dưới `data/` (gitignored). Không commit, không đ
 |---|---|---|
 | Pool, patient split | `cxr build-probe-pool` → `data/probe_pool/` (88.853 study); `src/embeddings/probe.py:patient_split` (sha256 của `seed:patient`, chia theo bệnh nhân) | — |
 | RadGraph-XL | Khớp text CSV 100% ở cả hai section; phủ 25.000/25.000 ca corpus; độ phủ trên pool đo ở V2-2 | — |
-| CXR-CLIP | Zero-shot `data/cache/models/cxrclip/swint_m.pt`, build corpus `20261023_chexpert25k_cxrclip_v1` đã đăng ký | Bản fine-tune FT6 (`runs/FT6_lr1e-04/model.pt`) và candidate `cxrclip_ft6_lr1e-04` chỉ có trên nhánh `feat/label-aware-image-retrieval` |
+| CXR-CLIP | Zero-shot `data/cache/models/cxrclip/swint_m.pt`, build corpus `20261023_chexpert25k_cxrclip_v1` đã đăng ký | Candidate FT6 `cxrclip_ft6_lr1e-04` (`runs/FT6_lr1e-04/model.pt`) mang về ở V2-5 |
 | Embedding | Pool 88.853 ảnh (zero-shot); pool-val 9.037 ảnh (zero-shot và FT6); corpus FT6 25.000 ảnh | Build corpus FT6 chưa đăng ký trên `main` |
-| Ma trận điểm | — | `cxr build-image-scores` (hiệu chỉnh trên pool-val) chỉ có trên nhánh V1.1 (V2-5) |
+| Ma trận điểm | V2-5: `cxr build-image-scores` → `data/indexes/image_scores/<build_id>/`, ma trận FT6 đã dựng | — |
 
 ## Các task
 
@@ -82,13 +82,16 @@ MD5 khớp; đủ MSH, NCI, FMA, HPO; không có tiếng Việt; MRCONSO còn 5.
 - **Cổng:** đếm nút, cạnh theo loại; tỉ lệ khái niệm nối được về khái niệm `scorable`; 50 cạnh `SUGGESTS` mạnh nhất
   được người có kiến thức y khoa xác nhận. Bước này quyết có cần SNOMED CT không (D48).
 
-### V2-5 · Ma trận điểm (sau phần đo của V2-2, cùng nhánh)
+### V2-5 · Ma trận điểm (xong)
 
 - Mang candidate FT6 và `cxr build-image-scores` từ nhánh `feat/label-aware-image-retrieval` về, chỉ các file cần.
 - Ma trận giữ 14 cột theo tên nhãn (H6), logit hiệu chỉnh trên pool-val; nối cột với CUI làm trong KG. Không dùng
   pool-train để hiệu chỉnh.
 - Ba kiểu câu sinh logit (P13) và lựa chọn joint hay decomposed để task sau.
 - **Cổng:** ma trận đủ 25.000 study và 14 cột; `build_id` của ma trận khớp encoder.
+- **Đo 2026-10-29:** cổng đạt; hiệu chỉnh trên 9.037 ảnh pool-val, không nhãn nào `uncalibrated` hay `saturated`.
+  AUROC strict trên pool-val từ 0,474 (Fracture) tới 0,860 (Pleural Effusion); ba nhãn dưới 0,5 (`docs/measured-facts.md`).
+  `load_encoder` tìm adapter theo `framework` của candidate (người dùng duyệt thêm `src/embeddings/base.py`).
 
 ### V2-5b · B1 dùng FT6 (D51)
 

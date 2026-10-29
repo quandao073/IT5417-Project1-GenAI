@@ -9,22 +9,27 @@ import json
 import subprocess
 import sys
 import time
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
+import numpy as np
 import polars as pl
 
 from src.common.config import Settings, default_config_dir, load_config
 from src.data import canonical, probe_pool
 from src.data.audit import CorpusMode, run_audit
+from src.data.labels import CHEXPERT_LABELS
 from src.embeddings import embed, index, spike, validate
+from src.embeddings.probe import patient_split, save_probe
 from src.evaluation import parser_benchmark as pb
 from src.evaluation import parser_eval as pe
 from src.evaluation import vector_baseline as vb
 from src.kg import chexpert_candidates, umls_filter, vocab
 from src.query.schema import ParseError
+from src.retrieval import image_scores as iscores
 from src.retrieval import label_filter as lf
 from src.retrieval import report_index
+from src.retrieval.templates import render
 
 
 def _cmd_audit(args: argparse.Namespace) -> int:
@@ -478,6 +483,107 @@ def _build_parser_or_exit(need_llm: bool):
     return parser, status
 
 
+def _load_pool(args: argparse.Namespace, expect: dict, corpus_images: pl.DataFrame):
+    """The pool's vectors, statuses and patient ids in shard order, or an error message.
+
+    `expect` is the corpus build's encoder (`model_id`, `revision`, `dim`). Refuses a pool
+    embedded by another encoder, one that shares a patient with the corpus and one that
+    holds a valid/ study (D12).
+    """
+    pool_dir = Path(args.pool_dir)
+    images = pl.read_parquet(pool_dir / probe_pool.POOL_IMAGES)
+    resolved = pl.read_parquet(pool_dir / probe_pool.POOL_LABELS)
+    meta = json.loads((pool_dir / probe_pool.POOL_META).read_text(encoding="utf-8"))
+    shards_dir = pool_dir / "embeddings" / args.pool_build_id
+    shards = embed.load_shards_manifest(shards_dir)
+    got = (shards["model_id"], shards["revision"], shards["dim"])
+    want = (expect["model_id"], expect["revision"], expect["dim"])
+    if got != want:
+        return f"POOL BUILD MISMATCH: pool {got} != corpus {want}", None
+    overlap = set(images["patient_id"]) & set(corpus_images["patient_id"])
+    if overlap:
+        return f"POOL OVERLAPS CORPUS: {len(overlap)} patients", None
+    if images.filter(pl.col("path_to_image").str.starts_with("valid/")).height:
+        return "POOL CONTAINS valid/ STUDIES", None
+
+    vectors, image_ids = vb._all_vectors(shards_dir)
+    study_of = dict(zip(images["image_id"], images["study_id"], strict=True))
+    patient_of = dict(zip(images["image_id"], images["patient_id"], strict=True))
+    studies = [study_of[i] for i in image_ids]
+    statuses = probe_pool.resolved_status_matrix(resolved, studies)
+    return None, (vectors, statuses, [patient_of[i] for i in image_ids], meta)
+
+
+def _corpus_rows(args: argparse.Namespace, build_id: str, studies: pl.DataFrame):
+    """Corpus vectors of each study's selected image, in `studies` order."""
+    vectors, image_ids = vb._all_vectors(Path(args.embeddings) / build_id)
+    row_of = {i: r for r, i in enumerate(image_ids)}
+    rows = [row_of[i] for i in studies["selected_image_id"]]
+    return vectors[rows]
+
+
+def _cmd_build_image_scores(args: argparse.Namespace) -> int:
+    """The V2 score matrix (src/retrieval/image_scores.py): each label's caption cosine,
+    calibrated on pool-val, the patient split of models.yaml:image_probe. Never on pool-train,
+    which the fine-tune learned from, nor on valid/ (D12)."""
+    report = Path(args.report or f"artifacts/metrics/image_scores_{args.encoder}.json")
+    if _report_is_corrupt(report):
+        return 1
+    # The corpus shards' own manifest, so a build not yet registered in Qdrant can be scored.
+    shards = embed.load_shards_manifest(Path(args.embeddings) / args.corpus_build_id)
+    build_id = shards["build_id"]
+    expect = {"model_id": shards["model_id"], "revision": shards["revision"],
+              "dim": shards["dim"]}
+    canonical_dir = Path(args.canonical_dir)
+    error, pool = _load_pool(args, expect, pl.read_parquet(canonical_dir / "images.parquet"))
+    if error:
+        print(error, file=sys.stderr)
+        return 1
+    # The captions go through the build's encoder gate (D40): another revision's text vectors
+    # would score these image vectors without an error.
+    encoder = _build_encoder({"build_id": build_id, "encoder": args.encoder,
+                              "embedding_model": {"revision": expect["revision"]}})
+    if encoder is None:
+        return 1
+    X, pool_statuses, pool_patients, pool_meta = pool
+    split = load_config("models")["image_probe"]
+    val = patient_split(pool_patients, val_fraction=split["val_fraction"], seed=split["seed"])
+    concepts_cfg = load_config("concepts")
+    prompts = {c: render([c], [], concepts_cfg) for c in CHEXPERT_LABELS}
+    text = encoder.encode_texts(list(prompts.values())).astype("float64")
+    text /= np.linalg.norm(text, axis=1, keepdims=True)
+    probe, fit = iscores.calibrate(text, X[val], pool_statuses[val])
+
+    studies = pl.read_parquet(canonical_dir / "studies.parquet")
+    scores = iscores.corpus_scores(probe, _corpus_rows(args, build_id, studies), studies)
+    meta = {
+        "build_id": build_id,
+        "encoder": {"name": args.encoder, **expect},
+        "pool_sha256": pool_meta["pool_sha256"], "pool_build_id": args.pool_build_id,
+        "n_val": int(val.sum()), "prompts": prompts, **fit,
+        "git_commit": _git_commit(),
+        "built_at": datetime.now(UTC).isoformat(timespec="seconds"),
+    }
+    out = Path(args.out or f"data/indexes/image_scores/{build_id}")
+    save_probe(out, probe, meta, scores)
+    _merge_json(report, "image_scores", meta)
+
+    for label, c in fit["calibration"].items():
+        auroc = "  n/a" if c["val_auroc"] is None else f"{c['val_auroc']:.3f}"
+        print(f"{label:27s} a {c['a']:8.3f}  b {c['b']:8.3f}  pool-val AUROC {auroc}  "
+              f"(pos {c['n_pos']}, neg {c['n_neg']})")
+    if fit["uncalibrated"]:
+        print(f"uncalibrated (< {iscores.MIN_CLASS} per class): {', '.join(fit['uncalibrated'])}")
+    if fit["saturated"]:
+        print(f"WARNING saturated (|logit| > {iscores.MAX_LOGIT:g} on pool-val, the caption "
+              f"separates its slice; that term dominates a sum over labels): "
+              f"{', '.join(fit['saturated'])}")
+    print(f"matrix : {out}  ({scores.height:,} studies x {len(CHEXPERT_LABELS)} labels, "
+          f"build {build_id}, pool-val {int(val.sum()):,} images)")
+    print(f"report : {report}")
+    return 0
+
+
 def _cmd_parse(args: argparse.Namespace) -> int:
     parser, status = _build_parser_or_exit(args.parser == "llm")
     result = parser.parse(args.text, mode=args.parser)
@@ -809,6 +915,21 @@ def build_parser() -> argparse.ArgumentParser:
     score.add_argument("--n-boot", type=int, default=1000)
     score.add_argument("--out", default="artifacts/metrics/vector_baseline.json")
     score.set_defaults(func=_cmd_score_corpus)
+
+    bis = sub.add_parser("build-image-scores",
+                         help="V2-5: the score matrix, each label's caption cosine calibrated "
+                              "on pool-val")
+    bis.add_argument("--encoder", required=True, help="models.yaml candidate of the build")
+    bis.add_argument("--corpus-build-id", required=True)
+    bis.add_argument("--pool-build-id", required=True)
+    bis.add_argument("--pool-dir", default="data/probe_pool")
+    bis.add_argument("--embeddings", default="data/indexes/embeddings")
+    bis.add_argument("--canonical-dir", default="data/canonical")
+    bis.add_argument("--out", default=None,
+                     help="default: data/indexes/image_scores/<corpus build id>")
+    bis.add_argument("--report", default=None,
+                     help="default: artifacts/metrics/image_scores_<encoder>.json")
+    bis.set_defaults(func=_cmd_build_image_scores)
 
     prs = sub.add_parser("parse", help="Phase 4: parse one request, print the SearchQuery")
     prs.add_argument("text")
