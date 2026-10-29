@@ -532,3 +532,31 @@ ABSENT. **AUROC lenient**: PRESENT với ABSENT hoặc NOT_MENTIONED, tính lạ
   `docs/image-probe.md`): zero-shot trên corpus Lung Lesion 0,469 · Pleural Other 0,496 · Fracture 0,520; probe trên
   corpus 0,533 · 0,563 · 0,487; val AUROC của probe trên cùng lát pool-val (cùng số dương và âm strict như bảng trên)
   0,495 · 0,222 · 0,476. Pneumonia đứng thứ tư ở probe (0,589) và ở val AUROC (0,578).
+
+## B1 trên dev: CXR-CLIP FT6 so với zero-shot (đo 2026-10-29, V2-5b)
+
+**Cách đo:** build FT6 đăng ký bằng `uv run cxr index --build-id 20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1`
+(collection `cxr_images_20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1`, 25.000 vector, 512 chiều, 23 giây);
+`cxr validate-indexes` 7 × PASS cho build FT6, zero-shot và BiomedCLIP; sha256 của bốn manifest có trước không đổi. Hai
+lần đo cùng code, cùng parser gold (D54): `uv run cxr eval-retrieval --split dev --parsers gold --build-id <build>
+--out artifacts/metrics/retrieval_dev_onepath_{ft6,zeroshot}.json`. Tái lập: lần chạy zero-shot trùng
+`retrieval_dev_onepath_cxrclip.json` (2026-10-24) ở cả 9 chỉ số tổng hợp, từng bit, và ở 38/38 dòng theo câu (bỏ
+latency).
+
+| Dev, parser gold, 38 câu | zero-shot | FT6 |
+|---|---:|---:|
+| nDCG@10 nhị phân (số chính) | 0,482 | **0,539** |
+| nDCG@10 graded | 0,314 | 0,341 |
+| P@10 · MRR | 0,479 · 0,596 | 0,547 · 0,637 |
+| exclude_violation@10 | 0,400 | 0,283 |
+| Latency trong tiến trình p50 / p95 ms | 94 / 122 | 85 / 111 |
+
+- Theo nhóm, nDCG@10 nhị phân zero-shot → FT6 (một câu có thể thuộc nhiều nhóm): single (18) 0,606 → 0,662 · multi
+  (14) 0,256 → 0,259 · negation (12) 0,349 → 0,464, vi phạm exclude 0,400 → 0,283 · uncertainty (4) 0,082 → 0,134 ·
+  **view (4) 0,918 → 0,754**; nhóm view chỉ có 4 câu, để error analysis ở V2-8. Theo câu: FT6 hơn 24, kém 10, hòa 4;
+  sign test hai phía (bỏ 4 câu hòa, n = 34) p ≈ 0,024. EN và VI cùng số (19 câu mỗi bên).
+- Luật D54: FT6 ≥ zero-shot, nên `image_encoder.selected: cxrclip_ft6_lr1e-04`.
+- **Cosine của FT6 lệch âm.** Câu "chest x-ray showing pleural effusion" với 25.000 ảnh corpus (vector đã chuẩn hóa, tính
+  từ shard): FT6 median −0,133, max 0,082; zero-shot median 0,104, max 0,411. Thứ hạng vẫn dùng được, nhưng điểm cosine
+  trả về thường âm, và `tests/integration/test_vector_index.py` (giả định cosine trong (0, 1)) trượt khi encoder
+  mặc định là FT6.

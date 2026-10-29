@@ -59,4 +59,6 @@ def test_fifty_images_round_trip(qdrant, tmp_path):
                                    encoder=encoder, client=qdrant, collection=built["collection"])
     by_id = dict(zip(images["image_id"], images["study_id"], strict=True))
     assert len(hits) == 5 and all(by_id[h.image_id] == h.study_id for h in hits)
-    assert all(0.0 < h.score < 1.0 for h in hits)
+    # A cosine, not a distance: inside [-1, 1], best first. FT6 cosines are mostly negative (T40).
+    assert all(-1.0 <= h.score <= 1.0 for h in hits)
+    assert all(a.score >= b.score for a, b in zip(hits, hits[1:], strict=False))

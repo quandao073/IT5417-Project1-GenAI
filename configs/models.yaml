@@ -79,10 +79,12 @@ image_encoder:
   text_prompt_template: "chest x-ray showing {}"
   # The encoder served by default and embedded by `cxr embed`. CXR-CLIP replaced the Phase 2
   # winner BiomedCLIP: the two tie zero-shot and CXR-CLIP is 2.4x faster per query, the Phase 2
-  # tie rule (WORKLOG). BiomedCLIP stays a candidate; its build stays registered.
-  selected: cxrclip
+  # tie rule (WORKLOG). Its FT6 fine-tune then replaced the zero-shot checkpoint by the V2-5b rule
+  # (WORKLOG D54: dev nDCG@10, gold parses, 0.539 vs 0.482). `cxrclip` and `biomedclip` stay
+  # candidates; their builds stay registered and are served with BUILD_ID.
+  selected: cxrclip_ft6_lr1e-04
   # The pin of `selected`, kept equal to its candidate's `revision` (`cxr embed` checks it).
-  revision: sha256:743e23335c162cf327c73d966cd890c295757ce4da612648543b29fb9231a5d5
+  revision: sha256:3de67645611e07934d2ec3f2006f0370123bfe5573ae0f95635cf124be34dfde
   # Never hardcoded. The encoder reports its own dimension, each build's manifest
   # records it, and `cxr validate-indexes` asserts the Qdrant collection matches.
   embedding_dim: null
