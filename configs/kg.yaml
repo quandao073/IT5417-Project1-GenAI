@@ -101,5 +101,27 @@ linker:
     license: apache-2.0
     max_length: 25
     batch_size: 256
-    tau: null            # chosen on the reviewed strings (D56), before the gate sample
-  gate: {precision: 0.85, coverage_by_mentions: 0.90, sample: 200, seed: 20260101, min_sapbert_reviewed: 30}
+  # Selection step (D56): SapBERT only gathers candidates, the top_k dictionary names of the kind's domain with
+  # cosine >= floor (proposed 2026-11-01), merged with the exact CUIs; two LLMs choose among them.
+  candidates: {top_k: 10, floor: 0.5}
+  llm:
+    prompt_file: prompts/kg_link_select_v1.txt   # relative to configs/; sha256 in the manifest (D20)
+    workers: 8
+    # Two Anthropic models run independently (no OpenAI credit, 2026-11-01). Same family: weaker independence
+    # than two providers (D56). No refusal fallback: a refusal is `none`, reason "refused".
+    models:
+      opus: {model: claude-opus-5-5, effort: medium, max_tokens: 8000, timeout_seconds: 120}
+      sonnet: {model: claude-sonnet-5-5, effort: medium, max_tokens: 8000, timeout_seconds: 120}
+  # Silver-standard judge of the gate sample: Anthropic's most capable model, its own prompt; behind --judge.
+  judge:
+    prompt_file: prompts/kg_link_judge_v1.txt
+    workers: 4
+    model: {model: claude-fable-5-1, effort: high, max_tokens: 16000, timeout_seconds: 300}
+  flags:
+    thin_sources: [CHV, MTH]
+    off_domain_words: [tooth, teeth, dental, knee, hip, foot, brain, cerebral, eye, ocular, retina, breast, uterus,
+                       uterine, ovary, ovarian, prostate, testis]
+  # A phrase of label X matches X's CUI, its children or a CUI below them; for device_label, any device of the domain.
+  chexpert_phrases: {repo: stanfordmlgroup/chexpert-labeler, commit: 44ddeb363149aa657296237f18b5472a73c1756f,
+                     license: MIT, device_label: "PRJ:support_devices"}
+  gate: {precision: 0.85, coverage_by_mentions: 0.90, sample: 200, seed: 20260101}

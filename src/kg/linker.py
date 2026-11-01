@@ -1,11 +1,12 @@
 """Vocabulary strings -> CUIs (TIP V2-3, D56; docs/v2-kg-design.md, "Dựng KG offline" step 3).
 
-Every string of the 95% head of the pool vocabulary (D52) gets one single link, from the first
-rule that fires: the normal group, a hand override (a CUI or `skip`), a descriptive word on its
-own, an exact MRCONSO name among the candidates of its kind, an anatomy adjective's noun, a name
-whose CUIs all lie outside the label table (`out_of_scope`), then the nearest SapBERT name, kept
-with its cosine. Candidates are the CUIs of the kind's domain (`domain`). A CUI named with a side
-moves to its unlateralised parent (design, schema decision 3).
+Every string of the 95% head of the pool vocabulary (D52) is decided by the first rule that
+fires: the normal group, a hand override (a CUI or `skip`), a descriptive word on its own, a name
+whose CUIs all lie outside the label table (`out_of_scope`). Any other string goes to the
+selection step with its candidates: its exact MRCONSO CUIs (of an anatomy adjective, those of the
+noun) and the CUIs of its nearest SapBERT names, all within the kind's domain (`domain`). Two
+LLMs choose among them (src/kg/llm_select.py); a hand adjudication wins over both. A CUI named
+with a side moves to its unlateralised parent (design, schema decision 3).
 
 In parallel each Observation is tried with the Anatomy it is `located_at`: RadGraph splits
 "pleural effusion" into Anatomy "pleural" and Observation "effusion", so the single string
@@ -25,6 +26,9 @@ from src.kg import sapbert, vocab
 
 NORMAL, SKIP, OVERRIDE, DESCRIPTIVE = "normal", "skip", "override", "descriptive"
 EXACT, ADJECTIVE, OUT_OF_SCOPE, SAPBERT = "exact", "adjective", "out_of_scope", "sapbert"
+SELECT, ADJUDICATED, LLM, LLM_DISAGREE = "select", "adjudicated", "llm", "llm_disagree"
+CUI, NONE, PENDING, REJECTED = "cui", "none", "pending", "rejected"   # decisions
+UNDECIDED = (NONE, PENDING)   # the only decisions coverage counts as missing (D56)
 _CUI = re.compile(r"C\d{7}")
 _SAB_ORDER = ["MSH", "NCI", "FMA", "HPO"]   # whose preferred name to show
 _NORM = pl.col("STR").str.to_lowercase().str.replace_all(r"[^a-z0-9]+", " ").str.strip_chars()
@@ -48,6 +52,23 @@ def load_overrides(path: Path) -> dict[str, dict[str, str]]:
             if vocab.normalize(string) != string or not valid:
                 raise LinkerError(f"{path.name}: {key} {string!r}: {value!r} is not a CUI or skip")
         out[kind] = dict(entries)
+    return out
+
+
+def load_adjudication(path: Path) -> dict[tuple[str, str], dict]:
+    """{(kind, string): {decision, cui, reason}} from data/kg/link/adjudication.csv (columns
+    string, kind, decision, cui, reason); none when the file does not exist yet."""
+    if not path.is_file():
+        return {}
+    out = {}
+    for row in pl.read_csv(path, infer_schema_length=0).fill_null("").iter_rows(named=True):
+        decision, cui = row["decision"].strip(), row["cui"].strip()
+        if row["kind"] not in vocab.KINDS or decision not in (CUI, SKIP, OUT_OF_SCOPE, NONE) or (
+                decision == CUI) != bool(_CUI.fullmatch(cui)):
+            raise LinkerError(f"{path.name}: {row['kind']!r} {row['string']!r}: decision "
+                              f"{decision!r} with cui {cui!r}")
+        out[(row["kind"], row["string"])] = {"decision": decision, "cui": cui,
+                                             "reason": row["reason"]}
     return out
 
 
@@ -159,7 +180,7 @@ def exact_matches(queries: pl.DataFrame, umls_dir: Path, cfg: dict,
 
 def describe(cuis: Collection[str], umls_dir: Path) -> pl.DataFrame:
     """cui, name (the preferred name of MSH, else NCI, FMA, HPO, else any source),
-    semantic_types, n_sabs. UMLS names: for files under data/ only (T38)."""
+    semantic_types, n_sabs, sabs, tuis. UMLS names: for files under data/ only (T38)."""
     rows = (pl.scan_parquet(umls_dir / "mrconso.parquet").filter(pl.col("CUI").is_in(list(cuis)))
             .select("CUI", "STR", "SAB", "TS", "ISPREF", "STT").collect())
     order = {sab: i for i, sab in enumerate(_SAB_ORDER)}
@@ -170,12 +191,16 @@ def describe(cuis: Collection[str], umls_dir: Path) -> pl.DataFrame:
                                               return_dtype=pl.Int64).alias("o"))
              .sort("not_pref", "o", "SAB", "STR").group_by("CUI", maintain_order=True).first()
              .select("CUI", pl.col("STR").alias("name")))
-    sabs = rows.group_by("CUI").agg(pl.col("SAB").n_unique().alias("n_sabs"))
+    sabs = rows.group_by("CUI").agg(pl.col("SAB").n_unique().alias("n_sabs"),
+                                    pl.col("SAB").unique().sort().str.join(",").alias("sabs"))
     sty = (pl.scan_parquet(umls_dir / "mrsty.parquet").filter(pl.col("CUI").is_in(list(cuis)))
            .collect().group_by("CUI").agg(pl.concat_str("TUI", "STY", separator=" ").unique()
-                                          .sort().str.join("; ").alias("semantic_types")))
+                                          .sort().str.join("; ").alias("semantic_types"),
+                                          pl.col("TUI").unique().sort().str.join(",")
+                                          .alias("tuis")))
     return (names.join(sabs, on="CUI").join(sty, on="CUI", how="left")
-            .select(pl.col("CUI").alias("cui"), "name", "semantic_types", "n_sabs"))
+            .select(pl.col("CUI").alias("cui"), "name", "semantic_types", "n_sabs", "sabs",
+                    "tuis"))
 
 
 def _rule_links(heads: pl.DataFrame, exact: pl.DataFrame, outside: set, overrides: dict,
@@ -226,34 +251,46 @@ def dictionary(umls_dir: Path, cfg: dict, domain: pl.DataFrame) -> pl.DataFrame:
     return names.sort("name")
 
 
-def _sapbert_links(rows: list[dict], umls_dir: Path, cfg: dict, domain: pl.DataFrame,
-                   encoder_factory: Callable[[], object], cache_dir: Path) -> None:
-    """The last rule in place: the nearest dictionary name of the row's kind, its best exact CUI."""
-    pending = [r for r in rows if r["method"] is None]
-    if not pending:
-        return
+def _candidates(rows: list[dict], umls_dir: Path, cfg: dict, domain: pl.DataFrame,
+                encoder_factory: Callable[[], object], cache_dir: Path) -> pl.DataFrame:
+    """kind, string, rank, cui, cosine, exact for each row left to the selection step: its exact
+    CUIs first, then the domain CUIs of the `top_k` dictionary names nearest its query whose
+    cosine reaches `floor` (D56), best first, each CUI once."""
+    ccfg = cfg["candidates"]
+    schema = {"kind": pl.String, "string": pl.String, "rank": pl.Int64, "cui": pl.String,
+              "cosine": pl.Float64, "exact": pl.Boolean}
+    if not rows:
+        return pl.DataFrame(schema=schema)
     encoder = encoder_factory()
     names = dictionary(umls_dir, cfg, domain)
     vectors = sapbert.name_vectors(names["name"].to_list(), encoder,
                                    cache_dir / encoder.revision[:12])
+    near: dict[tuple[str, str], list[tuple[str, float]]] = {}
     for kind in vocab.KINDS:
-        group = [r for r in pending if r["kind"] == kind]
-        if not group:
+        queries = sorted({r["query"] for r in rows if r["kind"] == kind})
+        if not queries:
             continue
-        queries = sorted({r["query"] for r in group})
-        idx, score = sapbert.nearest(encoder.encode(queries), vectors, names[kind].to_numpy())
-        best = {q: (names["name"][int(i)], float(s)) for q, i, s in zip(queries, idx, score,
-                                                                         strict=True)}
-        for r in group:
-            r["method"], (r["matched"], r["cosine"]) = SAPBERT, best[r["query"]]
-    matched = pl.DataFrame([(r["kind"], r["matched"]) for r in pending],
+        idx, score = sapbert.nearest(encoder.encode(queries), vectors, names[kind].to_numpy(),
+                                     k=ccfg["top_k"])
+        for query, found, cosine in zip(queries, idx, score, strict=True):
+            near[(kind, query)] = [(names["name"][int(i)], float(c))
+                                   for i, c in zip(found, cosine, strict=True)
+                                   if c >= ccfg["floor"]]
+    matched = pl.DataFrame(sorted({(k, n) for (k, _), found in near.items() for n, _ in found}),
                            schema={"kind": pl.String, "query": pl.String}, orient="row")
     exact, _ = exact_matches(matched, umls_dir, cfg, domain)
-    ranked: dict[tuple[str, str], list[str]] = {}
-    for kind, query, cui in exact.sort("rank").select("kind", "query", "cui").iter_rows():
-        ranked.setdefault((kind, query), []).append(cui)
-    for r in pending:
-        r["cuis"] = ranked.get((r["kind"], r["matched"]), [])
+    by_name: dict[tuple[str, str], list[str]] = {}
+    for kind, name, cui in exact.sort("rank").select("kind", "query", "cui").iter_rows():
+        by_name.setdefault((kind, name), []).append(cui)
+    out = []
+    for r in rows:
+        seen = dict.fromkeys(r["cuis"], (1.0, True))
+        for name, cosine in near.get((r["kind"], r["query"]), []):
+            for cui in by_name.get((r["kind"], name), []):
+                seen.setdefault(cui, (cosine, False))
+        out += [(r["kind"], r["string"], rank, cui, cosine, is_exact)
+                for rank, (cui, (cosine, is_exact)) in enumerate(seen.items(), start=1)]
+    return pl.DataFrame(out, schema=schema, orient="row")
 
 
 def _lateral(text: str | None, sides: set[str]) -> bool:
@@ -305,9 +342,11 @@ def _unlateralise(links: pl.DataFrame, umls_dir: Path, cfg: dict,
 
 def link_heads(heads: pl.DataFrame, umls_dir: Path, cfg: dict, overrides: dict,
                domain: pl.DataFrame, encoder_factory: Callable[[], object],
-               cache_dir: Path) -> tuple[pl.DataFrame, set]:
-    """The single link of every head string, and the (kind, string) pairs whose exact MRCONSO
-    names are all outside the label table."""
+               cache_dir: Path) -> tuple[pl.DataFrame, pl.DataFrame, set]:
+    """(links, candidates, outside). `links` holds every head string with the rule that decided
+    it, or `select` and the route (exact, adjective, sapbert) that gathered its candidates for
+    the selection step; `outside`, the (kind, string) pairs whose exact MRCONSO names are all
+    outside the label table."""
     queries = pl.concat([
         heads.select("kind", pl.col("string").alias("query")),
         pl.DataFrame([("Anatomy", noun) for noun in set(cfg["adjectives"].values())],
@@ -315,21 +354,73 @@ def link_heads(heads: pl.DataFrame, umls_dir: Path, cfg: dict, overrides: dict,
     exact, outside = exact_matches(queries, umls_dir, cfg, domain)
     outside &= set(heads.select("kind", "string").iter_rows())
     rows = _rule_links(heads, exact, outside, overrides, cfg)
-    _sapbert_links(rows, umls_dir, cfg, domain, encoder_factory, cache_dir)
-    links = pl.DataFrame({
-        "kind": [r["kind"] for r in rows], "string": [r["string"] for r in rows],
-        "method": [r["method"] for r in rows], "query": [r["query"] for r in rows],
-        "matched": [r["matched"] for r in rows],
-        "cosine": pl.Series([r["cosine"] for r in rows], dtype=pl.Float64),
-        "cui": pl.Series([r["cuis"][0] if r["cuis"] else None for r in rows], dtype=pl.String),
-        "n_candidates": pl.Series([len(r["cuis"]) for r in rows], dtype=pl.Int64),
-        "alt1": pl.Series([r["cuis"][1] if len(r["cuis"]) > 1 else None for r in rows],
-                          dtype=pl.String),
-        "alt2": pl.Series([r["cuis"][2] if len(r["cuis"]) > 2 else None for r in rows],
-                          dtype=pl.String),
-    })
-    links = _unlateralise(links, umls_dir, cfg, domain)
-    return heads.join(links, on=["kind", "string"], how="left"), outside
+    for r in rows:
+        r["selected"] = r["method"] in (EXACT, ADJECTIVE, None)
+    cands = _candidates([r for r in rows if r["selected"]], umls_dir, cfg, domain,
+                        encoder_factory, cache_dir)
+    top = {(k, s): (c, cos) for k, s, c, cos in cands.filter(pl.col("rank") == 1)
+           .select("kind", "string", "cui", "cosine").iter_rows()}
+    counts = {(k, s): n for k, s, n in cands.group_by("kind", "string").len().iter_rows()}
+    links = pl.DataFrame([{
+        "kind": r["kind"], "string": r["string"],
+        "method": SELECT if r["selected"] else r["method"],
+        "route": (r["method"] or SAPBERT) if r["selected"] else None, "query": r["query"],
+        "rule_cui": r["cuis"][0] if r["method"] == OVERRIDE else None,
+        "n_candidates": counts.get((r["kind"], r["string"]), 0),
+        "argmax_cui": top.get((r["kind"], r["string"]), (None, None))[0],
+        "argmax_cosine": top.get((r["kind"], r["string"]), (None, None))[1],
+    } for r in rows], schema={"kind": pl.String, "string": pl.String, "method": pl.String,
+                              "route": pl.String, "query": pl.String, "rule_cui": pl.String,
+                              "n_candidates": pl.Int64, "argmax_cui": pl.String,
+                              "argmax_cosine": pl.Float64})
+    return heads.join(links, on=["kind", "string"], how="left"), cands, outside
+
+
+_RULE_DECISION = {NORMAL: NORMAL, SKIP: SKIP, OVERRIDE: CUI, DESCRIPTIVE: DESCRIPTIVE,
+                  OUT_OF_SCOPE: OUT_OF_SCOPE}
+
+
+def _says(choice: dict | None) -> str | None:
+    if choice is None:
+        return None
+    return f"{choice['decision']} {choice['cui']}".strip() + f": {choice['reason']}"
+
+
+def decide(links: pl.DataFrame, choices: dict[str, dict], adjudication: dict, umls_dir: Path,
+           cfg: dict, domain: pl.DataFrame) -> pl.DataFrame:
+    """The final link of every head string (D56): an adjudication wins; then the rule; a string
+    of the selection step takes the decision both LLMs agree on, else `none` (`llm_disagree`), or
+    stays `pending` until both have answered. Adds decision, cui, llm_<provider>, agree, then
+    rule 7 (lateral_from, lateral_unresolved). `choices`: {provider: {(kind, string): choice}},
+    a choice being {decision, cui, reason}; a choice whose decision is `rejected` never agrees."""
+    providers = sorted(choices)
+    rows = []
+    for kind, string, method, rule_cui in links.select("kind", "string", "method",
+                                                        "rule_cui").iter_rows():
+        key = (kind, string)
+        said = [choices[p].get(key) for p in providers]
+        agree = None
+        if key in adjudication:
+            adj = adjudication[key]
+            method, decision, cui = ADJUDICATED, adj["decision"], adj["cui"] or None
+        elif method != SELECT:
+            decision, cui = _RULE_DECISION[method], rule_cui
+        elif any(c is None for c in said):
+            method, decision, cui = PENDING, PENDING, None
+        else:
+            first = said[0]
+            agree = all(c["decision"] == first["decision"] and c["cui"] == first["cui"]
+                        for c in said) and first["decision"] != REJECTED
+            method = LLM if agree else LLM_DISAGREE
+            decision = first["decision"] if agree else NONE
+            cui = first["cui"] if agree and decision == CUI else None
+        rows.append((method, decision, cui, *[_says(c) for c in said], agree))
+    schema = {"method": pl.String, "decision": pl.String, "cui": pl.String,
+              **{f"llm_{p}": pl.String for p in providers}, "agree": pl.Boolean}
+    decided = pl.DataFrame(rows, schema=schema, orient="row")
+    out = links.drop("method").hstack(decided)
+    out = _unlateralise(out.with_columns(pl.col("query").alias("matched")), umls_dir, cfg, domain)
+    return out.drop("matched")
 
 
 def located_pairs(mentions: pl.DataFrame, strings: Collection[str]) -> pl.DataFrame:
@@ -392,31 +483,70 @@ def pair_share(mentions: pl.DataFrame, occurrences: pl.DataFrame, pairs: pl.Data
     return out
 
 
-def needs_review(links: pl.DataFrame) -> pl.Expr:
-    """Band 80 in full; band 90 when the link is not one exact CUI (D56); in any band, a side
-    left on the CUI (rule 7) and an adjective whose noun went to SapBERT (rule 5)."""
-    single_exact = (pl.col("method") == EXACT) & (pl.col("n_candidates") == 1)
-    flagged = pl.col("lateral_unresolved") | (
-        (pl.col("method") == SAPBERT) & (pl.col("query") != pl.col("string")))
-    return (pl.col("band") == "80") | ((pl.col("band") == "90") & ~single_exact) | flagged
+_CUI_IN_SAYS = re.compile(r"^cui (C\d{7}):")
 
 
-def review_rows(links: pl.DataFrame, umls_dir: Path) -> pl.DataFrame:
-    """The rows to review by hand, with UMLS names (for data/ only, T38) and empty decision."""
-    rows = links.filter(needs_review(links))
-    cuis = {c for col in ("cui", "alt1", "alt2", "lateral_from") for c in rows[col].drop_nulls()}
-    info = describe(cuis, umls_dir) if cuis else pl.DataFrame(
-        schema={"cui": pl.String, "name": pl.String, "semantic_types": pl.String,
-                "n_sabs": pl.UInt32})
-    name = dict(info.select("cui", "name").iter_rows())
-    rows = rows.join(info, on="cui", how="left")
-    return rows.with_columns(
-        pl.col("alt1").replace_strict(name, default=None).alias("alt1_name"),
-        pl.col("alt2").replace_strict(name, default=None).alias("alt2_name"),
-        pl.lit("").alias("decision"), pl.lit("").alias("note"),
-    ).select("kind", "rank", "string", "mentions", "studies", "band", "method", "query", "matched",
-             "cosine", "cui", "name", "semantic_types", "n_sabs", "n_candidates", "lateral_from",
-             "lateral_unresolved", "alt1", "alt1_name", "alt2", "alt2_name", "decision", "note")
+def flags(links: pl.DataFrame, info: pl.DataFrame, cfg: dict, skipped: Collection[str],
+          mismatched: Collection[tuple[str, str]]) -> list[str]:
+    """Per row, the automatic flags (D56) on the final CUI and on each LLM's CUI, `;`-joined:
+    thin_sources (named only by `flags.thin_sources`), off_domain_word (a word of
+    `flags.off_domain_words` in the name), type_mismatch (no semantic type of the string's kind),
+    skip_listed (a string on a skip list that has a CUI), chexpert_mismatch, lateral_unresolved."""
+    fcfg = cfg["flags"]
+    thin, words = set(fcfg["thin_sources"]), set(fcfg["off_domain_words"])
+    kind_tuis = {k: set(t) for k, t in _kind_tuis(cfg).group_by("kind").agg("TUI").iter_rows()}
+    meta = {c: (n, set(s.split(",")), set((t or "").split(",")))
+            for c, n, s, t in info.select("cui", "name", "sabs", "tuis").iter_rows()}
+    said_cols = [c for c in links.columns if c.startswith("llm_")]
+    out = []
+    for row in links.iter_rows(named=True):
+        cuis = {row["cui"], *(m.group(1) for c in said_cols
+                              if row[c] and (m := _CUI_IN_SAYS.match(row[c])))} - {None}
+        found = set()
+        for cui in cuis & set(meta):
+            name, sabs, tuis = meta[cui]
+            found |= {"thin_sources"} if sabs <= thin else set()
+            found |= {"off_domain_word"} if words & set(vocab.normalize(name).split()) else set()
+            found |= {"type_mismatch"} if not tuis & kind_tuis[row["kind"]] else set()
+        found |= {"skip_listed"} if row["cui"] and row["string"] in skipped else set()
+        found |= {"chexpert_mismatch"} if (row["kind"], row["string"]) in mismatched else set()
+        found |= {"lateral_unresolved"} if row["lateral_unresolved"] else set()
+        out.append(";".join(sorted(found)))
+    return out
+
+
+def review_rows(links: pl.DataFrame, info: pl.DataFrame, row_flags: Sequence[str]) -> pl.DataFrame:
+    """Every head string for adjudication, with the final CUI's UMLS names (data/ only, T38):
+    the LLMs' disagreements first, then flagged rows, then the rest by kind and mentions."""
+    said = [c for c in links.columns if c.startswith("llm_")]
+    order = (pl.when(pl.col("method") == LLM_DISAGREE).then(0)
+             .when(pl.col("flags") != "").then(1).otherwise(2))
+    return (links.with_columns(pl.Series("flags", row_flags, dtype=pl.String))
+            .join(info.select("cui", "name", "semantic_types", "sabs"), on="cui", how="left")
+            .sort([order, "kind", "mentions"], descending=[False, False, True])
+            .select("kind", "rank", "string", "mentions", "studies", "band", "method", "route",
+                    "decision", "cui", "name", "semantic_types", "sabs", *said, "agree", "flags",
+                    "n_candidates", "argmax_cui", "argmax_cosine", "lateral_from"))
+
+
+def coverage(links: pl.DataFrame) -> dict[str, float]:
+    """Share of the head's mentions that are decided (all but none and pending) and that carry a
+    CUI, per kind and overall (gate, D56)."""
+    out = {}
+    for name, part in [("all", links), *links.group_by("kind")]:
+        label = name if isinstance(name, str) else name[0]
+        total = part["mentions"].sum()
+        out[label] = {
+            "decided": part.filter(~pl.col("decision").is_in(UNDECIDED))["mentions"].sum() / total,
+            "linked": part.filter(pl.col("cui").is_not_null())["mentions"].sum() / total}
+    return out
+
+
+def agreement(links: pl.DataFrame) -> dict[str, dict[str, int]]:
+    """Per kind, the strings both LLMs answered and those they agree on."""
+    both = links.filter(pl.col("agree").is_not_null())
+    return {k: {"answered": n, "agree": a} for k, n, a in
+            both.group_by("kind").agg(pl.len(), pl.col("agree").sum()).sort("kind").iter_rows()}
 
 
 def mention_counts(links: pl.DataFrame) -> dict:

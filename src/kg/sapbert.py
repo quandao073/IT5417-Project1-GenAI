@@ -70,18 +70,21 @@ def name_vectors(names: Sequence[str], encoder, cache_dir: Path) -> np.ndarray:
     return vectors
 
 
-def nearest(queries: np.ndarray, vectors: np.ndarray, allowed: np.ndarray,
+def nearest(queries: np.ndarray, vectors: np.ndarray, allowed: np.ndarray, k: int = 1,
             chunk: int = 65536) -> tuple[np.ndarray, np.ndarray]:
-    """(row, cosine) of the best allowed dictionary row for each unit query vector."""
-    best = np.full(len(queries), -np.inf, dtype=np.float32)
-    arg = np.zeros(len(queries), dtype=np.int64)
+    """(rows, cosines), each [n, k] best first: the k best allowed dictionary rows for each unit
+    query vector."""
     q = np.asarray(queries, dtype=np.float32)
+    best = np.full((len(q), k), -np.inf, dtype=np.float32)
+    arg = np.zeros((len(q), k), dtype=np.int64)
     for start in range(0, len(vectors), chunk):
         block = np.asarray(vectors[start:start + chunk], dtype=np.float32)
         scores = q @ block.T
         scores[:, ~allowed[start:start + chunk]] = -np.inf
-        j = scores.argmax(axis=1)
-        value = scores[np.arange(len(q)), j]
-        better = value > best
-        best[better], arg[better] = value[better], start + j[better]
+        top = np.argpartition(-scores, min(k, scores.shape[1] - 1), axis=1)[:, :k]
+        values = np.concatenate([best, np.take_along_axis(scores, top, axis=1)], axis=1)
+        rows = np.concatenate([arg, start + top], axis=1)
+        order = np.argsort(-values, axis=1, kind="stable")[:, :k]
+        best = np.take_along_axis(values, order, axis=1)
+        arg = np.take_along_axis(rows, order, axis=1)
     return arg, best

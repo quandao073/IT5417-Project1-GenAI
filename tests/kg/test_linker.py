@@ -17,7 +17,8 @@ from tests.kg.test_vocab import world  # noqa: F401  (the pool, Plus CSV and Rad
 REAL = load_config("kg")["linker"]
 CFG = {**REAL, "domain": {"code_sabs": ["LNC"], "relas": REAL["domain"]["relas"],
                           "anatomy": {"positive": ["C1000020"], "negative": []},
-                          "observation": {"positive": ["C1000021"], "negative": ["C1000022"]}}}
+                          "observation": {"positive": ["C1000021"], "negative": ["C1000022"]}},
+       "candidates": {"top_k": 3, "floor": 0.1}}
 
 
 def conso(cui, text, sab, preferred=False):
@@ -105,40 +106,44 @@ def heads(*rows):
                         orient="row")
 
 
-def link(umls, tmp_path, *rows):
-    found, outside = lk.link_heads(heads(*rows), umls, CFG, OVERRIDES, lk.domain(umls, CFG),
-                                   FakeSap, tmp_path / "sapbert")
-    return {(k, s): r for k, s, r in zip(found["kind"], found["string"],
-                                         found.iter_rows(named=True), strict=True)}, outside
+def link(umls, tmp_path, *rows, overrides=OVERRIDES):
+    found, cands, outside = lk.link_heads(heads(*rows), umls, CFG, overrides,
+                                          lk.domain(umls, CFG), FakeSap, tmp_path / "sapbert")
+    by_string = {(k, s): r for k, s, r in zip(found["kind"], found["string"],
+                                               found.iter_rows(named=True), strict=True)}
+    return by_string, cands, outside
+
+
+def candidate_cuis(cands, string):
+    return cands.filter(pl.col("string") == string).sort("rank")["cui"].to_list()
 
 
 def test_rules_fire_in_order(umls, tmp_path):
-    got, _ = link(umls, tmp_path, *[("Observation", s) for s in
-                                    ("normal", "tip", "effusion", "collapsed lung", "thickening",
-                                     "pneumothorax")])
-    methods = {s: (r["method"], r["cui"]) for (_, s), r in got.items()}
+    got, _, _ = link(umls, tmp_path, *[("Observation", s) for s in
+                                       ("normal", "tip", "effusion", "collapsed lung",
+                                        "thickening", "pneumothorax")])
+    methods = {s: (r["method"], r["rule_cui"], r["route"]) for (_, s), r in got.items()}
     assert methods == {
-        "normal": ("normal", None), "tip": ("skip", None),
-        "effusion": ("override", "C1000001"),            # over the exact C1000002
-        "collapsed lung": ("override", "C9999999"),      # over the exact Pneumothorax CUI (D21)
-        "thickening": ("descriptive", None),             # alone, although an exact name exists
-        "pneumothorax": ("exact", "C1000003")}
+        "normal": ("normal", None, None), "tip": ("skip", None, None),
+        "effusion": ("override", "C1000001", None),          # over the exact C1000002
+        "collapsed lung": ("override", "C9999999", None),    # over the exact Pneumothorax CUI
+        "thickening": ("descriptive", None, None),           # alone, though an exact name exists
+        "pneumothorax": ("select", None, "exact")}           # the LLMs choose (D56)
+    assert got[("Observation", "pneumothorax")]["argmax_cui"] == "C1000003"
 
 
-def test_exact_ranks_by_preferred_name_and_keeps_only_types_of_the_kind(umls, tmp_path):
-    got, outside = link(umls, tmp_path, ("Observation", "mass"), ("Anatomy", "pneumothorax"),
-                        ("Observation", "sternotomy"))
-    mass = got[("Observation", "mass")]
-    assert (mass["method"], mass["cui"], mass["alt1"], mass["n_candidates"]) == (
-        "exact", "C1000008", "C1000009", 2)               # preferred beats more sources
-    assert got[("Anatomy", "pneumothorax")]["method"] == "sapbert"   # T047 is no Anatomy type
+def test_exact_candidates_come_first_ranked_by_preferred_name(umls, tmp_path):
+    got, cands, outside = link(umls, tmp_path, ("Observation", "mass"),
+                               ("Anatomy", "pneumothorax"), ("Observation", "sternotomy"))
+    assert candidate_cuis(cands, "mass")[:2] == ["C1000008", "C1000009"]   # preferred first
+    assert cands.filter(pl.col("string") == "mass", pl.col("rank") <= 2)["exact"].all()
+    assert got[("Anatomy", "pneumothorax")]["route"] == "sapbert"   # T047 is no Anatomy type
     assert outside == {("Observation", "sternotomy")}     # a procedure (T061) only
     assert (got[("Observation", "sternotomy")]["method"],
-            got[("Observation", "sternotomy")]["cui"]) == ("out_of_scope", None)
-    hand, _ = lk.link_heads(heads(("Observation", "sternotomy")), umls, CFG,
-                            {"Observation": {"sternotomy": "skip"}}, lk.domain(umls, CFG),
-                            FakeSap, tmp_path / "sapbert")
-    assert hand["method"].to_list() == ["skip"]                     # an override still wins
+            got[("Observation", "sternotomy")]["route"]) == ("out_of_scope", None)
+    hand, _, _ = link(umls, tmp_path, ("Observation", "sternotomy"),
+                      overrides={"Observation": {"sternotomy": "skip"}})
+    assert hand[("Observation", "sternotomy")]["method"] == "skip"   # an override still wins
 
 
 def test_the_domain_drops_code_system_names_and_cuis_below_a_negative_root(umls, tmp_path):
@@ -149,48 +154,110 @@ def test_the_domain_drops_code_system_names_and_cuis_below_a_negative_root(umls,
     assert ("C1000016", "Observation") not in dom                   # below the negative root only
     assert ("C1000022", "Observation") not in dom                   # the negative root itself
     assert ("C1000004", "Observation") in dom                       # below no root at all
-    got, outside = link(umls, tmp_path, ("Observation", "crowding"), ("Anatomy", "hilum"))
-    # on the label table, so not out_of_scope; out of the domain, so no exact link
-    assert got[("Observation", "crowding")]["method"] == "sapbert" and not outside
-    assert got[("Anatomy", "hilum")]["cui"] == "C1000007"           # FakeSap's mix, not the LNC CUI
+    got, cands, outside = link(umls, tmp_path, ("Observation", "crowding"), ("Anatomy", "hilum"))
+    # on the label table, so not out_of_scope; out of the domain, so no exact candidate
+    assert got[("Observation", "crowding")]["route"] == "sapbert" and not outside
+    assert "C1000016" not in candidate_cuis(cands, "crowding")
+    assert candidate_cuis(cands, "hilum") == ["C1000007"]           # FakeSap's mix, not the LNC CUI
     sizes = lk.domain_sizes(umls, CFG, lk.domain(umls, CFG))
     assert sizes["Anatomy"] == {"label_table": 6, "domain": 5}
 
 
 def test_adjective_goes_through_its_noun(umls, tmp_path):
-    got, _ = link(umls, tmp_path, ("Anatomy", "pleural"))
+    got, cands, _ = link(umls, tmp_path, ("Anatomy", "pleural"))
     pleural = got[("Anatomy", "pleural")]
-    assert (pleural["method"], pleural["query"], pleural["cui"]) == ("adjective", "pleura",
-                                                                      "C1000006")
+    assert (pleural["route"], pleural["query"], pleural["argmax_cui"]) == (
+        "adjective", "pleura", "C1000006")
 
 
-def test_sapbert_takes_the_nearest_name_allowed_for_the_kind(umls, tmp_path):
-    got, _ = link(umls, tmp_path, ("Observation", "airspace process"), ("Anatomy", "hilum"))
+def test_sapbert_gathers_the_nearest_names_allowed_for_the_kind(umls, tmp_path):
+    got, cands, _ = link(umls, tmp_path, ("Observation", "airspace process"),
+                         ("Anatomy", "hilum"))
     obs, anat = got[("Observation", "airspace process")], got[("Anatomy", "hilum")]
-    assert (obs["method"], obs["matched"], obs["cui"]) == ("sapbert", "effusion", "C1000002")
-    assert (anat["matched"], anat["cui"]) == ("lung", "C1000007")
-    assert 0 < anat["cosine"] < obs["cosine"] < 1
+    assert (obs["route"], obs["argmax_cui"]) == ("sapbert", "C1000002")
+    assert anat["argmax_cui"] == "C1000007"                         # "effusion" is no Anatomy
+    assert 0 < anat["argmax_cosine"] < obs["argmax_cosine"] < 1
+    assert not cands["exact"].any()
     cache = tmp_path / "sapbert" / FakeSap.revision[:12]
     assert (cache / "vectors.npy").is_file() and (cache / "meta.json").is_file()
 
 
+def choice(decision, cui="", reason="r"):
+    return {"decision": decision, "cui": cui, "reason": reason}
+
+
+def decided(umls, tmp_path, rows, choices, adjudication=None):
+    found, _, _ = lk.link_heads(heads(*rows), umls, CFG, OVERRIDES, lk.domain(umls, CFG),
+                                FakeSap, tmp_path / "sapbert")
+    final = lk.decide(found, choices, adjudication or {}, umls, CFG, lk.domain(umls, CFG))
+    return {s: r for s, r in zip(final["string"], final.iter_rows(named=True), strict=True)}
+
+
+def test_the_llms_must_agree_and_an_adjudication_wins(umls, tmp_path):
+    rows = [("Observation", s) for s in ("mass", "pneumothorax", "airspace process", "nodule",
+                                         "normal", "effusion")]
+    a = {("Observation", "mass"): choice("cui", "C1000008"),
+         ("Observation", "pneumothorax"): choice("cui", "C1000003"),
+         ("Observation", "airspace process"): choice("skip"),
+         ("Observation", "nodule"): choice("rejected", "C9999998")}
+    b = {**a, ("Observation", "pneumothorax"): choice("none"),
+         ("Observation", "nodule"): choice("rejected", "C9999998")}
+    del b[("Observation", "mass")]
+    got = decided(umls, tmp_path, rows, {"opus": a, "sonnet": b},
+                  {("Observation", "effusion"): choice("cui", "C1000002", "adjudicated")})
+    view = {s: (r["method"], r["decision"], r["cui"], r["agree"]) for s, r in got.items()}
+    assert view == {
+        "mass": ("pending", "pending", None, None),            # only one provider answered
+        "pneumothorax": ("llm_disagree", "none", None, False),
+        "airspace process": ("llm", "skip", None, True),
+        "nodule": ("llm_disagree", "none", None, False),       # two rejections never agree
+        "normal": ("normal", "normal", None, None),
+        "effusion": ("adjudicated", "cui", "C1000002", None)}  # over the override
+    assert got["pneumothorax"]["llm_opus"] == "cui C1000003: r"
+    assert got["pneumothorax"]["llm_sonnet"] == "none: r"
+    cov = lk.coverage(pl.DataFrame({"kind": ["Observation"] * 3, "mentions": [6, 3, 1],
+                                    "decision": ["cui", "skip", "none"],
+                                    "cui": ["C1", None, None]}))
+    assert cov["all"] == {"decided": 0.9, "linked": 0.6}
+
+
 def test_a_lateral_cui_moves_to_its_unlateralised_parent(umls, tmp_path):
-    got, _ = link(umls, tmp_path, ("Anatomy", "left lower lobe"), ("Anatomy", "lung"))
-    lobe = got[("Anatomy", "left lower lobe")]
+    rows = [("Anatomy", "left lower lobe"), ("Anatomy", "lung")]
+    both = {("Anatomy", "left lower lobe"): choice("cui", "C1000012"),
+            ("Anatomy", "lung"): choice("cui", "C1000007")}
+    got = decided(umls, tmp_path, rows, {"opus": both, "sonnet": both})
+    lobe = got["left lower lobe"]
     assert (lobe["cui"], lobe["lateral_from"], lobe["lateral_unresolved"]) == (
         "C1000013", "C1000012", False)
-    assert got[("Anatomy", "lung")]["lateral_from"] is None
+    assert got["lung"]["lateral_from"] is None
 
 
-def test_review_takes_band_80_unsure_band_90_and_flagged_links_of_any_band():
+def test_flags_point_at_what_needs_a_look():
     links = pl.DataFrame({
-        "string": ["a", "b", "c", "d", "pleural", "f"],
-        "band": ["80", "90", "90", "95", "95", "95"],
-        "method": ["exact", "exact", "sapbert", "exact", "sapbert", "sapbert"],
-        "n_candidates": [1, 1, 1, 1, 1, 1],
-        "query": ["a", "b", "c", "d", "pleura", "f"],
-        "lateral_unresolved": [False, False, False, True, False, False]})
-    assert links.filter(lk.needs_review(links))["string"].to_list() == ["a", "c", "d", "pleural"]
+        "kind": ["Observation", "Anatomy", "Observation"], "string": ["a", "size", "c"],
+        "cui": ["C0000001", "C0000002", None],
+        "llm_opus": ["cui C0000001: r", "cui C0000002: r", "cui C0000003: r"],
+        "lateral_unresolved": [False, False, True]})
+    info = pl.DataFrame({"cui": ["C0000001", "C0000002", "C0000003"],
+                         "name": ["Crowding of teeth", "Size", "Thing"],
+                         "sabs": ["MSH", "CHV,MTH", "NCI"], "tuis": ["T033", "T081", "T023"]})
+    got = lk.flags(links, info, CFG, skipped={"size"}, mismatched={("Observation", "a")})
+    assert got == ["chexpert_mismatch;off_domain_word", "skip_listed;thin_sources;type_mismatch",
+                   "lateral_unresolved;type_mismatch"]
+
+
+def test_adjudication_rows_are_checked(tmp_path):
+    path = tmp_path / "adjudication.csv"
+    assert lk.load_adjudication(path) == {}
+    path.write_text("string,kind,decision,cui,reason\nlung,Anatomy,cui,C0024109,ok\n"
+                    "change,Observation,skip,,qualifier\n", encoding="utf-8")
+    assert lk.load_adjudication(path) == {
+        ("Anatomy", "lung"): {"decision": "cui", "cui": "C0024109", "reason": "ok"},
+        ("Observation", "change"): {"decision": "skip", "cui": "", "reason": "qualifier"}}
+    for bad in ("lung,Anatomy,cui,,x\n", "lung,Anatomy,skip,C0024109,x\n", "lung,Body,none,,x\n"):
+        path.write_text("string,kind,decision,cui,reason\n" + bad, encoding="utf-8")
+        with pytest.raises(lk.LinkerError):
+            lk.load_adjudication(path)
 
 
 def mentions(*rows):
@@ -258,8 +325,24 @@ def test_overrides_hold_strings_and_codes_only(tmp_path):
             lk.load_overrides(bad)
 
 
-def test_cli_links_the_head_and_writes_the_review_file(world, umls, tmp_path,  # noqa: F811
-                                                        monkeypatch, capsys):
+class FakeChooser:
+    """Answers with the first candidate, or `none` without one; counts its calls."""
+
+    calls = 0
+
+    def __init__(self, name, cfg, key):
+        self.name, self.model = name, cfg["model"]
+
+    def ask(self, system, user, schema):
+        type(self).calls += 1
+        cands = json.loads(user)["candidates"]
+        answer = ({"decision": "cui", "cui": cands[0]["cui"], "reason": "first"} if cands
+                  else {"decision": "none", "cui": "", "reason": "no candidate"})
+        return json.dumps(answer), {"input_tokens": 100, "output_tokens": 10}, self.model
+
+
+def test_cli_links_asks_the_llms_and_samples(world, umls, tmp_path,  # noqa: F811
+                                             monkeypatch, capsys):
     pool, csv, rg = world
     pool_dir = tmp_path / "pool"
     pool_dir.mkdir()
@@ -271,18 +354,44 @@ def test_cli_links_the_head_and_writes_the_review_file(world, umls, tmp_path,  #
     monkeypatch.setattr("src.kg.sapbert.SapBert", FakeSap)
     real_domain = lk.domain
     monkeypatch.setattr(lk, "domain", lambda umls_dir, _cfg: real_domain(umls_dir, CFG))
+    monkeypatch.setattr("src.cli.main._chooser", FakeChooser)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "secret")
     out = tmp_path / "link"
-    assert main(["kg-link", *common, "--vocab-dir", str(tmp_path / "vocab"),
-                 "--sapbert-cache", str(tmp_path / "sapbert"), "--out", str(out)]) == 0
+    link_args = ["kg-link", *common, "--vocab-dir", str(tmp_path / "vocab"),
+                 "--sapbert-cache", str(tmp_path / "sapbert"), "--out", str(out)]
+    assert main(link_args) == 0
     links = pl.read_parquet(out / "links.parquet")
     table = pl.read_parquet(tmp_path / "vocab" / "vocab_joined.parquet")
     assert set(links["string"]) <= set(table["string"]) and links["method"].null_count() == 0
+    selected = links.filter(pl.col("route").is_not_null()).height
+    assert links.filter(pl.col("method") == "pending").height == selected > 0
+    assert len((out / "llm_inputs.jsonl").read_text(encoding="utf-8").splitlines()) == selected
+
+    assert main(["kg-link-llm", "--model", "opus", "--limit", "1", "--out", str(out)]) == 0
+    assert FakeChooser.calls == 1
+    for model in ("opus", "sonnet"):
+        assert main(["kg-link-llm", "--model", model, "--all", "--out", str(out)]) == 0
+    assert FakeChooser.calls == 2 * selected                 # the cached answer is not asked again
+    assert main(link_args) == 0
+    links = pl.read_parquet(out / "links.parquet")
+    assert links.filter(pl.col("route").is_not_null())["method"].unique().to_list() == ["llm"]
     review = pl.read_csv(out / "review.csv")
-    assert review.height == links.filter(pl.col("band") == "80").height + links.filter(
-        lk.needs_review(links) & (pl.col("band") == "90")).height
+    assert review.height == links.height
+    assert {"llm_opus", "llm_sonnet", "agree", "flags"} <= set(review.columns)
     manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["pool_sha256"] == "abc" and manifest["tau"] is None
+    assert manifest["pool_sha256"] == "abc" and manifest["llm"]["opus"]["answered"] == selected
+    assert len(manifest["llm"]["prompt_sha256"]) == 64
     assert "Pleural" not in capsys.readouterr().out      # counts only, no UMLS names
+
+    assert main(["kg-link-sample", "--umls-dir", str(umls), "--out", str(out)]) == 0
+    sample = pl.read_csv(out / "sample.csv", infer_schema_length=0).fill_null("")
+    assert 0 < sample.height <= selected and set(sample["link_grade"]) == {""}
+    assert main(["kg-link-sample", "--umls-dir", str(umls), "--out", str(out)]) == 1   # kept
+    graded = out / "graded.csv"
+    sample.with_columns(pl.lit("correct").alias("link_grade")).write_csv(graded)
+    assert main(["kg-link-sample", "--score", str(graded), "--out", str(out)]) == 0
+    gate = json.loads((out / "gate.json").read_text(encoding="utf-8"))
+    assert gate["link"]["precision"] == 1.0 and gate["precision_passed"]
 
 
 def test_cli_stops_when_the_vocabulary_differs_from_v2_2(world, umls, tmp_path,  # noqa: F811
