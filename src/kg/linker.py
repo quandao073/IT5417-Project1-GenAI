@@ -55,21 +55,49 @@ def load_overrides(path: Path) -> dict[str, dict[str, str]]:
     return out
 
 
-def load_adjudication(path: Path) -> dict[tuple[str, str], dict]:
+def load_adjudication(path: Path, project_ids: Collection[str] = ()) -> dict[tuple[str, str], dict]:
     """{(kind, string): {decision, cui, reason}} from data/kg/link/adjudication.csv (columns
-    string, kind, decision, cui, reason); none when the file does not exist yet."""
+    string, kind, decision, cui, reason); none when the file does not exist yet. A `cui` is a
+    CUI or one of `project_ids` (PRJ:<name> of configs/kg/chexpert_cuis.yaml)."""
     if not path.is_file():
         return {}
     out = {}
     for row in pl.read_csv(path, infer_schema_length=0).fill_null("").iter_rows(named=True):
         decision, cui = row["decision"].strip(), row["cui"].strip()
+        is_id = bool(_CUI.fullmatch(cui)) or cui in project_ids
         if row["kind"] not in vocab.KINDS or decision not in (CUI, SKIP, OUT_OF_SCOPE, NONE) or (
-                decision == CUI) != bool(_CUI.fullmatch(cui)):
+                decision == CUI) != is_id:
             raise LinkerError(f"{path.name}: {row['kind']!r} {row['string']!r}: decision "
                               f"{decision!r} with cui {cui!r}")
         out[(row["kind"], row["string"])] = {"decision": decision, "cui": cui,
                                              "reason": row["reason"]}
     return out
+
+
+def check_adjudication(adjudication: dict, umls_dir: Path, cfg: dict,
+                       domain: pl.DataFrame) -> list[tuple[str, str, str, str]]:
+    """(kind, string, cui, problem) for each adjudicated CUI that is not in MRCONSO, has no
+    semantic type of the string's kind, or lies outside the kind's domain. Reported, never
+    corrected. Project ids (PRJ:) are not UMLS CUIs and are not checked here."""
+    wanted = {a["cui"] for a in adjudication.values() if _CUI.fullmatch(a["cui"])}
+    known = set(pl.scan_parquet(umls_dir / "mrconso.parquet")
+                .filter(pl.col("CUI").is_in(list(wanted))).select("CUI").unique()
+                .collect()["CUI"])
+    typed = set(pl.read_parquet(umls_dir / "mrsty.parquet", columns=["CUI", "TUI"])
+                .filter(pl.col("CUI").is_in(list(wanted)))
+                .join(_kind_tuis(cfg), on="TUI").select("CUI", "kind").iter_rows())
+    inside = set(domain.filter(pl.col("CUI").is_in(list(wanted))).iter_rows())
+    problems = []
+    for (kind, string), a in sorted(adjudication.items()):
+        cui = a["cui"]
+        if not _CUI.fullmatch(cui):
+            continue
+        problem = ("not in MRCONSO" if cui not in known
+                   else "no semantic type of the kind" if (cui, kind) not in typed
+                   else "outside the domain" if (cui, kind) not in inside else None)
+        if problem:
+            problems.append((kind, string, cui, problem))
+    return problems
 
 
 def scope(table: pl.DataFrame, cfg: dict) -> pl.DataFrame:

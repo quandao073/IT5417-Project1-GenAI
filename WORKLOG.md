@@ -28,8 +28,9 @@ thì xóa (git giữ lịch sử); không có nhật ký; mã D/T/P không đán
 - **Đang làm:** V2-1, V2-2, V2-5, V2-5b xong: UMLS đã lọc vào `data/umls/2026AA/`; 14 nhãn đã ánh xạ
   (`configs/kg/chexpert_cuis.yaml`, D53); ma trận điểm FT6 25.000 study × 14 nhãn; B1 dùng FT6 (D54: dev 0,539 so với
   zero-shot 0,482). V2-3 (linker, D56): phần 1 xong (luật `out_of_scope`, danh sách `skip`, miền ứng viên phương án
-  C, T024; commit `5183353`). Phần 2 đã chạy: Opus và Sonnet chọn cho 735 chuỗi, đồng thuận 646, độ phủ 0,918;
-  `data/kg/link/review.csv` chờ Claude bên chat phân xử 89 dòng lệch; chưa chạy giám khảo. Parser còn dùng OpenAI
+  C, T024). Phần 2 xong: Opus và Sonnet chọn cho 735 chuỗi, 89 dòng lệch đã phân xử (`adjudication.csv`, 90 dòng);
+  cổng đạt theo chuẩn bạc (precision 0,985, độ phủ 0,949; `docs/measured-facts.md`). Còn 3 liên kết giám khảo chấm sai
+  chờ phân xử (`notes/v2-link.md`). Tiếp theo V2-4 (ghi chú `IS_A` CheXpert ở `notes/v2-vocab.md`). Parser còn dùng OpenAI
   (D22) mà không còn credit: cần task chuyển sang Anthropic trước V2-6 (`notes/v2-eval.md`). Ghi chú cho V2-4 ở
   `notes/v2-vocab.md`; cho V2-6, V2-9 ở `notes/v2-scores.md`. TIP và ghi chú đo nằm ở `notes/` (gitignored, chỉ có trên
   máy). Bảng trạng thái và các task sau: `docs/v2-kg-plan.md`.
@@ -49,7 +50,7 @@ Dữ liệu, chỉ mục, artifact đều gitignored; lệnh dựng lại ở RE
 Kiểm tra sau mỗi thay đổi:
 
 ```bash
-uv run pytest -q                 # 942 passed; model/integration/llm bị bỏ chọn mặc định
+uv run pytest -q                 # 943 passed; model/integration/llm bị bỏ chọn mặc định
 uv run pytest -m model           # bắt buộc khi đổi configs/models.yaml hoặc src/embeddings/ (T37)
 uv run pytest -m integration     # cần `docker compose up -d qdrant`
 uv run pytest -m llm             # parse thật qua LLM, đọc .env

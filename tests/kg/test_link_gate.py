@@ -47,6 +47,8 @@ def test_precision_wilson_and_the_gate():
     assert (link["correct"], link["graded"], link["unsure"], link["precision"]) == (17, 20, 1,
                                                                                     0.85)
     assert link["wilson95"] == pytest.approx([0.6396, 0.9476], abs=1e-4)
+    weighted = graded.with_columns(pl.Series("mentions", [1] * 17 + [100] * 3 + [5]))
+    assert lg.precision(weighted, "link_grade")["precision_by_mentions"] == 17 / 317
     assert lg.precision(graded, "argmax_grade")["precision"] == 10 / 21
     result = lg.gate(graded, {"all": {"decided": 0.91}}, GATE)
     assert result["precision_passed"] and result["coverage_passed"]

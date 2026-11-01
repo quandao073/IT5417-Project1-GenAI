@@ -254,10 +254,27 @@ def test_adjudication_rows_are_checked(tmp_path):
     assert lk.load_adjudication(path) == {
         ("Anatomy", "lung"): {"decision": "cui", "cui": "C0024109", "reason": "ok"},
         ("Observation", "change"): {"decision": "skip", "cui": "", "reason": "qualifier"}}
-    for bad in ("lung,Anatomy,cui,,x\n", "lung,Anatomy,skip,C0024109,x\n", "lung,Body,none,,x\n"):
+    for bad in ("lung,Anatomy,cui,,x\n", "lung,Anatomy,skip,C0024109,x\n", "lung,Body,none,,x\n",
+                "tube,Observation,cui,PRJ:tubes,x\n"):
         path.write_text("string,kind,decision,cui,reason\n" + bad, encoding="utf-8")
         with pytest.raises(lk.LinkerError):
-            lk.load_adjudication(path)
+            lk.load_adjudication(path, {"PRJ:support_devices"})
+    path.write_text("string,kind,decision,cui,reason\ntube,Observation,cui,PRJ:support_devices,x\n",
+                    encoding="utf-8")
+    assert lk.load_adjudication(path, {"PRJ:support_devices"})[("Observation", "tube")][
+        "cui"] == "PRJ:support_devices"
+
+
+def test_adjudicated_cuis_are_checked_not_corrected(umls):
+    adj = {("Anatomy", "lung"): {"decision": "cui", "cui": "C1000007", "reason": ""},
+           ("Anatomy", "x"): {"decision": "cui", "cui": "C9999999", "reason": ""},
+           ("Anatomy", "y"): {"decision": "cui", "cui": "C1000003", "reason": ""},
+           ("Anatomy", "z"): {"decision": "cui", "cui": "C1000017", "reason": ""},
+           ("Observation", "t"): {"decision": "cui", "cui": "PRJ:support_devices", "reason": ""}}
+    assert lk.check_adjudication(adj, umls, CFG, lk.domain(umls, CFG)) == [
+        ("Anatomy", "x", "C9999999", "not in MRCONSO"),
+        ("Anatomy", "y", "C1000003", "no semantic type of the kind"),
+        ("Anatomy", "z", "C1000017", "outside the domain")]
 
 
 def mentions(*rows):

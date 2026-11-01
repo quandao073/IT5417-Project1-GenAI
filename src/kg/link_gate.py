@@ -91,8 +91,13 @@ def precision(graded: pl.DataFrame, column: str) -> dict:
                            .otherwise(pl.col(column)).alias("g"))["g"].to_list()
     k, n = grades.count("correct"), grades.count("correct") + grades.count("incorrect")
     lo, hi = wilson(k, n)
+    weights = [int(m) for m in graded["mentions"]] if "mentions" in graded.columns else [1] * len(
+        grades)
+    right = sum(w for g, w in zip(grades, weights, strict=True) if g == "correct")
+    judged = sum(w for g, w in zip(grades, weights, strict=True) if g in ("correct", "incorrect"))
     return {"correct": k, "graded": n, "unsure": grades.count("unsure"),
-            "precision": k / n if n else None, "wilson95": [lo, hi]}
+            "precision": k / n if n else None, "wilson95": [lo, hi],
+            "precision_by_mentions": right / judged if judged else None}
 
 
 def gate(graded: pl.DataFrame, coverage: dict, cfg: dict) -> dict:

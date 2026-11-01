@@ -849,7 +849,10 @@ def _cmd_kg_link(args: argparse.Namespace) -> int:
     umls, out = Path(args.umls_dir), Path(args.out)
     try:
         overrides = linker.load_overrides(default_config_dir() / "kg" / "linker_overrides.yaml")
-        adjudication = linker.load_adjudication(out / "adjudication.csv")
+        mapping = yaml.safe_load((default_config_dir() / "kg" / "chexpert_cuis.yaml")
+                                 .read_text(encoding="utf-8"))["labels"]
+        project_ids = {e["id"] for e in mapping.values() if e["id"].startswith("PRJ:")}
+        adjudication = linker.load_adjudication(out / "adjudication.csv", project_ids)
         pool_dir = Path(args.pool_dir)
         meta = json.loads((pool_dir / probe_pool.POOL_META).read_text(encoding="utf-8"))
         sections = vocab.pool_sections(pl.read_parquet(pool_dir / probe_pool.POOL_IMAGES),
@@ -867,6 +870,7 @@ def _cmd_kg_link(args: argparse.Namespace) -> int:
 
     started = time.perf_counter()
     domain = linker.domain(umls, lcfg)
+    unchecked = linker.check_adjudication(adjudication, umls, lcfg, domain)
     links, cands, outside = linker.link_heads(heads, umls, lcfg, overrides, domain,
                                               lambda: sapbert.SapBert(lcfg["sapbert"]),
                                               Path(args.sapbert_cache))
@@ -890,8 +894,6 @@ def _cmd_kg_link(args: argparse.Namespace) -> int:
     chexpert, mismatched = {"fetched": False}, set()
     phrase_dir = Path(args.chexpert_dir) / lcfg["chexpert_phrases"]["commit"]
     if phrase_dir.is_dir():
-        mapping = yaml.safe_load((default_config_dir() / "kg" / "chexpert_cuis.yaml")
-                                 .read_text(encoding="utf-8"))["labels"]
         phrases = chexpert_phrases.load(phrase_dir)
         devices = set(pl.read_parquet(umls / "mrsty.parquet", columns=["CUI", "TUI"])
                       .filter(pl.col("TUI").is_in(lcfg["labels"]["Device"]))["CUI"])
@@ -927,6 +929,9 @@ def _cmd_kg_link(args: argparse.Namespace) -> int:
               "lateral": {"moved": final["lateral_from"].drop_nulls().len(),
                           "unresolved": int(final["lateral_unresolved"].sum())},
               "outside_label_table": len(outside), "adjudicated": len(adjudication),
+              "adjudication_problems": [list(p) for p in unchecked],
+              "decisions": {f"{k}/{d}": n for k, d, n in final.group_by("kind", "decision")
+                            .len().sort("kind", "decision").iter_rows()},
               "agreement": linker.agreement(final), "coverage": linker.coverage(final),
               "chexpert_phrases": chexpert,
               "pairs": {"tried": pairs.height, "linked": pairs["cui"].drop_nulls().len()},
@@ -943,6 +948,10 @@ def _cmd_kg_link(args: argparse.Namespace) -> int:
           + ", ".join(f"{p} {len(c)}" for p, c in chosen.items()))
     print(f"coverage: {json.dumps(report['coverage'])}")
     print(f"agreement: {json.dumps(report['agreement'])}")
+    print(f"decisions: {json.dumps(report['decisions'])}")
+    print(f"adjudicated {len(adjudication)}; CUIs failing the checks: {len(unchecked)}")
+    for kind, string, cui, problem in unchecked:
+        print(f"  {kind} {string!r} {cui}: {problem}")
     if chexpert["fetched"]:
         print(f"CheXpert phrases: final {chexpert['final']}, argmax {chexpert['argmax']}")
     print(f"lateral CUIs moved to a parent {report['lateral']['moved']}, "
