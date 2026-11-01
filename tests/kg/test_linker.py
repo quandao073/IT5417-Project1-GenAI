@@ -230,6 +230,11 @@ def test_a_lateral_cui_moves_to_its_unlateralised_parent(umls, tmp_path):
     assert (lobe["cui"], lobe["lateral_from"], lobe["lateral_unresolved"]) == (
         "C1000013", "C1000012", False)
     assert got["lung"]["lateral_from"] is None
+    # a side in the string alone moves nothing: the unsided lobe chosen for it stays
+    unsided = {("Anatomy", "left lower lobe"): choice("cui", "C1000013")}
+    kept = decided(umls, tmp_path, rows[:1], {"opus": unsided, "sonnet": unsided})
+    assert (kept["left lower lobe"]["cui"], kept["left lower lobe"]["lateral_from"]) == (
+        "C1000013", None)
 
 
 def test_flags_point_at_what_needs_a_look():

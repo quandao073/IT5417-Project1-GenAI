@@ -583,3 +583,9 @@ Anatomy.
   lệch là khái niệm chung (nodule, mass, infiltrate, infection…) mà CheXpert gom vào nhãn; xử lý bằng `IS_A` ở V2-4.
 - Chi phí API (giá công bố): Opus 5.5 ≈ 6,27 USD, Sonnet 5.5 ≈ 2,81 USD, giám khảo Fable 5.1 ≈ 3,05 USD (191.252 / 22.808
   token), chạy thử OpenAI ≈ 0,08 USD.
+- **Sửa 2026-11-01 (sau cổng).** Phân xử thêm 3 liên kết giám khảo chấm sai: "air space", "airspace" (Anatomy) → C0034051
+  (phế nang), "bilateral lower lobe" → C0225758, "hypertension" → C0020542 (tăng áp phổi); 94 dòng phân xử, cả 94 CUI
+  qua kiểm. Sửa luật 7: trước đó một CUI bị coi là mang bên khi chuỗi pool của bất kỳ dòng nào chọn nó có chữ chỉ bên,
+  nên CUI không phân bên cũng bị đẩy lên cha; nay chỉ xét tên ưu tiên của CUI. 13 liên kết Anatomy đổi CUI (lower lobe,
+  upper lobe, hila, lung base…); quy về cha 43, chưa quy được 9. Số quyết định và độ phủ (0,949) không đổi. Trong mẫu
+  cổng chỉ 3 dòng trên đổi CUI, nên precision đo trên mẫu giữ 0,985 và 3 lỗi đó nay đã sửa bằng phân xử.

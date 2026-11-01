@@ -447,7 +447,10 @@ def decide(links: pl.DataFrame, choices: dict[str, dict], adjudication: dict, um
               **{f"llm_{p}": pl.String for p in providers}, "agree": pl.Boolean}
     decided = pl.DataFrame(rows, schema=schema, orient="row")
     out = links.drop("method").hstack(decided)
-    out = _unlateralise(out.with_columns(pl.col("query").alias("matched")), umls_dir, cfg, domain)
+    # Rule 7 reads the chosen CUI's own preferred name: a side word in the pool string says
+    # nothing about the CUI (an unsided lobe chosen for "bilateral lower lobe" stays).
+    out = _unlateralise(out.with_columns(pl.lit(None, pl.String).alias("matched")), umls_dir,
+                        cfg, domain)
     return out.drop("matched")
 
 
