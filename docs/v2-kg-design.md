@@ -151,7 +151,7 @@ Bốn quyết định thiết kế:
 | `Disease` | T047 Disease or Syndrome, T191 Neoplastic Process |
 | `Finding` | T033 Finding, T046 Pathologic Function, T184 Sign or Symptom, T190 Anatomical Abnormality, T037 Injury or Poisoning |
 | `Device` | T074 Medical Device |
-| `Anatomy` | T023 Body Part, Organ, or Organ Component; T029 Body Location or Region; T030 Body Space or Junction |
+| `Anatomy` | T023 Body Part, Organ, or Organ Component; T024 Tissue; T029 Body Location or Region; T030 Body Space or Junction |
 
 **Template Cypher.** Code điền tham số, LLM không viết. Các giới hạn độ sâu là đề xuất, chốt sau khi đo.
 

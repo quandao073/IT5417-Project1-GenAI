@@ -24,7 +24,7 @@ from src.embeddings.probe import patient_split, save_probe
 from src.evaluation import parser_benchmark as pb
 from src.evaluation import parser_eval as pe
 from src.evaluation import vector_baseline as vb
-from src.kg import chexpert_candidates, umls_filter, vocab
+from src.kg import chexpert_candidates, linker, sapbert, umls_filter, vocab
 from src.query.schema import ParseError
 from src.retrieval import image_scores as iscores
 from src.retrieval import label_filter as lf
@@ -819,6 +819,75 @@ def _cmd_kg_chexpert_candidates(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_kg_link(args: argparse.Namespace) -> int:
+    """V2-3 up to the hand review (D56): single and pair links of the 95% head, review.csv."""
+    cfg = load_config("kg")
+    lcfg = cfg["linker"]
+    umls, out = Path(args.umls_dir), Path(args.out)
+    try:
+        overrides = linker.load_overrides(default_config_dir() / "kg" / "linker_overrides.yaml")
+        pool_dir = Path(args.pool_dir)
+        meta = json.loads((pool_dir / probe_pool.POOL_META).read_text(encoding="utf-8"))
+        sections = vocab.pool_sections(pl.read_parquet(pool_dir / probe_pool.POOL_IMAGES),
+                                       Path(args.plus_csv))
+    except (linker.LinkerError, vocab.VocabError) as exc:
+        print(f"STOP: {exc}", file=sys.stderr)
+        return 1
+    found, _ = vocab.read_mentions(sections, Path(args.radgraph_dir))
+    mentions = vocab.apply_rules(found, cfg["vocab"], vocab.mrconso_names(umls / "mrconso.parquet"))
+    table = vocab.vocab_table(mentions, "joined")
+    if not table.equals(pl.read_parquet(Path(args.vocab_dir) / "vocab_joined.parquet")):
+        print("STOP: the vocabulary differs from V2-2's vocab_joined.parquet", file=sys.stderr)
+        return 1
+    heads = linker.scope(table, lcfg)
+
+    started = time.perf_counter()
+    domain = linker.domain(umls, lcfg)
+    links, outside = linker.link_heads(heads, umls, lcfg, overrides, domain,
+                                       lambda: sapbert.SapBert(lcfg["sapbert"]),
+                                       Path(args.sapbert_cache))
+    link_seconds = time.perf_counter() - started
+    observations = heads.filter(pl.col("kind") == "Observation")["string"]
+    occurrences = linker.located_pairs(mentions, observations)
+    pairs = linker.pair_links(linker.top_pairs(occurrences, lcfg["pairs"]), umls, lcfg, domain)
+    shares = linker.pair_share(mentions, occurrences, pairs,
+                               ["effusion", "edema", "opacity", "thickening"])
+    review = linker.review_rows(links, umls)
+
+    out.mkdir(parents=True, exist_ok=True)
+    links.write_parquet(out / "links.parquet")
+    pairs.write_parquet(out / "pair_links.parquet")
+    review.write_csv(out / "review.csv")
+    report = {"pool_sha256": meta["pool_sha256"], "umls": cfg["umls"]["version"],
+              "sapbert_revision": lcfg["sapbert"]["revision"], "tau": lcfg["sapbert"]["tau"],
+              "strings": {k: int(n) for k, n in heads.group_by("kind").len().iter_rows()},
+              "domain_cuis": linker.domain_sizes(umls, lcfg, domain),
+              "methods": linker.mention_counts(links),
+              "lateral": {"moved": links["lateral_from"].drop_nulls().len(),
+                          "unresolved": int(links["lateral_unresolved"].sum())},
+              "outside_label_table": len(outside),
+              "pairs": {"tried": pairs.height, "linked": pairs["cui"].drop_nulls().len()},
+              "pair_share": shares, "review_rows": review.height,
+              "link_seconds": round(link_seconds, 1), "git_commit": _git_commit()}
+    (out / "manifest.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+
+    # Counts only: links and review.csv hold UMLS names (T38).
+    for kind, c in report["domain_cuis"].items():
+        print(f"{kind} CUIs: label table {c['label_table']:,}, domain {c['domain']:,}")
+    for name, c in report["methods"].items():
+        print(f"{name:26s} {c['strings']:>5,} strings  {c['mentions']:>9,} mentions")
+    print(f"lateral CUIs moved to a parent {report['lateral']['moved']}, "
+          f"unresolved {report['lateral']['unresolved']}; strings named only outside the "
+          f"label table {len(outside)}")
+    print(f"pairs tried {pairs.height:,}, linked {report['pairs']['linked']:,}")
+    for s, v in shares.items():
+        print(f"pair links, {s:10s}: {v['pair_linked']:>7,} of {v['mentions']:>7,} mentions "
+              f"({v['located']:,} located)")
+    print(f"review.csv: {review.height} rows; linking took {link_seconds:,.0f} s")
+    print(f"written: {out}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cxr", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -980,6 +1049,17 @@ def build_parser() -> argparse.ArgumentParser:
     kgc.add_argument("--umls-dir", default="data/umls/2026AA")
     kgc.add_argument("--out", default="data/kg/vocab/chexpert_candidates.csv")
     kgc.set_defaults(func=_cmd_kg_chexpert_candidates)
+
+    kgl = sub.add_parser("kg-link",
+                         help="V2-3: link the vocabulary head to CUIs, write review.csv")
+    kgl.add_argument("--pool-dir", default="data/probe_pool")
+    kgl.add_argument("--plus-csv", default="data/raw/chexpert-plus/df_chexpert_plus_240401.csv")
+    kgl.add_argument("--radgraph-dir", default="data/raw/chexpert-plus/radgraph_xl")
+    kgl.add_argument("--umls-dir", default="data/umls/2026AA")
+    kgl.add_argument("--vocab-dir", default="data/kg/vocab")
+    kgl.add_argument("--sapbert-cache", default="data/kg/sapbert")
+    kgl.add_argument("--out", default="data/kg/link")
+    kgl.set_defaults(func=_cmd_kg_link)
 
     return parser
 

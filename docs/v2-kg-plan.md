@@ -13,14 +13,15 @@ ghi vào `docs/measured-facts.md`, quyết định vào `WORKLOG.md`. Ngưỡng 
 | V2-2 | Probe từ vựng trên pool; ánh xạ 14 nhãn sang CUI | V2-1 | ✅ |
 | V2-5 | Ma trận điểm CXR-CLIP FT6, hiệu chỉnh trên pool-val | V2-2 (sau phần đo) | ✅ |
 | V2-5b | Đăng ký build corpus FT6 cho B1; zero-shot thành dòng phụ (D51) | V2-5 | ✅ |
-| V2-3 | Linker chuỗi → CUI | V2-2 | ⏳ |
+| V2-3 | Linker chuỗi → CUI | V2-2 | 🔄 |
 | V2-4 | Mở rộng có kiểm soát; trọng số `SUGGESTS`, `TYPICALLY_AT` trên pool | V2-3 | ⏳ |
 | V2-6 | Neo4j, bốn tool, LLM chọn khái niệm và diễn giải; B2 chạy end-to-end | V2-4, V2-5 | ⏳ |
 | V2-7 | Benchmark và pooling | V2-6, V2-5b | ⏳ |
 | V2-8 | Đánh giá chính thức, heldout một lần | V2-7 | ⏳ |
 | V2-9 | Agent (ablation) và UI | V2-8; UI chờ `pnpm` (T5) | ⏳ |
 
-**TIẾP THEO:** V2-3, linker (`notes/tip-v2-3.md`, chờ duyệt). TIP nằm ở `notes/tip-*.md` (gitignored).
+**TIẾP THEO:** V2-3, linker (`notes/tip-v2-3.md`, D56): miền ứng viên đã chốt (phương án C, T024); đang làm SapBERT lấy
+top 10 ứng viên, hai LLM chọn, phân xử, mẫu cổng và cổng kép. TIP nằm ở `notes/tip-*.md` (gitignored).
 
 ## Dữ liệu
 

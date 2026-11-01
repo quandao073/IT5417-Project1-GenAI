@@ -78,24 +78,46 @@ def pool_sections(pool_images: pl.DataFrame, plus_csv: Path) -> pl.DataFrame:
     return pl.concat(parts).filter(pl.col("text").is_not_null() & (pl.col("text") != ""))
 
 
-def _mentions(entities: dict) -> Iterator[tuple[str, str | None, list[str], int]]:
-    """(kind, polarity, tokens in text order, head index) for each entity that modifies nothing."""
+def _head_of(entities: dict) -> Callable[[str], str]:
+    """The entity a `modify` chain ends at: the head of the phrase an entity belongs to."""
+    target = {eid: next((t for relation, t in e["relations"] if relation == "modify"), None)
+              for eid, e in entities.items()}
+
+    def head(eid: str) -> str:
+        seen = {eid}
+        while (nxt := target.get(eid)) in entities and nxt not in seen:
+            seen.add(nxt)
+            eid = nxt
+        return eid
+    return head
+
+
+def _mentions(entities: dict) -> Iterator[tuple[str, str | None, list[str], int, str, list[str]]]:
+    """(kind, polarity, tokens in text order, head index, head id, located_at) for each entity
+    that modifies nothing. `located_at` holds the heads of the Anatomy phrases the phrase points
+    to, from the head or any of its modifiers."""
     modifiers: dict[str, list[str]] = {}
     for eid, entity in entities.items():
         for relation, target in entity["relations"]:
             if relation == "modify":
                 modifiers.setdefault(target, []).append(eid)
+    head = _head_of(entities)
     for eid, entity in entities.items():
         if any(relation == "modify" for relation, _ in entity["relations"]):
             continue
         kind, *_, status = entity["label"].split("::")
         parts = sorted([eid, *modifiers.get(eid, [])], key=lambda i: entities[i]["start_ix"])
         polarity = _POLARITY.get(status) if kind == "Observation" else None
-        yield kind, polarity, [normalize(entities[i]["tokens"]) for i in parts], parts.index(eid)
+        located = sorted({head(t) for i in parts for relation, t in entities[i]["relations"]
+                          if relation == "located_at" and t in entities
+                          and entities[head(t)]["label"].startswith("Anatomy")})
+        yield (kind, polarity, [normalize(entities[i]["tokens"]) for i in parts], parts.index(eid),
+               eid, located)
 
 
 def read_mentions(sections: pl.DataFrame, radgraph_dir: Path) -> tuple[pl.DataFrame, dict]:
-    """One row per mention and study, and per section how many texts found their RadGraph record."""
+    """One row per mention and study, and per section how many texts found their RadGraph record.
+    (study_id, section, entity) names a mention; `located_at` holds Anatomy mentions' `entity`."""
     rows, stats = [], {}
     for section in SECTIONS:
         part = sections.filter(pl.col("section") == section)
@@ -111,11 +133,12 @@ def read_mentions(sections: pl.DataFrame, radgraph_dir: Path) -> tuple[pl.DataFr
             if not studies:
                 continue
             matched += len(studies)
-            for kind, polarity, tokens, head in _mentions(graph["entities"]):
-                rows.extend((study, section, kind, polarity, tokens, head) for study in studies)
+            for mention in _mentions(graph["entities"]):
+                rows.extend((study, section, *mention) for study in studies)
         stats[section] = {"texts": part.height, "matched": matched}
     schema = {"study_id": pl.String, "section": pl.String, "kind": pl.String, "polarity": pl.String,
-              "tokens": pl.List(pl.String), "head_index": pl.Int64}
+              "tokens": pl.List(pl.String), "head_index": pl.Int64, "entity": pl.String,
+              "located_at": pl.List(pl.String)}
     return pl.DataFrame(rows, schema=schema, orient="row"), stats
 
 
