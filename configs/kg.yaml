@@ -35,7 +35,7 @@ linker:
     Device: [T074]
     Anatomy: [T023, T024, T029, T030]
   kinds: {Observation: [Finding, Disease, Device], Anatomy: [Anatomy]}
-  normal: [clear, normal, unremarkable, normal limits, within normal limits]
+  normal: [clear, normal, unremarkable, normal limits, within normal limits, normal limit]
   descriptive: [low, enlarged, prominence, prominent, marking, blunting, elevation, tortuous, thickening]
   # Anatomy adjective -> noun, matched like a string. Only unambiguous pairs; the others go to SapBERT and review.
   adjectives:

@@ -1238,7 +1238,15 @@ def _cmd_kg_graph_llm(args: argparse.Namespace) -> int:
                  "opus_decision": answers.get(("SUGGESTS", it["string"]), {}).get("decision", ""),
                  "opus_reason": answers.get(("SUGGESTS", it["string"]), {}).get("reason", ""),
                  "decision": "", "note": ""} for i, it in enumerate(items, start=1)]
-        pl.DataFrame(rows).write_csv(out / "suggests_review.csv")
+        # an edge already adjudicated keeps its decision; a new one takes Opus's proposal for now
+        path = out / "suggests_review.csv"
+        done = ({(r["src"], r["dst"]): (r["decision"], r["note"]) for r in
+                 pl.read_csv(path, infer_schema_length=0).fill_null("").iter_rows(named=True)
+                 if r["decision"]} if path.exists() else {})
+        for r in rows:
+            r["decision"], r["note"] = done.get((r["src"], r["dst"]), (
+                r["opus_decision"], "opus proposal applied; chat review pending"))
+        pl.DataFrame(rows).write_csv(path)
     else:
         blocked = [*concepts["blocked_phrases"]["vi"], *gcfg["alias_common_phrases"]]
         label_of = dict(nodes.filter(pl.col("scorable")).select("cui", "chexpert_label")

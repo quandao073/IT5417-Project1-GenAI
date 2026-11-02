@@ -637,3 +637,19 @@ chính theo lượt nhắc `n_pool`).
   limit C0442816 Finding 1.483; deformity C0302142 Finding 1.295; emphysema C0013990 Finding 1.277; enlargement C2711450
   Finding 1.270; (cặp) C0741171 Disease 1.253; (cặp) C1849561 Finding 1.238; osteopenia C0029453 Disease 1.196; (cặp)
   C0038536 Finding 1.064; calcification C0006663 Finding 998.
+
+## KG V2-4: cổng cuối (đo 2026-11-02, D60)
+
+**Cách đo:** sau 5 phân xử cặp (`adjudication.csv`, 99 dòng), luật nhất quán ("normal limit" → normal; abnormality,
+disease, acute disease → `skip`), `cxr kg-link`, `cxr kg-build-graph`, `cxr kg-graph-llm --task suggests --all` (6 cạnh
+mới, tạm theo đề xuất Opus), `cxr kg-build-graph`.
+
+- Liên kết cặp: 350 (324 exact, 23 LLM, 3 phân xử). V2-3 sau luật nhất quán: độ phủ đã quyết 0,949, có CUI 0,745.
+- Bảng KG: nút 9.632 (lõi 595); `IS_A` 10.218, `HAS_STY` 9.639, `PART_OF` 3.826, `TYPICALLY_AT` 579 (3.580 cặp trước
+  ngưỡng), `SUGGESTS` 48 (1.524 → 136 → 48; giữ 44, bỏ 4); alias 37.097 tên MRCONSO, 90 dạng `concepts.yaml`, 467 alias vi.
+- **Cổng nối về scorable: 0,898 theo lượt nhắc, nhận dưới ngưỡng 0,90 (D60)**; theo khái niệm 288/595. Theo nhãn: Anatomy
+  117/140, 0,977; Device 76/101, 0,934; Disease 54/125, 0,909; Finding 41/229, 0,773.
+- Đề xuất nối theo CheXpert labeler (D57) không có cụm khớp: blunting + costophrenic angle/sulcus (chỉ "blunt" trong
+  `no_finding.txt`), cardiomediastinal (chỉ "cardiomediastinum" trong `enlarged_cardiomediastinum.txt`), pulmonary
+  vasculature (chỉ "vascular prominence", "vascular congestion" trong `edema.txt`), aicd và defibrillator (chỉ "icd" trong
+  `support_devices.txt`), aspiration (chỉ trong `no_finding.txt`).
