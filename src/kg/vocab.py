@@ -92,10 +92,20 @@ def _head_of(entities: dict) -> Callable[[str], str]:
     return head
 
 
-def _mentions(entities: dict) -> Iterator[tuple[str, str | None, list[str], int, str, list[str]]]:
-    """(kind, polarity, tokens in text order, head index, head id, located_at) for each entity
-    that modifies nothing. `located_at` holds the heads of the Anatomy phrases the phrase points
-    to, from the head or any of its modifiers."""
+def _targets(entities: dict, head: Callable[[str], str], parts: list[str], eid: str,
+             relation: str, kind: str) -> list[str]:
+    """The heads of the `kind` phrases that the phrase `parts` points to by `relation`."""
+    return sorted({head(t) for i in parts for r, t in entities[i]["relations"]
+                   if r == relation and t in entities
+                   and entities[head(t)]["label"].startswith(kind)} - {eid})
+
+
+def _mentions(entities: dict) -> Iterator[tuple[str, str | None, list[str], int, str, list[str],
+                                                list[str]]]:
+    """(kind, polarity, tokens in text order, head index, head id, located_at, suggests) for each
+    entity that modifies nothing. `located_at` holds the heads of the Anatomy phrases the phrase
+    points to, from the head or any of its modifiers; `suggests`, likewise the heads of the
+    Observation phrases it is `suggestive_of`."""
     modifiers: dict[str, list[str]] = {}
     for eid, entity in entities.items():
         for relation, target in entity["relations"]:
@@ -108,11 +118,9 @@ def _mentions(entities: dict) -> Iterator[tuple[str, str | None, list[str], int,
         kind, *_, status = entity["label"].split("::")
         parts = sorted([eid, *modifiers.get(eid, [])], key=lambda i: entities[i]["start_ix"])
         polarity = _POLARITY.get(status) if kind == "Observation" else None
-        located = sorted({head(t) for i in parts for relation, t in entities[i]["relations"]
-                          if relation == "located_at" and t in entities
-                          and entities[head(t)]["label"].startswith("Anatomy")})
         yield (kind, polarity, [normalize(entities[i]["tokens"]) for i in parts], parts.index(eid),
-               eid, located)
+               eid, _targets(entities, head, parts, eid, "located_at", "Anatomy"),
+               _targets(entities, head, parts, eid, "suggestive_of", "Observation"))
 
 
 def read_mentions(sections: pl.DataFrame, radgraph_dir: Path) -> tuple[pl.DataFrame, dict]:
@@ -138,7 +146,7 @@ def read_mentions(sections: pl.DataFrame, radgraph_dir: Path) -> tuple[pl.DataFr
         stats[section] = {"texts": part.height, "matched": matched}
     schema = {"study_id": pl.String, "section": pl.String, "kind": pl.String, "polarity": pl.String,
               "tokens": pl.List(pl.String), "head_index": pl.Int64, "entity": pl.String,
-              "located_at": pl.List(pl.String)}
+              "located_at": pl.List(pl.String), "suggests": pl.List(pl.String)}
     return pl.DataFrame(rows, schema=schema, orient="row"), stats
 
 

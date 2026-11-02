@@ -328,12 +328,16 @@ def test_mentions_carry_their_entity_and_the_anatomy_heads_they_are_located_at()
         "6": entity("patchy", 6, relations=[("modify", "7"), ("located_at", "4")]),
         "7": entity("consolidation", 7),                                  # through its modifier
         "8": entity("tube", 8, relations=[("located_at", "2")]),          # not an Anatomy
+        "9": entity("chf", 9),
+        "10": entity("small", 10, relations=[("modify", "11"), ("suggestive_of", "9")]),
+        "11": entity("edema", 11),                                        # through its modifier
     }
-    got = {tokens[head]: (eid, located) for _, _, tokens, head, eid, located
+    got = {tokens[head]: (eid, located, suggests) for _, _, tokens, head, eid, located, suggests
            in vocab._mentions(entities)}
-    assert got["effusion"] == ("2", ["1"])
-    assert got["opacity"] == ("5", ["4"]) and got["consolidation"] == ("7", ["4"])
-    assert got["tube"] == ("8", []) and got["lobe"] == ("4", [])
+    assert got["effusion"] == ("2", ["1"], [])
+    assert got["opacity"] == ("5", ["4"], []) and got["consolidation"] == ("7", ["4"], [])
+    assert got["tube"] == ("8", [], []) and got["lobe"] == ("4", [], [])
+    assert got["edema"] == ("11", [], ["9"])
 
 
 def test_overrides_hold_strings_and_codes_only(tmp_path):

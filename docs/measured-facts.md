@@ -589,3 +589,27 @@ Anatomy.
   nên CUI không phân bên cũng bị đẩy lên cha; nay chỉ xét tên ưu tiên của CUI. 13 liên kết Anatomy đổi CUI (lower lobe,
   upper lobe, hila, lung base…); quy về cha 43, chưa quy được 9. Số quyết định và độ phủ (0,949) không đổi. Trong mẫu
   cổng chỉ 3 dòng trên đổi CUI, nên precision đo trên mẫu giữ 0,985 và 3 lỗi đó nay đã sửa bằng phân xử.
+
+## KG V2-4: nút, cạnh và trọng số trên pool (đo 2026-11-02, D57, D58)
+
+**Cách đo:** `uv run cxr kg-build-graph` (lõi = 14 nhãn + CUI cuối của V2-3 + CUI liên kết cặp; mở rộng trong miền C:
+FMA ±3 bước, `IS_A` xuống 2, lên 6 dừng ở gốc chặn; không thêm khái niệm mang bên; `SUGGESTS`, `TYPICALLY_AT` trên cả
+pool, nguồn present, `p = n / n_src` theo report, giữ khi n ≥ 20). Rồi `cxr kg-graph-llm --task suggests --all` và
+`--task alias --all` (`claude-opus-5-5`, effort medium; prompt `kg_suggests_review_v1.txt`, `kg_alias_vi_v1.txt`).
+
+- Nút: 10.075 (lõi 593): Anatomy 5.256, Disease 3.089, Finding 1.629, Device 101 (cộng 127 SemanticType).
+- Cạnh: `IS_A` 10.962 (trong đó 125 `chexpert`, 121 giữa semantic type), `HAS_STY` 10.084, `PART_OF` 3.826,
+  `TYPICALLY_AT` 574, `SUGGESTS` 45.
+- Trọng số trước và sau ngưỡng n ≥ 20: `SUGGESTS` 1.427 cặp → 128 → 45 cặp có đích là Disease; `TYPICALLY_AT` 3.616 → 574.
+- chf (C0018802; chuỗi "chf", "congestive failure"; "heart failure" không có trong phần đầu 95%): Cardiomegaly → chf
+  n = 36 (p 0,0034), Edema → chf n = 20 (p 0,0011) qua ngưỡng; Lung Opacity → chf n = 17 và Pleural Effusion → chf n = 7
+  dưới ngưỡng.
+- Thiết bị (D58): 72 CUI vào `PRJ:support_devices` theo cụm từ CheXpert labeler (khớp theo từ trong chuỗi hoặc tên),
+  27 CUI `IS_A` C0025080.
+- Khái niệm lõi nối được về một khái niệm `scorable` (theo bốn template Cypher của thiết kế: `IS_A` xuống 0..4 hoặc lên
+  1..6; giải phẫu có `TYPICALLY_AT` từ khái niệm scorable qua `PART_OF` 0..5; Disease có `SUGGESTS` từ khái niệm
+  scorable): **217 / 593 = 0,366**; theo lượt nhắc (`n_pool`) 0,789. Theo nhãn (khái niệm, lượt nhắc): Anatomy 55/140,
+  0,703; Device 77/101, 0,954; Disease 42/127, 0,879; Finding 43/225, 0,804. **Dưới cổng 0,90**, chưa chốt.
+- LLM: duyệt 45 cạnh `SUGGESTS` (Opus giữ 39, bỏ 6); alias tiếng Việt cho 214 khái niệm, 515 dòng, cờ `shared` 73,
+  `single_syllable` 17. Token 197.660 vào, 32.165 ra (≈ 1,43 USD), cộng 2 lượt alias chạm `max_tokens` không ghi được
+  usage (≤ 0,32 USD).

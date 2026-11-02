@@ -28,6 +28,8 @@ from src.evaluation import vector_baseline as vb
 from src.kg import (
     chexpert_candidates,
     chexpert_phrases,
+    graph,
+    graph_llm,
     link_gate,
     linker,
     llm_select,
@@ -1030,6 +1032,186 @@ def _cmd_kg_link_sample(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_kg_build_graph(args: argparse.Namespace) -> int:
+    """V2-4 (D57, D58): nodes and edges of the knowledge part of the KG, weights on the pool."""
+    cfg = load_config("kg")
+    lcfg, gcfg = cfg["linker"], cfg["graph"]
+    umls, link_dir, out = Path(args.umls_dir), Path(args.link_dir), Path(args.out)
+    mapping = yaml.safe_load((default_config_dir() / "kg" / "chexpert_cuis.yaml")
+                             .read_text(encoding="utf-8"))["labels"]
+    pool_dir = Path(args.pool_dir)
+    try:
+        meta = json.loads((pool_dir / probe_pool.POOL_META).read_text(encoding="utf-8"))
+        sections = vocab.pool_sections(pl.read_parquet(pool_dir / probe_pool.POOL_IMAGES),
+                                       Path(args.plus_csv))
+    except vocab.VocabError as exc:
+        print(f"STOP: {exc}", file=sys.stderr)
+        return 1
+    found, _ = vocab.read_mentions(sections, Path(args.radgraph_dir))
+    mentions = vocab.apply_rules(found, cfg["vocab"], vocab.mrconso_names(umls / "mrconso.parquet"))
+    if not vocab.vocab_table(mentions, "joined").equals(
+            pl.read_parquet(Path(args.vocab_dir) / "vocab_joined.parquet")):
+        print("STOP: the vocabulary differs from V2-2's vocab_joined.parquet", file=sys.stderr)
+        return 1
+    links = pl.read_parquet(link_dir / "links.parquet")
+    pairs = pl.read_parquet(link_dir / "pair_links.parquet")
+    domain = linker.domain(umls, lcfg)
+
+    grown = graph.expand(graph.core(links, pairs, mapping, gcfg), umls, lcfg, gcfg, domain)
+    mcuis = graph.mention_cuis(mentions, links, pairs)
+    nodes = graph.nodes_table(grown, mapping, umls, lcfg, gcfg, graph.n_pool(mcuis))
+    phrase_dir = Path(args.chexpert_dir) / lcfg["chexpert_phrases"]["commit"]
+    device_phrases = chexpert_phrases.load(phrase_dir)["Support Devices"]
+    groups = graph.device_groups(links, grown, umls, lcfg, device_phrases, gcfg["devices_parent"],
+                                 mapping["Support Devices"].get("children", []))
+    cx, missing = graph.chexpert_edges(mapping, gcfg, links, groups)
+    suggests, s_all = graph.weighted(mcuis, "suggests", "Observation", graph.SUGGESTS,
+                                     gcfg["min_n"])
+    located, t_all = graph.weighted(mcuis, "located_at", "Anatomy", graph.TYPICALLY_AT,
+                                    gcfg["min_n"])
+    s_count = {"pairs": s_all.height, "kept": suggests.height}
+    t_count = {"pairs": t_all.height, "kept": located.height}
+    # SUGGESTS ends at a Disease (schema); every weighted edge needs both ends among the nodes
+    disease = set(nodes.filter(pl.col("labels").str.contains("Disease"))["cui"])
+    suggests = suggests.filter(pl.col("dst").is_in(list(disease)))
+    stypes, st_edges = graph.semantic_types(umls)
+    edges = pl.concat([graph.umls_edges(nodes, umls, lcfg), cx, suggests, located, st_edges])
+    known = set(nodes["cui"]) | set(stypes["tui"])
+    dropped = edges.filter(~pl.col("src").is_in(list(known)) | ~pl.col("dst").is_in(list(known)))
+    edges = edges.join(dropped.select("src", "rel", "dst"), on=["src", "rel", "dst"], how="anti")
+    reach = graph.scorable_reach(nodes, edges)
+    nodes = nodes.join(reach, on="cui")
+
+    out.mkdir(parents=True, exist_ok=True)
+    nodes.write_parquet(out / "nodes.parquet")
+    stypes.write_parquet(out / "semantic_types.parquet")
+    edges.write_parquet(out / "edges.parquet")
+    pl.concat([s_all, t_all]).write_parquet(out / "weights_all.parquet")   # before the n cut
+    in_core = nodes.filter(pl.col("in_core"))
+    chf = sorted(set(links.filter(pl.col("kind") == "Observation", pl.col("string").is_in(
+        ["chf", "heart failure", "congestive heart failure"]))["cui"].drop_nulls()))
+    report = {
+        "pool_sha256": meta["pool_sha256"], "umls": cfg["umls"]["version"],
+        "include_snomed": cfg["umls"]["include_snomed"], "rel_sabs": cfg["umls"]["rel_sabs"],
+        "links_sha256": hashlib.sha256((link_dir / "links.parquet").read_bytes()).hexdigest(),
+        "nodes": {"all": nodes.height, "core": in_core.height,
+                  "by_label": dict(nodes.group_by("labels").len().sort("labels").iter_rows())},
+        "edges": dict(edges.group_by("rel").len().sort("rel").iter_rows()),
+        "edges_by_source": {f"{r}/{s}": n for r, s, n in edges.filter(pl.col("rel") == graph.ISA)
+                            .group_by("rel", "source").len().sort("source").iter_rows()
+                            if s in ("chexpert", "STN")},
+        "weighted": {"SUGGESTS": {**s_count, "to_disease": suggests.height},
+                     "TYPICALLY_AT": t_count, "min_n": gcfg["min_n"]},
+        "dropped_edges_without_nodes": dropped.height,
+        "scorable_reach": {"core": int(in_core["reaches"].sum()), "of": in_core.height,
+                           "share": in_core["reaches"].mean()},
+        "devices": {k: len(v) for k, v in groups.items()}, "generic_missing": missing,
+        "chf_cuis": chf, "git_commit": _git_commit()}
+    (out / "manifest.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    (out / "devices.json").write_text(json.dumps(groups, indent=2), encoding="utf-8")
+
+    # Counts and codes only (T38).
+    print(f"nodes {nodes.height:,} (core {in_core.height:,}); "
+          f"by label {report['nodes']['by_label']}")
+    print(f"edges {json.dumps(report['edges'])}; chexpert/STN IS_A {report['edges_by_source']}")
+    print(f"weighted (n >= {gcfg['min_n']}): SUGGESTS {s_count['pairs']:,} pairs -> "
+          f"{s_count['kept']:,} kept -> {suggests.height:,} to a Disease; TYPICALLY_AT "
+          f"{t_count['pairs']:,} -> {t_count['kept']:,}")
+    print(f"core concepts reaching a scorable one: {report['scorable_reach']['core']:,} of "
+          f"{in_core.height:,} ({report['scorable_reach']['share']:.3f})")
+    print(f"devices: CheXpert phrases {len(groups['support_devices'])}, other "
+          f"{len(groups['other'])}; generic strings without a CUI: {missing}")
+    print(f"chf / heart failure CUIs {chf}; written: {out}")
+    return 0
+
+
+def _cmd_kg_graph_llm(args: argparse.Namespace) -> int:
+    """V2-4 (D58): Opus reviews the strongest SUGGESTS edges, or proposes Vietnamese aliases;
+    answers are cached and written to a review CSV for Claude in the chat app to adjudicate."""
+    gcfg = load_config("kg")["graph"]
+    mcfg, out, umls = gcfg["llm"], Path(args.out), Path(args.umls_dir)
+    key = llm_select.api_key("ANTHROPIC_API_KEY")
+    if not key:
+        print("STOP: ANTHROPIC_API_KEY is not set (environment or .env)", file=sys.stderr)
+        return 1
+    nodes = pl.read_parquet(out / "nodes.parquet")
+    concepts = load_config("concepts")
+    existing_vi = {label: entry.get("vi", []) for label, entry in concepts["concepts"].items()}
+    if args.task == "suggests":
+        edges = pl.read_parquet(out / "edges.parquet")
+        top = (edges.filter(pl.col("rel") == graph.SUGGESTS)
+               .sort(["n", "p"], descending=True).head(mcfg["suggests_top"]))
+        cuis = set(top["src"]) | set(top["dst"])
+    else:
+        cuis = set(nodes.filter(pl.col("scorable"))["cui"]) | set(
+            nodes.filter(~pl.col("scorable")).sort("n_pool", descending=True)
+            .head(mcfg["alias_top"])["cui"])
+    umls_cuis = [c for c in cuis if not c.startswith("PRJ:")]
+    described = linker.describe(umls_cuis, umls)
+    info = {c: (n, t or "") for c, n, t in described.select("cui", "name", "semantic_types")
+            .iter_rows()}
+    info |= {c: (n, "") for c, n in nodes.filter(pl.col("cui").str.starts_with("PRJ:"))
+             .select("cui", "name").iter_rows()}
+    if args.task == "suggests":
+        items = graph_llm.suggest_items(edges, info, mcfg["suggests_top"])
+        prompt_file, schema = mcfg["suggests_prompt"], graph_llm.SUGGEST_SCHEMA
+        parse, refused = graph_llm.parse_review, graph_llm.REFUSED_REVIEW
+    else:
+        english = {}
+        for cui, text in (pl.scan_parquet(umls / "mrconso.parquet")
+                          .filter(pl.col("CUI").is_in(umls_cuis)).select("CUI", "STR")
+                          .unique().sort("CUI", "STR").collect().iter_rows()):
+            english.setdefault(cui, []).append(text)
+        items = graph_llm.alias_items(nodes.filter(pl.col("cui").is_in(list(cuis))), info,
+                                      english, existing_vi, mcfg["alias_top"])
+        prompt_file, schema = mcfg["alias_prompt"], graph_llm.ALIAS_SCHEMA
+        parse, refused = graph_llm.parse_aliases, graph_llm.REFUSED_ALIASES
+    system, prompt_sha = llm_select.load_prompt(default_config_dir() / prompt_file)
+    cache = _llm_cache(out, f"{args.task}_opus")
+    chooser = _chooser("opus", mcfg["model"], key)
+    stats = llm_select.run(items, chooser, system, prompt_sha, cache,
+                           None if args.all else args.limit, mcfg["workers"], schema=schema,
+                           parse=parse, refused=refused)
+    answers = llm_select.choices(items, cache, chooser.model, prompt_sha)
+
+    if args.task == "suggests":
+        rows = [{"rank": i, "src": it["input"]["source"]["cui"],
+                 "src_name": it["input"]["source"]["name"], "dst": it["input"]["target"]["cui"],
+                 "dst_name": it["input"]["target"]["name"],
+                 "n": it["input"]["n_reports_with_both"],
+                 "n_src": it["input"]["n_reports_with_source"], "p": it["input"]["p"],
+                 "opus_decision": answers.get(("SUGGESTS", it["string"]), {}).get("decision", ""),
+                 "opus_reason": answers.get(("SUGGESTS", it["string"]), {}).get("reason", ""),
+                 "decision": "", "note": ""} for i, it in enumerate(items, start=1)]
+        pl.DataFrame(rows).write_csv(out / "suggests_review.csv")
+    else:
+        blocked = [*concepts["blocked_phrases"]["vi"], *gcfg["alias_common_phrases"]]
+        label_of = dict(nodes.filter(pl.col("scorable")).select("cui", "chexpert_label")
+                        .iter_rows())
+        rows = []
+        for it in items:
+            answer = answers.get(("alias", it["string"]))
+            if answer is None:
+                continue
+            proposed = list(dict.fromkeys(a.strip().lower() for a in answer["aliases"]
+                                          if a.strip()))[:mcfg["alias_max"]]
+            for alias in proposed or [""]:
+                rows.append({"cui": it["string"], "name": it["input"]["name"],
+                             "chexpert_label": it["input"]["chexpert_label"] or "",
+                             "n_pool": it["input"]["n_pool_reports"], "alias": alias,
+                             "opus_reason": answer["reason"]})
+        flagged = graph_llm.alias_flags([(r["cui"], r["alias"]) for r in rows if r["alias"]],
+                                        blocked, existing_vi, label_of)
+        flags = iter(flagged)
+        for r in rows:
+            r["flags"] = next(flags) if r["alias"] else "none_proposed"
+            r["decision"], r["note"] = "", ""
+        pl.DataFrame(rows).write_csv(out / "alias_vi_review.csv")
+    print(json.dumps({"task": args.task, "model": chooser.model, "prompt_sha256": prompt_sha,
+                      **stats}, indent=2))
+    return 0
+
+
 def _cmd_kg_fetch_chexpert_phrases(args: argparse.Namespace) -> int:
     """V2-3 (D56): the CheXpert labeler's mention phrases at the pinned commit, into data/."""
     target = chexpert_phrases.fetch(load_config("kg")["linker"]["chexpert_phrases"],
@@ -1229,6 +1411,28 @@ def build_parser() -> argparse.ArgumentParser:
     kgs.add_argument("--umls-dir", default="data/umls/2026AA")
     kgs.add_argument("--out", default="data/kg/link")
     kgs.set_defaults(func=_cmd_kg_link_sample)
+
+    kgg = sub.add_parser("kg-build-graph",
+                         help="V2-4: nodes and edges of the KG, SUGGESTS and TYPICALLY_AT weights")
+    kgg.add_argument("--pool-dir", default="data/probe_pool")
+    kgg.add_argument("--plus-csv", default="data/raw/chexpert-plus/df_chexpert_plus_240401.csv")
+    kgg.add_argument("--radgraph-dir", default="data/raw/chexpert-plus/radgraph_xl")
+    kgg.add_argument("--umls-dir", default="data/umls/2026AA")
+    kgg.add_argument("--vocab-dir", default="data/kg/vocab")
+    kgg.add_argument("--link-dir", default="data/kg/link")
+    kgg.add_argument("--chexpert-dir", default="data/kg/chexpert_phrases")
+    kgg.add_argument("--out", default="data/kg/graph")
+    kgg.set_defaults(func=_cmd_kg_build_graph)
+
+    kgr = sub.add_parser("kg-graph-llm",
+                         help="V2-4: Opus reviews SUGGESTS edges or proposes Vietnamese aliases")
+    kgr.add_argument("--task", choices=["suggests", "alias"], required=True)
+    budget = kgr.add_mutually_exclusive_group(required=True)
+    budget.add_argument("--limit", type=int, help="at most this many uncached items")
+    budget.add_argument("--all", action="store_true", help="every uncached item")
+    kgr.add_argument("--umls-dir", default="data/umls/2026AA")
+    kgr.add_argument("--out", default="data/kg/graph")
+    kgr.set_defaults(func=_cmd_kg_graph_llm)
 
     kgf = sub.add_parser("kg-fetch-chexpert-phrases",
                          help="V2-3: CheXpert labeler mention phrases at the pinned commit")

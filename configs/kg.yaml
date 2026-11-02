@@ -125,3 +125,41 @@ linker:
   chexpert_phrases: {repo: stanfordmlgroup/chexpert-labeler, commit: 44ddeb363149aa657296237f18b5472a73c1756f,
                      license: MIT, device_label: "PRJ:support_devices"}
   gate: {precision: 0.85, coverage_by_mentions: 0.90, sample: 200, seed: 20260101}
+
+# Knowledge graph tables, TIP V2-4 (WORKLOG D57, D58). Growth stays inside linker.domain (option C).
+graph:
+  anatomy_depth: 3        # FMA parts and isa, each way
+  finding_down: 2         # IS_A steps down from a core finding or disease
+  finding_up: 6           # IS_A steps up, stopping at stop_up
+  stop_up: [C0035242, C0035204, C4018871, C0007222, C0243050, C0039978, C4021797, C0016658, C0037933, C4021789,
+            C0027651,       # the positive roots of the domain
+            C0012634, C0243095, C0037088, C3540840, C2825141, C1704258, C0027653]  # disease, finding, sign or
+                            # symptom, clinical finding, abnormality, neoplasm by site: too general to climb into
+  min_n: 20               # SUGGESTS and TYPICALLY_AT kept when n (pool reports) >= min_n
+  devices_parent: C0025080                    # Medical Devices: core devices outside the CheXpert phrases
+  prj_labels: {"PRJ:no_finding": Finding, "PRJ:enlarged_cardiomediastinum": Finding,
+               "PRJ:pleural_other": Finding, "PRJ:support_devices": Device}
+  chexpert_hierarchy:     # child label -> parent label (design, schema decision 4)
+    Edema: Lung Opacity
+    Consolidation: Lung Opacity
+    Lung Lesion: Lung Opacity
+    Atelectasis: Lung Opacity
+    Pneumonia: Consolidation
+    Cardiomegaly: Enlarged Cardiomediastinum
+  chexpert_children: {Lung Lesion: [C0034079, C0149726]}
+  generic_is_a:           # D57(a): the CUI of these Observation strings IS_A the label (CheXpert labeler phrases)
+    Lung Lesion: [nodule, mass, mass lesion, nodular opacity, nodular density, tumor, neoplasm]
+    Lung Opacity: [infiltrate, increased density, reticular pattern, scar]
+    Pleural Other: [fibrosis]
+    Pneumonia: [infection, infectious process]
+  llm:
+    model: {model: claude-opus-5-5, effort: medium, max_tokens: 8000, timeout_seconds: 120}
+    workers: 8
+    suggests_prompt: prompts/kg_suggests_review_v1.txt
+    suggests_top: 50
+    alias_prompt: prompts/kg_alias_vi_v1.txt
+    alias_top: 200        # concepts by n_pool, besides the 14 labels
+    alias_max: 3
+    budget_usd: 5.0
+  # Vietnamese forms an alias must not hide inside (T20), on top of concepts.yaml blocked_phrases.vi.
+  alias_common_phrases: [phù hợp, bình thường, không có, có thể, tương tự, so với, kích thước, vị trí, hình ảnh]
