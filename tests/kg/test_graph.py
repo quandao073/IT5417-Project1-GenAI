@@ -100,7 +100,7 @@ def test_chexpert_edges_and_scorable_reach():
     cfg = {**GCFG, "chexpert_hierarchy": {"Pneumonia": "Consolidation",
                                           "Consolidation": "Lung Opacity"},
            "chexpert_children": {}, "generic_is_a": {"Lung Opacity": ["infiltrate", "haze"]},
-           "devices_parent": "C0025080"}
+           "devices_parent": "C0025080", "phrase_is_a": {}}
     links = pl.DataFrame({"kind": ["Observation"], "string": ["infiltrate"], "cui": ["C0000007"]})
     edges, missing = graph.chexpert_edges(mapping, cfg, links,
                                           {"support_devices": [], "other": ["C0000021"]})

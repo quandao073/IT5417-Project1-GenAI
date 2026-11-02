@@ -1,5 +1,5 @@
-"""Real parses through the configured LLM (OpenAI by default, D22; Ollama with
-LLM_PROVIDER=ollama). Reads .env for the key. `uv run pytest -m llm`; skipped by default."""
+"""Real parses through the configured LLM (Anthropic claude-haiku-5-5 by default, D61; OpenAI
+or Ollama with LLM_PROVIDER). Reads .env for the key. `uv run pytest -m llm`; skipped by default."""
 
 from __future__ import annotations
 

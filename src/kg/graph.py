@@ -200,6 +200,7 @@ def chexpert_edges(mapping: dict, gcfg: dict, links: pl.DataFrame,
                 rows.append((obs[s], ids[label]))
             else:
                 missing.append(s)
+    rows += [(c, ids[label]) for label, cuis in gcfg.get("phrase_is_a", {}).items() for c in cuis]
     rows += [(c, ids["Support Devices"]) for c in groups["support_devices"]]
     rows += [(c, gcfg["devices_parent"]) for c in groups["other"]]
     rows = [(a, ISA, b, "chexpert") for a, b in dict.fromkeys(rows) if a != b]

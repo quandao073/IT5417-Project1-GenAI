@@ -653,3 +653,24 @@ mới, tạm theo đề xuất Opus), `cxr kg-build-graph`.
   `no_finding.txt`), cardiomediastinal (chỉ "cardiomediastinum" trong `enlarged_cardiomediastinum.txt`), pulmonary
   vasculature (chỉ "vascular prominence", "vascular congestion" trong `edema.txt`), aicd và defibrillator (chỉ "icd" trong
   `support_devices.txt`), aspiration (chỉ trong `no_finding.txt`).
+- **Cập nhật 2026-11-02:** thêm `IS_A` C5194648 ("vascular prominence", nguyên văn trong `edema.txt`) → Edema theo D57;
+  cổng 0,899 theo lượt nhắc, 289/595 theo khái niệm (Finding 42/229, 0,776). "vascular congestion" (cũng trong
+  `edema.txt`) không có khái niệm UMLS riêng; cặp congestion + vascular (n = 608) đang rơi về CUI chung C0700148.
+
+## Parser chuyển sang Anthropic (đo 2026-11-02, D61)
+
+**Cách đo:** cùng bộ dev 40 câu (`benchmarks/parser_queries_v1.jsonl`, split dev) và cùng metric của Phase 4c
+(macro-F1 concept / status / view, gate ≥ 0,90, schema-valid), `uv run cxr eval-parser --split dev --parsers llm --out
+artifacts/metrics/parser_eval_dev_claude-haiku-5-5.json`; prompt `query_parser_v1.txt` không đổi. Output qua tool strict
+theo `output_schema()`, `tool_choice` ép buộc, `effort: low`, prompt system có cache; không gửi temperature (Claude trả
+400). Chi phí = token đo được × giá niêm yết Anthropic (Haiku 5.5 0,10 / 0,50 USD mỗi triệu token, cache đọc 0,1×), gồm
+một lượt khởi động. Số của gpt-5-mini lấy từ Phase 4c (không đo lại được: hết credit OpenAI).
+
+| Dev, 40 câu | Concept / Status / View | Exact | $ / 1.000 câu | p50 | Trung bình | Fallback |
+|---|---|---:|---:|---:|---:|---:|
+| gpt-5-mini-2025-08-07 (Phase 4c) | 0,992 / 0,996 / 1,000 | — | 0,220 | 1,2 s | — | — |
+| **claude-haiku-5-5** | **1,000 / 1,000 / 1,000** | 1,000 | **0,143** | 1,9 s | 2,1 s | 0 |
+
+- Haiku: 41 lượt gọi, 8.913 token vào không cache, 176.013 token đọc từ cache, 6.460 token ra; 0,0059 USD cả lượt đo.
+  p95 2,5 s. Không thử Sonnet vì Haiku không kém gpt-5-mini.
+- Dev đã được nhìn nhiều lần (Phase 4c chọn model trên dev); heldout chưa chạy lại cho Haiku.

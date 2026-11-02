@@ -15,14 +15,14 @@ ghi vào `docs/measured-facts.md`, quyết định vào `WORKLOG.md`. Ngưỡng 
 | V2-5b | Đăng ký build corpus FT6 cho B1; zero-shot thành dòng phụ (D51) | V2-5 | ✅ |
 | V2-3 | Linker chuỗi → CUI | V2-2 | ✅ |
 | V2-4 | Mở rộng có kiểm soát; trọng số `SUGGESTS`, `TYPICALLY_AT` trên pool | V2-3 | ✅ |
-| V2-5c | Mở rộng ma trận điểm ngoài 14 nhãn (khái niệm lõi có lượt nhắc lớn) | V2-4, chuyển parser | ⏳ |
+| V2-5c | Mở rộng ma trận điểm ngoài 14 nhãn (khái niệm lõi có lượt nhắc lớn) | V2-4 | ⏳ |
 | V2-6 | Neo4j, bốn tool, LLM chọn khái niệm và diễn giải; B2 chạy end-to-end | V2-4, V2-5 | ⏳ |
 | V2-7 | Benchmark và pooling | V2-6, V2-5b | ⏳ |
 | V2-8 | Đánh giá chính thức, heldout một lần | V2-7 | ⏳ |
 | V2-9 | Agent (ablation) và UI | V2-8; UI chờ `pnpm` (T5) | ⏳ |
 
-**TIẾP THEO:** chuyển parser sang Anthropic (`notes/v2-eval.md`) → V2-5c → V2-6. V2-4 xong: cổng nối về `scorable`
-nhận ở 0,898 theo lượt nhắc (D60). TIP nằm ở `notes/tip-*.md` (gitignored).
+**TIẾP THEO:** V2-5c → V2-6. Parser đã chuyển sang Anthropic `claude-haiku-5-5` (D61). V2-4 xong: cổng nối về
+`scorable` nhận ở 0,899 theo lượt nhắc (D60). TIP nằm ở `notes/tip-*.md` (gitignored).
 
 ## Dữ liệu
 
@@ -90,7 +90,7 @@ MD5 khớp; đủ MSH, NCI, FMA, HPO; không có tiếng Việt; MRCONSO còn 5.
   calcification, osteopenia, degenerative…): một câu mô tả, cosine với ảnh, hiệu chỉnh trên pool-val với nhãn bạc từ
   RadGraph (present hoặc absent trên report pool-val).
 - Giữ cột có AUROC lenient ≥ 0,65 (D55); khái niệm có cột thì thành `scorable`.
-- Thứ tự: chuyển parser sang Anthropic → V2-5c → V2-6.
+- Thứ tự: V2-5c → V2-6 (parser đã chuyển sang Anthropic, D61).
 
 ### V2-5 · Ma trận điểm (xong)
 

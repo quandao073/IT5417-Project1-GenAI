@@ -630,6 +630,16 @@ def _cmd_eval_parser(args: argparse.Namespace) -> int:
                      "model": Settings().llm_model,
                      "ollama_version": parser.llm.version() if parser.llm else None,
                      "prompt_sha256": parser.prompt_sha256}
+    usage = getattr(parser.llm, "usage", None)
+    price = load_config("models")["llm"].get("prices", {}).get(Settings().llm_model)
+    if usage and price and usage["calls"]:
+        # one warm-up call and every retry included; cache writes 1.25x, reads 0.1x (list prices)
+        usd = (usage["input_tokens"] * price["input"] + usage["output_tokens"] * price["output"]
+               + usage["cache_creation_input_tokens"] * price["input"] * 1.25
+               + usage["cache_read_input_tokens"] * price["input"] * 0.1) / 1e6
+        report["llm"]["usage"] = {**usage, "usd": usd, "usd_per_call": usd / usage["calls"]}
+        print(f"LLM usage: {usage}; ${usd:.4f} total, ${1000 * usd / usage['calls']:.3f} "
+              f"per 1,000 calls")
     _merge_json(Path(args.out), "eval", report)
 
     for mode, entry in report["parsers"].items():
@@ -638,6 +648,7 @@ def _cmd_eval_parser(args: argparse.Namespace) -> int:
               f"concept={_f(m['concept_macro_f1'])} status={_f(m['status_macro_f1'])} "
               f"view={_f(m['view_macro_f1'])} exact={m['exact_match_rate']:.3f} "
               f"p50={entry['latency_ms']['p50']:.0f}ms p95={entry['latency_ms']['p95']:.0f}ms "
+              f"mean={entry['latency_ms']['mean']:.0f}ms "
               f"fallback={entry['fallback_rate']:.3f}")
         if args.verbose:
             for miss in entry["mismatches"]:

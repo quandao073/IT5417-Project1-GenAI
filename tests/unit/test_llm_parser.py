@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -372,3 +373,55 @@ class TestRequestOptions:
                                  num_predict=300, seed=1, keep_alive="30m",
                                  options={"reasoning_effort": "none"})
         assert client.options == {"reasoning_effort": "none"}
+
+
+class TestAnthropicChat:
+    """D61: the schema is a strict tool, the system prompt is cached, no sampling is sent."""
+
+    def fake(self, *replies):
+        calls, replies = [], list(replies)
+
+        def create(**kwargs):
+            calls.append(kwargs)
+            stop, content = replies.pop(0)
+            return SimpleNamespace(stop_reason=stop, content=content, usage=SimpleNamespace(
+                input_tokens=10, output_tokens=5, cache_creation_input_tokens=0,
+                cache_read_input_tokens=2600))
+
+        return calls, SimpleNamespace(messages=SimpleNamespace(create=create))
+
+    def test_the_tool_input_is_the_reply(self):
+        reply = {"findings": "", "include": [], "exclude": [], "views": [], "language": "en"}
+        calls, fake = self.fake(("tool_use", [SimpleNamespace(type="tool_use", input=reply)]))
+        client = llm.AnthropicClient("claude-x", 5, api_key="k", client=fake,
+                                     options={"effort": "low", "tool_choice": "tool",
+                                              "temperature": 0})
+        content, _ = client.chat([{"role": "system", "content": "SYS"},
+                                  {"role": "user", "content": "q"}], llm.output_schema())
+        assert json.loads(content) == reply
+        sent = calls[0]
+        assert sent["system"] == [{"type": "text", "text": "SYS",
+                                   "cache_control": {"type": "ephemeral"}}]
+        assert sent["messages"] == [{"role": "user", "content": "q"}]
+        assert sent["tools"][0]["strict"] is True
+        assert sent["tools"][0]["input_schema"]["additionalProperties"] is False
+        assert sent["tool_choice"] == {"type": "tool", "name": "submit_query"}
+        assert sent["output_config"] == {"effort": "low"} and "temperature" not in sent
+        assert client.usage["calls"] == 1 and client.usage["cache_read_input_tokens"] == 2600
+
+    def test_auto_choice_refusal_and_a_missing_call(self):
+        calls, fake = self.fake(("end_turn", [SimpleNamespace(type="text", text="hi")]),
+                                ("refusal", []))
+        client = llm.AnthropicClient("claude-y", 5, api_key="k", client=fake,
+                                     options={"tool_choice": "auto"})
+        messages = [{"role": "system", "content": "S"}, {"role": "user", "content": "q"}]
+        with pytest.raises(llm.LLMInvalidOutput):
+            client.chat(messages, llm.output_schema())
+        assert calls[0]["tool_choice"] == {"type": "auto"} and "output_config" not in calls[0]
+        with pytest.raises(llm.LLMError):
+            client.chat(messages, llm.output_schema())
+
+    def test_make_client_needs_the_anthropic_key(self):
+        with pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):
+            llm.make_client("anthropic", "", "claude-haiku-5-5", 5, api_key=None,
+                            num_predict=1, seed=1, keep_alive="1m")

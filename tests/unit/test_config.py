@@ -148,12 +148,19 @@ class TestSettings:
         monkeypatch.setenv("BUILD_ID", "")
         assert config.Settings(_env_file=None).build_id is None
 
-    def test_openai_is_the_default_provider(self):
-        """WORKLOG D22: gpt-5-mini, picked on dev by a pre-set rule and PASS on heldout."""
+    def test_anthropic_is_the_default_provider_read_from_models_yaml(self):
+        """WORKLOG D61: provider and model come from models.yaml:llm, not from code."""
+        settings = config.Settings(_env_file=None)
+        llm_cfg = config.load_config("models")["llm"]
+        assert (settings.llm_provider, settings.llm_model) == ("anthropic", "claude-haiku-5-5")
+        assert (llm_cfg["provider"], llm_cfg["model"]) == ("anthropic", "claude-haiku-5-5")
+
+    def test_the_openai_provider_stays_behind_the_flag(self, monkeypatch):
+        monkeypatch.setenv("LLM_PROVIDER", "openai")
+        monkeypatch.setenv("LLM_MODEL", "gpt-5-mini-2025-08-07")
         settings = config.Settings(_env_file=None)
         assert settings.llm_provider == "openai"
         assert settings.llm_base_url == "https://api.openai.com/v1"
-        assert settings.llm_model == "gpt-5-mini-2025-08-07"
 
     def test_reads_the_key_from_openai_api_key_too(self, monkeypatch):
         """The conventional name works, so a key in .env is picked up as-is."""
@@ -180,7 +187,7 @@ class TestSettings:
         assert config.Settings(_env_file=None).llm_api_key is None
 
     def test_rejects_an_unknown_provider(self, monkeypatch):
-        monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+        monkeypatch.setenv("LLM_PROVIDER", "bedrock")
         with pytest.raises(ValueError):
             config.Settings(_env_file=None)
 
