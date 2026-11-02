@@ -674,3 +674,64 @@ một lượt khởi động. Số của gpt-5-mini lấy từ Phase 4c (không 
 - Haiku: 41 lượt gọi, 8.913 token vào không cache, 176.013 token đọc từ cache, 6.460 token ra; 0,0059 USD cả lượt đo.
   p95 2,5 s. Không thử Sonnet vì Haiku không kém gpt-5-mini.
 - Dev đã được nhìn nhiều lần (Phase 4c chọn model trên dev); heldout chưa chạy lại cho Haiku.
+
+## Parser Haiku trên heldout và cột mở rộng của ma trận điểm (đo 2026-11-02, D61, D62)
+
+**Heldout parser, chạy một lần** (`cxr eval-parser --split heldout --parsers llm --out
+artifacts/metrics/parser_eval_heldout_claude-haiku-5-5.json`, prompt `query_parser_v1.txt` không đổi): concept **0,981**,
+status **0,994**, view **0,945**, exact 0,956, schema-valid 1,000, fallback 0, p50 / p95 / trung bình 1.717 / 2.057 / 1.691
+ms, ≈ 0,146 USD mỗi 1.000 câu → **PASS** (ngưỡng 0,90). gpt-5-mini trên cùng heldout: 0,995 / 0,988 / 0,947. Bảy câu sai: một
+bỏ sót Pleural Other (en-074), hai bỏ sót view (vi-029, vi-079), ba câu VI không ra khái niệm (vi-044 vôi hóa màng phổi,
+vi-056 máy phá rung cấy ghép, vi-096 chỉ số tim-lồng ngực tăng), vi-099 không ra No Finding.
+
+**vascular congestion:** override cặp congestion + vascular (n = 608) và congestion + pulmonary vascular (n = 45) về
+C0242073 (Pulmonary congestion, T047), cặp congestion + pulmonary đã khớp exact về CUI này; `IS_A` C0242073 → Edema theo
+D57 ("vascular congestion", "pulmonary congestion" trong `edema.txt`; "congestion" đứng riêng không có). Cổng D60:
+0,899 theo lượt nhắc, 290/595 theo khái niệm.
+
+**Cột mở rộng** (`uv run cxr build-image-scores-ext`): ứng viên là khái niệm Finding/Disease lõi chưa `scorable`, xếp theo
+lượt nhắc pool, tối đa 30, loại câu bình thường, từ chung chung, giải phẫu, thiết bị (`data/kg/scores_ext/candidates.csv`);
+các khái niệm D60 cùng nodule, hyperinflation, granuloma, scarring luôn được xét. Caption theo đúng quy tắc của 14 cột
+(`render`: cụm từ trần, không template): 3 chuỗi pool hay gặp nhất của khái niệm và con `IS_A`, embedding trung bình. Nhãn
+bạc trên pool-val (9.037 ảnh, `patient_split` của `models.yaml:image_probe`) từ RadGraph: PRESENT nếu khái niệm hoặc con
+`IS_A` được nhắc definitely present, UNCERTAIN (loại) nếu chỉ uncertain, ABSENT nếu chỉ absent, NOT_MENTIONED nếu không
+nhắc. Hiệu chỉnh như 14 cột (`image_scores.calibrate`); AUROC lenient (D55) kèm khoảng 95% bootstrap 1.000 lần trên ảnh
+(seed 20260101). Cổng: ≥ 50 PRESENT và AUROC lenient ≥ 0,65 (ước lượng điểm). Không dùng nhãn hay report của corpus.
+
+| Khái niệm (chuỗi pool đầu) | CUI | n_pool | n present (pool-val) | AUROC lenient | CI 95% | Quyết định |
+|---|---|---:|---:|---:|---|---|
+| subcutaneous emphysema | C0038536 | 1.064 | 111 | 0,936 | 0,911–0,959 | giữ |
+| hyperinflation | C1167782 | 310 | 38 | 0,929 | 0,890–0,962 | loại: present < 50 |
+| emphysema | C0013990 | 1.277 | 235 | 0,859 | 0,830–0,888 | giữ |
+| displaced fracture | C0585059 | 784 | 28 | 0,842 | 0,782–0,897 | loại: present < 50 |
+| hemidiaphragm elevation | C0239015 | 2.665 | 256 | 0,811 | 0,784–0,838 | giữ |
+| mass | C0577559 | 1.250 | 101 | 0,810 | 0,768–0,850 | giữ |
+| aorta tortuous | C0741171 | 1.253 | 121 | 0,810 | 0,765–0,849 | giữ |
+| osteopenia | C0029453 | 1.196 | 110 | 0,797 | 0,755–0,835 | giữ |
+| low lung volumes | C5563137 | 13.679 | 1380 | 0,790 | 0,778–0,802 | giữ |
+| infection | C3714514 | 5.107 | 124 | 0,772 | 0,727–0,816 | giữ |
+| scarring | C2004491 | 2.330 | 89 | 0,769 | 0,726–0,810 | giữ |
+| lung opacification | C0746216 | 718 | 64 | 0,768 | 0,721–0,812 | giữ |
+| widened mediastinum | C0746459 | 1.015 | 83 | 0,768 | 0,721–0,813 | giữ |
+| pulmonary nodule | C0034079 | 1.153 | 71 | 0,762 | 0,708–0,816 | giữ |
+| marking interstitial | C1849561 | 1.238 | 116 | 0,748 | 0,704–0,787 | giữ |
+| infiltrate | C0332448 | 1.729 | 20 | 0,746 | 0,632–0,845 | loại: present < 50 |
+| linear atelectasis | C0264495 | 1.416 | 136 | 0,745 | 0,703–0,786 | giữ |
+| multiple fracture | C0016655 | 930 | 97 | 0,741 | 0,689–0,787 | giữ |
+| calcification | C0006663 | 998 | 186 | 0,741 | 0,708–0,773 | giữ |
+| rib fracture | C0035522 | 1.728 | 77 | 0,735 | 0,677–0,790 | giữ |
+| aspiration | C1720922 | 4.648 | 19 | 0,723 | 0,602–0,826 | loại: present < 50 |
+| reticular pattern | C4476748 | 1.353 | 116 | 0,721 | 0,681–0,761 | giữ |
+| nodule | C0028259 | 855 | 66 | 0,709 | 0,642–0,767 | giữ |
+| nodular opacity | C4086623 | 1.181 | 114 | 0,706 | 0,658–0,751 | giữ |
+| prominence interstitial | C5539772 | 915 | 101 | 0,692 | 0,634–0,743 | giữ |
+| degenerative | C0011164 | 4.239 | 429 | 0,686 | 0,661–0,710 | giữ |
+| pleural thickening | C0264545 | 1.952 | 140 | 0,675 | 0,637–0,716 | giữ |
+| prominent vascularity | C5194648 | 697 | 77 | 0,647 | 0,595–0,696 | loại: AUROC < 0,65 |
+| postsurgical | C0241311 | 919 | 76 | 0,583 | 0,523–0,643 | loại: AUROC < 0,65 |
+| granuloma | C0018188 | 402 | 46 | 0,568 | 0,486–0,649 | loại: present < 50 |
+
+- **Giữ 23/30.** Ma trận mới `data/indexes/image_scores/20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1_ext1/`: 14 cột gốc chép
+  nguyên (giống hệt ma trận cũ) + 23 cột theo CUI; `probe.json` ghi cột gốc / mở rộng, caption, AUROC, CI, commit.
+- KG: 23 khái niệm thành `scorable`. Độ nối về scorable (D59, tham khảo, cổng đã đóng): **0,945 theo lượt nhắc**, 314/595
+  theo khái niệm (Anatomy 0,992, Device 0,934, Disease 0,944, Finding 0,886).

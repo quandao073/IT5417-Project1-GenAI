@@ -153,7 +153,8 @@ graph:
     Pleural Other: [fibrosis]
     Pneumonia: [infection, infectious process]
   phrase_is_a:            # D57 for CUIs reached through a pair link: the labeler phrase is verbatim in <label>.txt
-    Edema: [C5194648]     # "vascular prominence" (edema.txt): pairs prominence/prominent + vascular(ity)
+    Edema: [C5194648,     # "vascular prominence" (edema.txt): pairs prominence/prominent + vascular(ity)
+            C0242073]     # "vascular congestion", "pulmonary congestion" (edema.txt): congestion + (pulmonary) vascular
   llm:
     model: {model: claude-opus-5-5, effort: medium, max_tokens: 8000, timeout_seconds: 120}
     workers: 8
@@ -165,3 +166,33 @@ graph:
     budget_usd: 5.0
   # Vietnamese forms an alias must not hide inside (T20), on top of concepts.yaml blocked_phrases.vi.
   alias_common_phrases: [phù hợp, bình thường, không có, có thể, tương tự, so với, kích thước, vị trí, hình ảnh]
+
+# Extra score-matrix columns beyond the 14 labels (WORKLOG D60, D62). Codes and pool strings only.
+scores_ext:
+  max_candidates: 30
+  captions: 3              # most frequent pool strings of the concept and its IS_A descendants
+  min_present: 50          # PRESENT reports on pool-val, else the concept is dropped
+  quality: 0.65            # D55: lenient AUROC on pool-val, point estimate
+  bootstrap: {n: 1000, seed: 20260101}
+  forced:                  # weighed whatever their rank (user 2026-11-02)
+    - C5563137   # low lung volumes
+    - C1720922   # aspiration
+    - C0011164   # degenerative change
+    - C0239015   # elevated hemidiaphragm
+    - C0013990   # emphysema
+    - C0741171   # tortuous aorta
+    - C0006663   # calcification
+    - C0029453   # osteopenia
+    - C0038536   # subcutaneous emphysema
+    - C0028259   # nodule
+    - C1167782   # hyperinflation
+    - C0018188   # granuloma
+    - C2004491   # scarring
+  generic:                 # words with no finding of their own to caption an image by
+    C2711450: enlargement of what is not said
+    C0302142: deformity of what is not said
+    C0221198: lesion
+    C1333299: diffuse pattern
+    C0700124: ectatic, dilated, distended
+    C3263723: injury, trauma
+    C0024115: lung disease

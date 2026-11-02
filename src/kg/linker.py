@@ -29,6 +29,7 @@ EXACT, ADJECTIVE, OUT_OF_SCOPE, SAPBERT = "exact", "adjective", "out_of_scope", 
 SELECT, ADJUDICATED, LLM, LLM_DISAGREE = "select", "adjudicated", "llm", "llm_disagree"
 CUI, NONE, PENDING, REJECTED = "cui", "none", "pending", "rejected"   # decisions
 UNDECIDED = (NONE, PENDING)   # the only decisions coverage counts as missing (D56)
+PAIRS = "pairs"   # the overrides file's section for located_at pairs
 _CUI = re.compile(r"C\d{7}")
 _SAB_ORDER = ["MSH", "NCI", "FMA", "HPO"]   # whose preferred name to show
 _NORM = pl.col("STR").str.to_lowercase().str.replace_all(r"[^a-z0-9]+", " ").str.strip_chars()
@@ -39,9 +40,16 @@ class LinkerError(RuntimeError):
 
 
 def load_overrides(path: Path) -> dict[str, dict[str, str]]:
-    """{kind: {string: CUI or "skip"}} from configs/kg/linker_overrides.yaml."""
+    """{kind: {string: CUI or "skip"}} from configs/kg/linker_overrides.yaml, plus "pairs":
+    {"observation + anatomy": CUI} for located_at pairs."""
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     kinds = {kind.lower(): kind for kind in vocab.KINDS}
+    pairs = raw.pop(PAIRS, None) or {}
+    for key, value in pairs.items():
+        obs, sep, anat = key.partition(" + ")
+        if not sep or vocab.normalize(obs) != obs or vocab.normalize(anat) != anat or not (
+                _CUI.fullmatch(str(value))):
+            raise LinkerError(f"{path.name}: pairs {key!r}: {value!r} is not 'obs + anat': CUI")
     if unknown := set(raw) - set(kinds):
         raise LinkerError(f"{path.name}: unknown sections {sorted(unknown)}")
     out = {}
@@ -52,7 +60,18 @@ def load_overrides(path: Path) -> dict[str, dict[str, str]]:
             if vocab.normalize(string) != string or not valid:
                 raise LinkerError(f"{path.name}: {key} {string!r}: {value!r} is not a CUI or skip")
         out[kind] = dict(entries)
+    out[PAIRS] = dict(pairs)
     return out
+
+
+def override_pairs(pairs: pl.DataFrame, overrides: dict[str, str]) -> pl.DataFrame:
+    """Pair links with the hand overrides of `pairs` ("obs + anat": CUI) applied, `via` override."""
+    hand = {tuple(k.split(" + ")): v for k, v in overrides.items()}
+    picked = [hand.get((o, a)) for o, a in pairs.select("obs", "anat").iter_rows()]
+    hit = pl.Series(picked, dtype=pl.String)
+    return pairs.with_columns(
+        pl.when(hit.is_not_null()).then(hit).otherwise(pl.col("cui")).alias("cui"),
+        pl.when(hit.is_not_null()).then(pl.lit(OVERRIDE)).otherwise(pl.col("via")).alias("via"))
 
 
 def load_adjudication(path: Path, project_ids: Collection[str] = ()) -> dict[tuple[str, str], dict]:

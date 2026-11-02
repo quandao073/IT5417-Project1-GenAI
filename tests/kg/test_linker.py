@@ -451,3 +451,16 @@ def test_descriptive_pairs_go_to_the_llms_and_take_their_agreement():
     assert out.select("cui", "via").rows() == [("C0018800", "llm"), ("C0018800", "exact"),
                                                ("C0032227", "exact"), (None, None)]
     assert review["agree"].to_list() == [True]
+
+
+def test_pair_overrides_are_checked_and_applied(tmp_path):
+    path = tmp_path / "o.yaml"
+    path.write_text("observation: {}\npairs: {congestion + vascular: C0242073}\n", encoding="utf-8")
+    hand = lk.load_overrides(path)[lk.PAIRS]
+    pairs = pl.DataFrame({"obs": ["congestion", "congestion"], "anat": ["vascular", "venous"],
+                          "cui": [None, "C0042484"], "via": [None, "exact"]})
+    assert lk.override_pairs(pairs, hand).select("cui", "via").rows() == [
+        ("C0242073", "override"), ("C0042484", "exact")]
+    path.write_text("pairs: {congestion vascular: C0242073}\n", encoding="utf-8")
+    with pytest.raises(lk.LinkerError):
+        lk.load_overrides(path)
