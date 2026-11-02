@@ -883,13 +883,25 @@ def _cmd_kg_link(args: argparse.Namespace) -> int:
     shares = linker.pair_share(mentions, occurrences, pairs,
                                ["effusion", "edema", "opacity", "thickening"])
 
-    info = linker.describe(set(cands["cui"]), umls)
-    items = llm_select.inputs(links, cands, info, llm_select.located_context(occurrences))
+    # Pairs of a descriptive word that no exact name links go through the same selection step
+    descriptive = linker.descriptive_pairs(pairs, lcfg, set(heads["string"]))
+    pair_cands = linker.candidates_for(linker.pair_rows(descriptive), umls, lcfg, domain,
+                                       lambda: sapbert.SapBert(lcfg["sapbert"]),
+                                       Path(args.sapbert_cache))
+    pair_links_in = descriptive.select(pl.lit("Observation").alias("kind"), "string",
+                                       pl.col("n").alias("mentions"), pl.lit("pair").alias("route"))
+    context = llm_select.located_context(occurrences) | {
+        ("Observation", s): [[a, n]] for a, n, s in descriptive.select("anat", "n", "string")
+        .iter_rows()}
+    info = linker.describe(set(cands["cui"]) | set(pair_cands["cui"]), umls)
+    items = (llm_select.inputs(links, cands, info, context)
+             + llm_select.inputs(pair_links_in, pair_cands, info, context))
     system, prompt_sha = llm_select.load_prompt(default_config_dir() / lcfg["llm"]["prompt_file"])
     models = lcfg["llm"]["models"]
     chosen = {m: llm_select.choices(items, _llm_cache(out, m), models[m]["model"], prompt_sha)
               for m in _LLM_MODELS}
     final = linker.decide(links, chosen, adjudication, umls, lcfg, domain)
+    pairs, pair_review = linker.decide_pairs(pairs, descriptive, chosen, adjudication)
     info = linker.describe(set(cands["cui"]) | set(final["cui"].drop_nulls())
                            | set(final["lateral_from"].drop_nulls()), umls)
 
@@ -913,6 +925,8 @@ def _cmd_kg_link(args: argparse.Namespace) -> int:
     out.mkdir(parents=True, exist_ok=True)
     final.write_parquet(out / "links.parquet")
     pairs.write_parquet(out / "pair_links.parquet")
+    pair_review.join(info.select("cui", "name"), on="cui", how="left").write_csv(
+        out / "pair_review.csv")
     (cands.join(info.select("cui", "name", "semantic_types", "sabs"), on="cui", how="left")
      .sort("kind", "string", "rank").write_csv(out / "candidates.csv"))
     review.write_csv(out / "review.csv")
@@ -936,7 +950,10 @@ def _cmd_kg_link(args: argparse.Namespace) -> int:
                             .len().sort("kind", "decision").iter_rows()},
               "agreement": linker.agreement(final), "coverage": linker.coverage(final),
               "chexpert_phrases": chexpert,
-              "pairs": {"tried": pairs.height, "linked": pairs["cui"].drop_nulls().len()},
+              "pairs": {"tried": pairs.height, "linked": pairs["cui"].drop_nulls().len(),
+                        "by_via": dict(pairs.group_by("via").len().drop_nulls("via").iter_rows()),
+                        "descriptive_sent": descriptive.height,
+                        "descriptive_disagree": int((~pair_review["agree"].fill_null(True)).sum())},
               "pair_share": shares, "review_rows": review.height,
               "link_seconds": round(link_seconds, 1), "git_commit": _git_commit()}
     (out / "manifest.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
@@ -959,7 +976,9 @@ def _cmd_kg_link(args: argparse.Namespace) -> int:
     print(f"lateral CUIs moved to a parent {report['lateral']['moved']}, "
           f"unresolved {report['lateral']['unresolved']}; strings named only outside the "
           f"label table {len(outside)}")
-    print(f"pairs tried {pairs.height:,}, linked {report['pairs']['linked']:,}")
+    print(f"pairs tried {pairs.height:,}, linked {report['pairs']['linked']:,} "
+          f"{report['pairs']['by_via']}; descriptive pairs sent to the LLMs "
+          f"{descriptive.height}, disagree {report['pairs']['descriptive_disagree']}")
     for s, v in shares.items():
         print(f"pair links, {s:10s}: {v['pair_linked']:>7,} of {v['mentions']:>7,} mentions "
               f"({v['located']:,} located)")
@@ -1079,13 +1098,23 @@ def _cmd_kg_build_graph(args: argparse.Namespace) -> int:
     known = set(nodes["cui"]) | set(stypes["tui"])
     dropped = edges.filter(~pl.col("src").is_in(list(known)) | ~pl.col("dst").is_in(list(known)))
     edges = edges.join(dropped.select("src", "rel", "dst"), on=["src", "rel", "dst"], how="anti")
+    if (out / "suggests_review.csv").exists():
+        edges = graph.apply_review(edges, pl.read_csv(out / "suggests_review.csv",
+                                                      infer_schema_length=0).fill_null(""))
     reach = graph.scorable_reach(nodes, edges)
     nodes = nodes.join(reach, on="cui")
+    alias_rows = None
+    if (out / "alias_vi_review.csv").exists():
+        alias_rows = graph.aliases(nodes, umls, load_config("concepts")["concepts"], mapping,
+                                   pl.read_csv(out / "alias_vi_review.csv",
+                                               infer_schema_length=0).fill_null(""))
 
     out.mkdir(parents=True, exist_ok=True)
     nodes.write_parquet(out / "nodes.parquet")
     stypes.write_parquet(out / "semantic_types.parquet")
     edges.write_parquet(out / "edges.parquet")
+    if alias_rows is not None:
+        alias_rows.write_parquet(out / "aliases.parquet")
     pl.concat([s_all, t_all]).write_parquet(out / "weights_all.parquet")   # before the n cut
     in_core = nodes.filter(pl.col("in_core"))
     chf = sorted(set(links.filter(pl.col("kind") == "Observation", pl.col("string").is_in(
@@ -1103,8 +1132,12 @@ def _cmd_kg_build_graph(args: argparse.Namespace) -> int:
         "weighted": {"SUGGESTS": {**s_count, "to_disease": suggests.height},
                      "TYPICALLY_AT": t_count, "min_n": gcfg["min_n"]},
         "dropped_edges_without_nodes": dropped.height,
-        "scorable_reach": {"core": int(in_core["reaches"].sum()), "of": in_core.height,
-                           "share": in_core["reaches"].mean()},
+        "scorable_reach": _reach_report(in_core, links),
+        "suggests_review": dict(edges.filter(pl.col("rel") == graph.SUGGESTS)
+                                .group_by("review").len().fill_null("none").iter_rows()),
+        "aliases": None if alias_rows is None else dict(
+            alias_rows.group_by("lang", "source").len()
+            .select(pl.concat_str("lang", "source", separator="/"), "len").iter_rows()),
         "devices": {k: len(v) for k, v in groups.items()}, "generic_missing": missing,
         "chf_cuis": chf, "git_commit": _git_commit()}
     (out / "manifest.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
@@ -1117,12 +1150,34 @@ def _cmd_kg_build_graph(args: argparse.Namespace) -> int:
     print(f"weighted (n >= {gcfg['min_n']}): SUGGESTS {s_count['pairs']:,} pairs -> "
           f"{s_count['kept']:,} kept -> {suggests.height:,} to a Disease; TYPICALLY_AT "
           f"{t_count['pairs']:,} -> {t_count['kept']:,}")
-    print(f"core concepts reaching a scorable one: {report['scorable_reach']['core']:,} of "
-          f"{in_core.height:,} ({report['scorable_reach']['share']:.3f})")
+    reach = report["scorable_reach"]
+    print(f"core concepts reaching a scorable one (D59): by mentions {reach['by_mentions']:.3f}, "
+          f"by concepts {reach['concepts']} of {reach['of']}; by label {reach['by_label']}")
+    print(f"unreached, most mentioned: {reach['unreached_top20']}")
+    print(f"SUGGESTS review {report['suggests_review']}; aliases {report['aliases']}")
     print(f"devices: CheXpert phrases {len(groups['support_devices'])}, other "
           f"{len(groups['other'])}; generic strings without a CUI: {missing}")
     print(f"chf / heart failure CUIs {chf}; written: {out}")
     return 0
+
+
+def _reach_report(core: pl.DataFrame, links: pl.DataFrame) -> dict:
+    """D59: the share of the core's pool mentions (n_pool) that reach a scorable concept, the
+    count of concepts, per label, and the 20 most mentioned concepts that do not."""
+    core = core.with_columns(pl.col("n_pool").cast(pl.Int64))
+    share = (core["n_pool"] * core["reaches"]).sum() / core["n_pool"].sum()
+    by_label = {label: {"concepts": f"{int(r)}/{n}", "by_mentions": round(w, 3)}
+                for label, n, r, w in core.group_by("labels").agg(
+                    pl.len(), pl.col("reaches").sum(),
+                    (pl.col("n_pool") * pl.col("reaches")).sum() / pl.col("n_pool").sum())
+                .sort("labels").iter_rows()}
+    named = dict(links.filter(pl.col("cui").is_not_null()).group_by("cui")
+                 .agg(pl.col("string").sort_by("mentions", descending=True).first()).iter_rows())
+    top = (core.filter(~pl.col("reaches")).sort("n_pool", descending=True).head(20)
+           .select("cui", "labels", "n_pool").rows())
+    return {"by_mentions": share, "concepts": int(core["reaches"].sum()), "of": core.height,
+            "by_label": by_label,
+            "unreached_top20": [[named.get(c, ""), c, label, n] for c, label, n in top]}
 
 
 def _cmd_kg_graph_llm(args: argparse.Namespace) -> int:

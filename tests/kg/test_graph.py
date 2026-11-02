@@ -114,10 +114,20 @@ def test_chexpert_edges_and_scorable_reach():
                           "scorable": [True, False, False, False, False, False]})
     more = pl.DataFrame({"src": ["C0000002", "C0000001", "C0000003", "C0000011", "C0000001"],
                          "rel": ["IS_A", "IS_A", "IS_A", "PART_OF", "TYPICALLY_AT"],
-                         "dst": ["C0000001", "C0000003", "C0000090", "C0000010", "C0000011"]})
+                         "dst": ["C0000001", "C0000003", "C0000090", "C0000010", "C0000011"],
+                         "review": [None] * 5}, schema_overrides={"review": pl.String})
     reach = dict(graph.scorable_reach(nodes, more).iter_rows())
-    assert reach == {"C0000001": True, "C0000002": True, "C0000003": True,   # below, above
-                     "C0000010": True, "C0000011": True, "C0000012": False}  # whole of a part
+    # D59: below a reaching concept, not above it; a TYPICALLY_AT target and the whole it is
+    # part of; nothing else
+    assert reach == {"C0000001": True, "C0000002": True, "C0000003": False,
+                     "C0000010": True, "C0000011": True, "C0000012": False}
+    dropped = pl.DataFrame({"src": ["C0000001", "C0000001"], "rel": ["SUGGESTS"] * 2,
+                            "dst": ["C0000003", "C0000012"], "review": [None, None]})
+    review = pl.DataFrame({"src": ["C0000001"], "dst": ["C0000012"], "decision": ["drop"]})
+    reviewed = graph.apply_review(dropped, review)
+    assert reviewed["review"].to_list() == [None, "drop"]
+    reach = dict(graph.scorable_reach(nodes, reviewed).iter_rows())
+    assert reach["C0000003"] and not reach["C0000012"]     # a dropped SUGGESTS is not used
 
 
 def test_alias_flags_and_suggest_items():
@@ -129,3 +139,14 @@ def test_alias_flags_and_suggest_items():
                           "n": [5, 9], "n_src": [50, 90], "p": [0.1, 0.1]})
     items = graph_llm.suggest_items(edges, {"A": ("a", ""), "D": ("d", "")}, top=1)
     assert [i["string"] for i in items] == ["B>D"] and items[0]["input"]["source"]["name"] == "B"
+
+
+def test_aliases_keep_only_reviewed_vietnamese_forms(tmp_path):
+    nodes = pl.DataFrame({"cui": ["C0000001", "PRJ:support_devices"]})
+    review = pl.DataFrame({"cui": ["C0000001", "C0000001"], "alias": ["viêm phổi", "phổi"],
+                           "decision": ["keep", "drop"]})
+    concepts = {"Pneumonia": {"en": ["pneumonia"], "vi": ["viêm phổi"]}}
+    got = graph.aliases(nodes, umls(tmp_path), concepts, {"Pneumonia": {"id": "C0000001"}}, review)
+    assert set(got.select("text", "lang", "source").rows()) == {
+        ("Pneumonia", "en", "mrconso"), ("viêm phổi", "vi", "concepts_yaml")}  # llm form, same norm
+    assert "phổi" not in got["text"].to_list()

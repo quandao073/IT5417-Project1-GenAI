@@ -613,3 +613,27 @@ pool, nguồn present, `p = n / n_src` theo report, giữ khi n ≥ 20). Rồi `
 - LLM: duyệt 45 cạnh `SUGGESTS` (Opus giữ 39, bỏ 6); alias tiếng Việt cho 214 khái niệm, 515 dòng, cờ `shared` 73,
   `single_syllable` 17. Token 197.660 vào, 32.165 ra (≈ 1,43 USD), cộng 2 lượt alias chạm `max_tokens` không ghi được
   usage (≤ 0,32 USD).
+
+## KG V2-4: phân xử, cặp từ mô tả và cổng nối về scorable (đo 2026-11-02, D59)
+
+**Cách đo:** áp `data/kg/graph/suggests_review.csv` (giữ 38/45) và `alias_vi_review.csv` (giữ 469/515) do Claude bên chat
+phân xử; `cxr kg-link` gửi thêm các cặp từ mô tả chưa nối được qua bước chọn của V2-3; `cxr kg-link-llm --model
+{opus,sonnet} --all`; `cxr kg-link`; `cxr kg-build-graph`. Cổng theo D59 (định nghĩa đổi sau lần đo đầu: đệ quy, số
+chính theo lượt nhắc `n_pool`).
+
+- Cặp từ mô tả (enlarged, prominent, prominence, marking, blunting, elevation, tortuous, thickening, low) không khớp tên
+  MRCONSO: 47 cặp gửi hai model; 23 cặp nối được (ví dụ enlarged + cardiac silhouette → Cardiomegaly, low + lung volumes
+  → C5563137, prominent + hila → C0744903), 19 cặp hai model cùng không chọn CUI (ví dụ blunting + costophrenic
+  angle), 5 cặp lệch chờ phân xử (`data/kg/link/pair_review.csv`). Liên kết cặp: 324 exact → 347. Chi phí ≈ 0,62 USD.
+- Bảng KG sau đó: nút 10.084 (lõi 597); `IS_A` 10.968, `HAS_STY` 10.093, `PART_OF` 3.826, `TYPICALLY_AT` 587,
+  `SUGGESTS` 50 (giữ 38, bỏ 7, 5 cạnh mới sinh từ liên kết cặp chưa phân xử). Alias: 40.293 tên MRCONSO tiếng Anh, 45 dạng
+  en và 45 dạng vi của `concepts.yaml`, 467 alias tiếng Việt do LLM đề xuất được giữ.
+- **Cổng nối về scorable (D59): 0,884 theo lượt nhắc — dưới ngưỡng 0,90, trượt.** Theo khái niệm 288/597. Theo nhãn
+  (khái niệm, lượt nhắc): Anatomy 117/140, 0,977; Device 76/101, 0,934; Disease 54/127, 0,872; Finding 41/229, 0,748.
+- 20 khái niệm lõi không nối được, nhiều lượt nhắc nhất (chuỗi pool hay gặp, CUI, nhãn, `n_pool`): low volume C5563137
+  Finding 13.679; abnormality C1704258 Finding 7.628; aspiration C1720922 Finding 4.648; degenerative C0011164 Finding
+  4.239; soft tissue C0225317 Anatomy 3.559; (cặp) C0516868 Finding 3.085; (cặp) C0239015 Finding 2.532; device C0025080
+  Device 2.086; disease C0012634 Disease 1.990; acute disease C0001314 Disease 1.811; aicd C0972395 Device 1.669; normal
+  limit C0442816 Finding 1.483; deformity C0302142 Finding 1.295; emphysema C0013990 Finding 1.277; enlargement C2711450
+  Finding 1.270; (cặp) C0741171 Disease 1.253; (cặp) C1849561 Finding 1.238; osteopenia C0029453 Disease 1.196; (cặp)
+  C0038536 Finding 1.064; calcification C0006663 Finding 998.

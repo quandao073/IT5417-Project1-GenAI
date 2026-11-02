@@ -20,7 +20,8 @@ from src.kg import linker, vocab
 ISA, PART_OF, HAS_STY = "IS_A", "PART_OF", "HAS_STY"
 SUGGESTS, TYPICALLY_AT = "SUGGESTS", "TYPICALLY_AT"
 EDGE_SCHEMA = {"src": pl.String, "rel": pl.String, "dst": pl.String, "source": pl.String,
-               "n": pl.Int64, "n_src": pl.Int64, "p": pl.Float64}
+               "n": pl.Int64, "n_src": pl.Int64, "p": pl.Float64, "review": pl.String}
+KEEP, DROP = "keep", "drop"   # adjudicated SUGGESTS; a dropped edge stays, unused at query time
 
 
 def _steps(edges: Iterable[tuple[str, str]], start: Collection[str], depth: int,
@@ -268,22 +269,60 @@ def n_pool(mcuis: pl.DataFrame) -> pl.DataFrame:
     return mcuis.group_by("cui").agg(pl.col("study_id").n_unique().alias("n_pool"))
 
 
+def apply_review(edges: pl.DataFrame, review: pl.DataFrame) -> pl.DataFrame:
+    """SUGGESTS edges take the adjudicated `decision` (keep or drop) of suggests_review.csv."""
+    decided = (review.filter(pl.col("decision").is_in([KEEP, DROP]))
+               .select("src", "dst", pl.col("decision").alias("decided"),
+                       pl.lit(SUGGESTS).alias("rel")))
+    return (edges.join(decided, on=["src", "rel", "dst"], how="left")
+            .with_columns(pl.coalesce("decided", "review").alias("review")).drop("decided"))
+
+
+def aliases(nodes: pl.DataFrame, umls_dir: Path, concepts: dict, mapping: dict,
+            vi_review: pl.DataFrame) -> pl.DataFrame:
+    """cui, text, norm, lang, source: the English MRCONSO names of every node, the en and vi forms
+    of configs/concepts.yaml for the 14 labels, and the Vietnamese aliases kept on review."""
+    cuis = [c for c in nodes["cui"] if not c.startswith("PRJ:")]
+    mrconso = (pl.scan_parquet(umls_dir / "mrconso.parquet").filter(pl.col("CUI").is_in(cuis))
+               .select(pl.col("CUI").alias("cui"), pl.col("STR").alias("text")).unique()
+               .with_columns(pl.lit("en").alias("lang"), pl.lit("mrconso").alias("source"))
+               .collect())
+    ids = {label: entry["id"] for label, entry in mapping.items()}
+    rows = [(ids[label], text, lang, "concepts_yaml") for label, entry in concepts.items()
+            if label in ids for lang in ("en", "vi") for text in entry.get(lang, [])]
+    yaml_rows = pl.DataFrame(rows, schema=["cui", "text", "lang", "source"], orient="row")
+    kept = (vi_review.filter(pl.col("decision") == KEEP, pl.col("alias") != "")
+            .select("cui", pl.col("alias").alias("text"), pl.lit("vi").alias("lang"),
+                    pl.lit("llm").alias("source")))
+    out = pl.concat([mrconso, yaml_rows, kept])
+    return (out.with_columns(pl.col("text").str.to_lowercase().str.replace_all(r"[^\w]+", " ")
+                             .str.strip_chars().alias("norm"))
+            .unique(["cui", "norm", "lang"], keep="first", maintain_order=True)
+            .select("cui", "text", "norm", "lang", "source").sort("cui", "lang", "norm"))
+
+
 def scorable_reach(nodes: pl.DataFrame, edges: pl.DataFrame) -> pl.DataFrame:
-    """cui, reaches for every node: whether one of the design's query templates reaches a
-    scorable concept from it (IS_A down 0..4 or up 1..6; an Anatomy's PART_OF parts 0..5 with a
-    TYPICALLY_AT from a scorable; a Disease with a SUGGESTS from a scorable)."""
-    scorable = set(nodes.filter(pl.col("scorable"))["cui"])
+    """cui, reaches (D59): a concept reaches the scorable ones when it is scorable; or IS_A* leads
+    from it to a reaching concept; or it is a Disease with a SUGGESTS, not dropped on review,
+    from a reaching concept; or it is an Anatomy whose own or a part's (PART_OF*) TYPICALLY_AT
+    comes from a reaching concept. Grown to a fixed point."""
+    def pairs(rel: str, query: bool = False) -> list[tuple[str, str]]:
+        part = edges.filter(pl.col("rel") == rel)
+        if query:
+            part = part.filter(pl.col("review").fill_null(KEEP) != DROP)
+        return part.select("src", "dst").rows()
 
-    def pairs(rel: str) -> list[tuple[str, str]]:
-        return edges.filter(pl.col("rel") == rel).select("src", "dst").rows()
-
-    isa, part = pairs(ISA), pairs(PART_OF)   # (child, parent), (part, whole)
+    isa, part = pairs(ISA), pairs(PART_OF)               # (child, parent), (part, whole)
+    suggests, at = pairs(SUGGESTS, query=True), pairs(TYPICALLY_AT)
     everything = set(nodes["cui"])
-    # walked from the scorable side: ancestors of a scorable have it below them, and so on
-    down = scorable | _steps(isa, scorable, 4, everything)
-    up = _steps([(b, a) for a, b in isa], scorable, 6, everything)
-    at = {d for s, d in pairs(TYPICALLY_AT) if s in scorable}
-    anatomy = at | _steps(part, at, 5, everything)
-    suggested = {d for s, d in pairs(SUGGESTS) if s in scorable}
-    reach = down | up | anatomy | suggested
+    reach = set(nodes.filter(pl.col("scorable"))["cui"])
+    while True:
+        grown = set(reach)
+        grown |= _steps([(b, a) for a, b in isa], grown, len(everything), everything)
+        grown |= {d for s, d in suggests if s in grown}
+        targets = {d for s, d in at if s in grown}
+        grown |= targets | _steps(part, targets, len(everything), everything)
+        if grown == reach:
+            break
+        reach = grown
     return nodes.select("cui").with_columns(pl.col("cui").is_in(list(reach)).alias("reaches"))

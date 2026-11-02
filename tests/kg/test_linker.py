@@ -436,3 +436,18 @@ def test_cli_stops_when_the_vocabulary_differs_from_v2_2(world, umls, tmp_path, 
                  "--radgraph-dir", str(rg), "--umls-dir", str(umls), "--vocab-dir",
                  str(vocab_dir), "--out", str(tmp_path / "link")]) == 1
     assert "differs" in capsys.readouterr().err
+
+
+def test_descriptive_pairs_go_to_the_llms_and_take_their_agreement():
+    pairs = pl.DataFrame({"obs": ["enlarged", "enlarged", "effusion", "blunting"],
+                          "anat": ["cardiac silhouette", "heart", "pleural", "sulcus"],
+                          "n": [9, 5, 7, 3], "share": [0.5] * 4,
+                          "phrase": [None, "enlarged heart", "pleural effusion", None],
+                          "cui": [None, "C0018800", "C0032227", None]})
+    sent = lk.descriptive_pairs(pairs, CFG, heads={"blunting sulcus"})
+    assert sent["string"].to_list() == ["enlarged cardiac silhouette"]   # a head string stays
+    both = {("Observation", "enlarged cardiac silhouette"): choice("cui", "C0018800")}
+    out, review = lk.decide_pairs(pairs, sent, {"opus": both, "sonnet": both}, {})
+    assert out.select("cui", "via").rows() == [("C0018800", "llm"), ("C0018800", "exact"),
+                                               ("C0032227", "exact"), (None, None)]
+    assert review["agree"].to_list() == [True]

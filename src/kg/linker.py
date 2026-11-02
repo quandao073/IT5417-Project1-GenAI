@@ -497,6 +497,67 @@ def pair_links(top: pl.DataFrame, umls_dir: Path, cfg: dict, domain: pl.DataFram
         pl.Series("n_candidates", [best[p][1] if p else 0 for p in chosen], dtype=pl.Int64))
 
 
+def descriptive_pairs(pairs: pl.DataFrame, cfg: dict, heads: Collection[str]) -> pl.DataFrame:
+    """obs, anat, n, string: the pairs of a descriptive word (`descriptive`, linked only through
+    pairs) that no exact name links, each as the phrase "obs anat" for the selection step (D59
+    check); a phrase that is a head string of its own is left to that string."""
+    return (pairs.filter(pl.col("obs").is_in(cfg["descriptive"]), pl.col("cui").is_null())
+            .with_columns(pl.concat_str("obs", "anat", separator=" ").alias("string"))
+            .filter(~pl.col("string").is_in(list(heads))).select("obs", "anat", "n", "string"))
+
+
+def pair_rows(descriptive: pl.DataFrame) -> list[dict]:
+    """The descriptive pairs as rows of the selection step (no exact CUI: the exact names were
+    tried in both orders by `pair_links`)."""
+    return [{"kind": "Observation", "string": s, "query": s, "cuis": [], "method": None}
+            for s in descriptive["string"]]
+
+
+def candidates_for(rows: list[dict], umls_dir: Path, cfg: dict, domain: pl.DataFrame,
+                   encoder_factory: Callable[[], object], cache_dir: Path) -> pl.DataFrame:
+    """The candidates of rows outside the head (the descriptive pairs), as `link_heads` builds
+    them for head strings."""
+    return _candidates(rows, umls_dir, cfg, domain, encoder_factory, cache_dir)
+
+
+def decide_pairs(pairs: pl.DataFrame, descriptive: pl.DataFrame, choices: dict[str, dict],
+                 adjudication: dict) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """(pairs with `via`: exact, llm or adjudicated; the descriptive pairs with both LLMs'
+    answers). A descriptive pair takes the CUI both LLMs agree on, or its adjudication."""
+    providers = sorted(choices)
+    picked, review = {}, []
+    for obs, anat, n, string in descriptive.iter_rows():
+        key = ("Observation", string)
+        said = [choices[p].get(key) for p in providers]
+        agree = None if any(c is None for c in said) else (
+            all(c["decision"] == said[0]["decision"] and c["cui"] == said[0]["cui"]
+                for c in said) and said[0]["decision"] != REJECTED)
+        if key in adjudication:
+            adj = adjudication[key]
+            via, cui = ADJUDICATED, adj["cui"] if adj["decision"] == CUI else None
+        else:
+            via = LLM if agree else None
+            cui = said[0]["cui"] if agree and said[0]["decision"] == CUI else None
+        if cui:
+            picked[(obs, anat)] = (cui, via, string)
+        review.append((obs, anat, n, string, *[_says(c) for c in said], agree, via, cui))
+    cuis, vias, phrases = [], [], []
+    for obs, anat, cui, phrase in pairs.select("obs", "anat", "cui", "phrase").iter_rows():
+        via = EXACT if cui else None
+        if (obs, anat) in picked:
+            cui, via, phrase = picked[(obs, anat)]
+        cuis.append(cui)
+        vias.append(via)
+        phrases.append(phrase)
+    out = pairs.with_columns(pl.Series("cui", cuis, dtype=pl.String),
+                             pl.Series("via", vias, dtype=pl.String),
+                             pl.Series("phrase", phrases, dtype=pl.String))
+    schema = {"obs": pl.String, "anat": pl.String, "n": pl.Int64, "string": pl.String,
+              **{f"llm_{p}": pl.String for p in providers}, "agree": pl.Boolean,
+              "via": pl.String, "cui": pl.String}
+    return out, pl.DataFrame(review, schema=schema, orient="row")
+
+
 def pair_share(mentions: pl.DataFrame, occurrences: pl.DataFrame, pairs: pl.DataFrame,
                strings: Sequence[str]) -> dict[str, dict[str, int]]:
     """For each Observation string: its mentions, those located_at an Anatomy, and those with a

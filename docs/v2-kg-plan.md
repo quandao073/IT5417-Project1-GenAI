@@ -20,8 +20,8 @@ ghi vào `docs/measured-facts.md`, quyết định vào `WORKLOG.md`. Ngưỡng 
 | V2-8 | Đánh giá chính thức, heldout một lần | V2-7 | ⏳ |
 | V2-9 | Agent (ablation) và UI | V2-8; UI chờ `pnpm` (T5) | ⏳ |
 
-**TIẾP THEO:** V2-4 (`notes/tip-v2-4.md`, D58): bảng KG đã dựng; chờ phân xử `SUGGESTS` và alias tiếng Việt; độ nối
-về `scorable` dưới cổng, chưa chốt. Trước V2-6: chuyển parser sang Anthropic (`notes/v2-eval.md`). TIP nằm ở `notes/tip-*.md` (gitignored).
+**TIẾP THEO:** V2-4 (D59): cổng nối về `scorable` trượt (0,884 theo lượt nhắc, ngưỡng 0,90), chờ quyết;
+5 cặp lệch và 5 cạnh `SUGGESTS` mới chờ phân xử. Trước V2-6: chuyển parser sang Anthropic (`notes/v2-eval.md`). TIP nằm ở `notes/tip-*.md` (gitignored).
 
 ## Dữ liệu
 
