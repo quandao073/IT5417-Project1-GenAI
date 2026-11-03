@@ -151,7 +151,7 @@ Bốn quyết định thiết kế:
 | `Disease` | T047 Disease or Syndrome, T191 Neoplastic Process |
 | `Finding` | T033 Finding, T046 Pathologic Function, T184 Sign or Symptom, T190 Anatomical Abnormality, T037 Injury or Poisoning |
 | `Device` | T074 Medical Device |
-| `Anatomy` | T023 Body Part, Organ, or Organ Component; T029 Body Location or Region; T030 Body Space or Junction |
+| `Anatomy` | T023 Body Part, Organ, or Organ Component; T024 Tissue; T029 Body Location or Region; T030 Body Space or Junction |
 
 **Template Cypher.** Code điền tham số, LLM không viết. Các giới hạn độ sâu là đề xuất, chốt sau khi đo.
 
@@ -193,9 +193,16 @@ Mỗi build chạy một lần, bằng lệnh `cxr build-kg`; code đặt trong 
    - Đếm chuỗi observation (ghép modifier, ví dụ "pleural" với "effusion") và chuỗi anatomy.
    - Đo đường cong độ phủ; lấy phần đầu bảng phủ 90–95% số lần nhắc.
 3. **Liên kết chuỗi với CUI.**
-   - Khớp chính xác sau chuẩn hóa với MRCONSO.
-   - Không khớp thì dùng SapBERT tìm láng giềng gần nhất, chỉ trong các semantic type cho phép.
-   - Duyệt tay phần đầu bảng và 14 nhãn CheXpert.
+   - Luật quyết trước: nhóm normal, override tay (CUI hoặc `skip`), từ mô tả đứng một mình (đi qua liên kết cặp
+     `located_at`), `out_of_scope` khi mọi CUI của tên khớp nằm ngoài bảng gán nhãn.
+   - Còn lại, gom ứng viên trong miền lồng ngực (bỏ nguồn hệ mã, bỏ nhánh dưới gốc âm): CUI khớp chính xác sau chuẩn
+     hóa với MRCONSO, gộp với CUI của 10 tên SapBERT gần nhất. SapBERT chỉ lấy ứng viên; sàn cosine τ = 0,5, không
+     phải ngưỡng nhận.
+   - Hai model Anthropic độc lập (`claude-opus-5-5`, `claude-sonnet-5-5`), cùng prompt và input, chọn một CUI trong
+     danh sách ứng viên hoặc `skip`, `out_of_scope`, `none`. Đồng thuận thì nhận; lệch thì `none`, Claude bên chat phân
+     xử vào `data/kg/link/adjudication.csv` (thắng mọi luật).
+   - Kiểm: mention phrases của CheXpert labeler làm chuẩn vàng một phần; cổng precision trên mẫu 200 liên kết và độ
+     phủ theo lượt nhắc (WORKLOG D56).
    - Tham khảo pipeline RadGraph-XL + SapBERT → CUI của Nützel và cộng sự (arXiv 2508.19915, có code).
 4. **Mở rộng có kiểm soát.**
    - Phạm vi theo miền X-quang ngực, không nạp toàn bộ UMLS:

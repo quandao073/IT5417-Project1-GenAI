@@ -560,3 +560,32 @@ latency).
   từ shard): FT6 median −0,133, max 0,082; zero-shot median 0,104, max 0,411. Thứ hạng vẫn dùng được, nhưng điểm cosine
   trả về thường âm, và `tests/integration/test_vector_index.py` (giả định cosine trong (0, 1)) trượt khi encoder
   mặc định là FT6.
+
+## Linker V2-3: 95% đầu từ vựng pool → CUI (đo 2026-11-01, D56)
+
+**Cách đo:** `uv run cxr kg-link` (luật, miền C, ứng viên exact + 10 tên SapBERT `090663c3` gần nhất, sàn τ 0,5), rồi
+`cxr kg-link-llm --model opus --all` và `--model sonnet --all` (prompt `configs/prompts/kg_link_select_v1.txt`, effort
+medium, không fallback), rồi `cxr kg-link` với `data/kg/link/adjudication.csv` (90 dòng do Claude bên chat ghi). Cổng:
+`cxr kg-link-sample` (200 liên kết LLM đồng thuận, seed 20260101), `--judge` (`claude-fable-5-1`, prompt
+`kg_link_judge_v1.txt`, **chuẩn bạc**), `--score data/kg/link/sample_judged.csv`. UMLS 2026AA Level 0, T024 có trong
+Anatomy.
+
+- Phạm vi: Observation 645 chuỗi (707.479 lượt nhắc), Anatomy 346 (528.767). Miền C: Observation 166.960 / 231.853 CUI
+  của bảng gán nhãn, Anatomy 96.586 / 118.024. Bước chọn: 735 chuỗi, 4.147 ứng viên (trung bình 5,6).
+- Hai model trước phân xử: đồng thuận Observation 382/443, Anatomy 264/292; 89 dòng lệch; 0 từ chối, 0 CUI ngoài danh
+  sách. Phân xử: 90 dòng, cả 90 CUI qua kiểm (có trong MRCONSO, TUI đúng loại, trong miền C); sau đó 0 dòng `none` do lệch.
+- Quyết định cuối (Observation · Anatomy): cui 321 · 263; none 64 · 22; out_of_scope 159 · 42; skip 87 · 19;
+  descriptive 9 · 0; normal 5 · 0.
+- Độ phủ theo lượt nhắc: đã quyết **0,949** (Observation 0,980, Anatomy 0,907); có CUI 0,756.
+- Cổng (chuẩn bạc): precision liên kết cuối **0,985** (197/200, Wilson 95% 0,957–0,995), theo lượt nhắc 0,990.
+  SapBERT argmax trên cùng mẫu: 0,925 (184/199, 1 unsure, Wilson 0,879–0,954), theo lượt nhắc 0,978. Cả hai cổng đạt.
+- Đối chiếu mention phrases CheXpert labeler (`44ddeb36`): liên kết cuối 22/37 khớp (0,595), argmax 18/38 (0,474). Phần
+  lệch là khái niệm chung (nodule, mass, infiltrate, infection…) mà CheXpert gom vào nhãn; xử lý bằng `IS_A` ở V2-4.
+- Chi phí API (giá công bố): Opus 5.5 ≈ 6,27 USD, Sonnet 5.5 ≈ 2,81 USD, giám khảo Fable 5.1 ≈ 3,05 USD (191.252 / 22.808
+  token), chạy thử OpenAI ≈ 0,08 USD.
+- **Sửa 2026-11-01 (sau cổng).** Phân xử thêm 3 liên kết giám khảo chấm sai: "air space", "airspace" (Anatomy) → C0034051
+  (phế nang), "bilateral lower lobe" → C0225758, "hypertension" → C0020542 (tăng áp phổi); 94 dòng phân xử, cả 94 CUI
+  qua kiểm. Sửa luật 7: trước đó một CUI bị coi là mang bên khi chuỗi pool của bất kỳ dòng nào chọn nó có chữ chỉ bên,
+  nên CUI không phân bên cũng bị đẩy lên cha; nay chỉ xét tên ưu tiên của CUI. 13 liên kết Anatomy đổi CUI (lower lobe,
+  upper lobe, hila, lung base…); quy về cha 43, chưa quy được 9. Số quyết định và độ phủ (0,949) không đổi. Trong mẫu
+  cổng chỉ 3 dòng trên đổi CUI, nên precision đo trên mẫu giữ 0,985 và 3 lỗi đó nay đã sửa bằng phân xử.

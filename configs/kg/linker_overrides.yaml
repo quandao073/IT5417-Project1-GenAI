@@ -1,0 +1,52 @@
+# Hand decisions for the V2-3 linker (WORKLOG D56): string -> CUI, or `skip` for a string that names no concept.
+# Codes and the project's own strings only; UMLS names stay under data/ (T38). Adjudication adds to this file.
+observation:
+  opacity: C4531104          # Lung Opacity
+  opacification: C4531104    # Lung Opacity
+  collapsed lung: C0004144   # Atelectasis (D21); MRCONSO also names the Pneumothorax CUI so
+  effusion: C0032227         # Pleural Effusion, when no location is given (D21)
+  edema: C0034063            # the pulmonary edema CUI of Edema, when no location is given (D21)
+  # Qualitative words with no concept of their own (user 2026-10-29)
+  appearance: skip
+  central: skip
+  change: skip
+  changed: skip
+  decrease: skip
+  diffuse: skip
+  diminished: skip
+  focal: skip
+  greater: skip
+  improvement: skip
+  in place: skip
+  increase: skip
+  interval: skip
+  limit: skip
+  median: skip
+  patient: skip
+  pattern: skip
+  placement: skip
+  position: skip
+  positioning: skip
+  process: skip
+  similar: skip
+  size: skip
+  status: skip
+  structure: skip
+  volume: skip
+  within: skip
+anatomy:
+  # Qualitative words with no concept of their own (user 2026-10-29)
+  anterior: skip
+  central: skip
+  internal: skip
+  junction: skip
+  lateral: skip
+  left sided: skip
+  median: skip
+  region: skip
+  right sided: skip
+  size: skip
+  structure: skip
+  upper: skip
+  volume: skip
+  zone: skip
