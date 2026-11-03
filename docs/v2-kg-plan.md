@@ -132,6 +132,10 @@ phụ trong bảng đánh giá.
   ma trận điểm nạp vào RAM, chấm điểm không đọc Neo4j (N4); `PREDICTED` chỉ top-N mỗi khái niệm (N5); API vẫn trả kết
   quả khi mất LLM hoặc Neo4j, `/health` báo Neo4j (N8); phản hồi ghi `kg_build_id`, phiên bản ma trận, model, sha256
   prompt (N9).
+- **6e. Chọn khái niệm theo ngữ cảnh** (D64): LLM chọn CUI nhận cả câu hỏi gốc, không chỉ cụm từ. Smoke bắt buộc:
+  "giảm thể tích phổi trái" → Atelectasis; "giảm thể tích phổi hai bên" → low lung volumes (C5563137). Hiện rule
+  parser và Haiku đều gán Atelectasis cho cả hai câu (lexicon `concepts.yaml` bắt cụm), nên parser phải đưa cụm mơ hồ
+  vào `terms` để `lookup_concept` thấy được, hoặc không gán nhãn khi cụm thuộc nhiều khái niệm.
 - **Cổng:** khoảng 20 câu EN/VI chạy end-to-end bằng B2; p95 < 5 s chưa tính diễn giải; test lỗi LLM cho fallback
   < 1 s.
 

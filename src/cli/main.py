@@ -1244,7 +1244,9 @@ def _cmd_kg_build_graph(args: argparse.Namespace) -> int:
     if (out / "alias_vi_review.csv").exists():
         alias_rows = graph.aliases(nodes, umls, load_config("concepts")["concepts"], mapping,
                                    pl.read_csv(out / "alias_vi_review.csv",
-                                               infer_schema_length=0).fill_null(""))
+                                               infer_schema_length=0).fill_null(""),
+                                   yaml.safe_load((default_config_dir() / "kg" /
+                                                   "aliases_manual.yaml").read_text(encoding="utf-8")))
 
     out.mkdir(parents=True, exist_ok=True)
     nodes.write_parquet(out / "nodes.parquet")

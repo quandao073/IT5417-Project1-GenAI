@@ -146,7 +146,10 @@ def test_aliases_keep_only_reviewed_vietnamese_forms(tmp_path):
     review = pl.DataFrame({"cui": ["C0000001", "C0000001"], "alias": ["viêm phổi", "phổi"],
                            "decision": ["keep", "drop"]})
     concepts = {"Pneumonia": {"en": ["pneumonia"], "vi": ["viêm phổi"]}}
-    got = graph.aliases(nodes, umls(tmp_path), concepts, {"Pneumonia": {"id": "C0000001"}}, review)
+    got = graph.aliases(nodes, umls(tmp_path), concepts, {"Pneumonia": {"id": "C0000001"}}, review,
+                        {"vi": {"C0000001": ["phổi viêm"]}})
+    assert ("phổi viêm", "vi", "manual") in set(got.select("text", "lang", "source").rows())
+    got = got.filter(pl.col("source") != "manual")
     assert set(got.select("text", "lang", "source").rows()) == {
         ("Pneumonia", "en", "mrconso"), ("viêm phổi", "vi", "concepts_yaml")}  # llm form, same norm
     assert "phổi" not in got["text"].to_list()
