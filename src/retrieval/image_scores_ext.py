@@ -59,7 +59,9 @@ def candidates(nodes: pl.DataFrame, strings: pl.DataFrame, below: dict[str, set[
     findings and diseases without a column, by pool mentions. Excluded: normal statements,
     generic words (`cfg.generic`), anatomy and devices. `cfg.forced` CUIs are always weighed; the
     others fill the list up to `cfg.max_candidates`."""
-    pool = (nodes.filter(pl.col("in_core"), ~pl.col("scorable"))
+    # without a column among the 14 labels: an extended column of an earlier run must not take
+    # its concept out of the list it was chosen from
+    pool = (nodes.filter(pl.col("in_core"), pl.col("chexpert_label").is_null())
             .sort(["n_pool", "cui"], descending=[True, False]))
     rows = []
     for cui, name, labels, n in pool.select("cui", "name", "labels", "n_pool").iter_rows():

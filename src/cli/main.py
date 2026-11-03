@@ -664,6 +664,8 @@ def _cmd_build_image_scores_ext(args: argparse.Namespace) -> int:
             res["decision"] = f"dropped: lenient AUROC < {ecfg['quality']}"
         else:
             res["decision"] = "kept"
+        # kept but borderline when the interval's lower end is under the gate (D62)
+        res["borderline"] = res["decision"] == "kept" and res["ci95"][0] < ecfg["quality"]
         results[cui] = {**res, "calibration": fit["calibration"][cui], "captions": captions[cui]}
     kept = [c for c in concepts if results[c]["decision"] == "kept"]
 
@@ -707,7 +709,8 @@ def _cmd_build_image_scores_ext(args: argparse.Namespace) -> int:
     # Counts and codes only (T38): names stay in the files under data/.
     for cui, r in results.items():
         print(f"{cui}  present {r['n_present']:>5}  AUROC {r['auroc_lenient']:.3f}  "
-              f"CI [{r['ci95'][0]:.3f}, {r['ci95'][1]:.3f}]  {r['decision']}")
+              f"CI [{r['ci95'][0]:.3f}, {r['ci95'][1]:.3f}]  {r['decision']}"
+              + ("  borderline" if r["borderline"] else ""))
     print(f"kept {len(kept)} of {len(concepts)}; matrix: {out} ({scores.height:,} studies x "
           f"{len(names)} columns); candidates: {args.candidates}")
     return 0
@@ -1332,6 +1335,8 @@ def _cmd_kg_graph_llm(args: argparse.Namespace) -> int:
         top = (edges.filter(pl.col("rel") == graph.SUGGESTS)
                .sort(["n", "p"], descending=True).head(mcfg["suggests_top"]))
         cuis = set(top["src"]) | set(top["dst"])
+    elif args.cuis:
+        cuis = set(args.cuis)      # e.g. the concepts that just got a column (D62)
     else:
         cuis = set(nodes.filter(pl.col("scorable"))["cui"]) | set(
             nodes.filter(~pl.col("scorable")).sort("n_pool", descending=True)
@@ -1384,27 +1389,38 @@ def _cmd_kg_graph_llm(args: argparse.Namespace) -> int:
         pl.DataFrame(rows).write_csv(path)
     else:
         blocked = [*concepts["blocked_phrases"]["vi"], *gcfg["alias_common_phrases"]]
-        label_of = dict(nodes.filter(pl.col("scorable")).select("cui", "chexpert_label")
-                        .iter_rows())
+        label_of = dict(nodes.filter(pl.col("chexpert_label").is_not_null())
+                        .select("cui", "chexpert_label").iter_rows())
+        # rows already in the file keep their adjudication; only concepts not yet in it are added
+        path = out / "alias_vi_review.csv"
+        old = (pl.read_csv(path, infer_schema_length=0).fill_null("") if path.exists()
+               else pl.DataFrame(schema={c: pl.String for c in (
+                   "cui", "name", "chexpert_label", "n_pool", "alias", "opus_reason", "flags",
+                   "decision", "note")}))
         rows = []
         for it in items:
             answer = answers.get(("alias", it["string"]))
-            if answer is None:
+            if answer is None or it["string"] in set(old["cui"]):
                 continue
             proposed = list(dict.fromkeys(a.strip().lower() for a in answer["aliases"]
                                           if a.strip()))[:mcfg["alias_max"]]
             for alias in proposed or [""]:
                 rows.append({"cui": it["string"], "name": it["input"]["name"],
                              "chexpert_label": it["input"]["chexpert_label"] or "",
-                             "n_pool": it["input"]["n_pool_reports"], "alias": alias,
+                             "n_pool": str(it["input"]["n_pool_reports"]), "alias": alias,
                              "opus_reason": answer["reason"]})
-        flagged = graph_llm.alias_flags([(r["cui"], r["alias"]) for r in rows if r["alias"]],
-                                        blocked, existing_vi, label_of)
-        flags = iter(flagged)
+        named = [r for r in rows if r["alias"]]
+        everyone = [(c, a) for c, a in old.filter(pl.col("alias") != "")
+                    .select("cui", "alias").iter_rows()] + [(r["cui"], r["alias"]) for r in named]
+        flagged = graph_llm.alias_flags(everyone, blocked, existing_vi, label_of)[-len(named):]
+        flags = iter(flagged if named else [])
         for r in rows:
             r["flags"] = next(flags) if r["alias"] else "none_proposed"
             r["decision"], r["note"] = "", ""
-        pl.DataFrame(rows).write_csv(out / "alias_vi_review.csv")
+        new = pl.DataFrame(rows, schema={c: pl.String for c in old.columns}) if rows else None
+        (pl.concat([old, new.select(old.columns)]) if new is not None else old).write_csv(path)
+        print(f"alias_vi_review.csv: {len(rows)} new rows for "
+              f"{len({r['cui'] for r in rows})} concepts, decision empty")
     print(json.dumps({"task": args.task, "model": chooser.model, "prompt_sha256": prompt_sha,
                       **stats}, indent=2))
     return 0
@@ -1647,6 +1663,8 @@ def build_parser() -> argparse.ArgumentParser:
     budget = kgr.add_mutually_exclusive_group(required=True)
     budget.add_argument("--limit", type=int, help="at most this many uncached items")
     budget.add_argument("--all", action="store_true", help="every uncached item")
+    kgr.add_argument("--cuis", nargs="+", default=None,
+                     help="alias task: only these concepts (rows already in the file are kept)")
     kgr.add_argument("--umls-dir", default="data/umls/2026AA")
     kgr.add_argument("--out", default="data/kg/graph")
     kgr.set_defaults(func=_cmd_kg_graph_llm)

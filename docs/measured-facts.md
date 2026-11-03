@@ -735,3 +735,30 @@ nhắc. Hiệu chỉnh như 14 cột (`image_scores.calibrate`); AUROC lenient (
   nguyên (giống hệt ma trận cũ) + 23 cột theo CUI; `probe.json` ghi cột gốc / mở rộng, caption, AUROC, CI, commit.
 - KG: 23 khái niệm thành `scorable`. Độ nối về scorable (D59, tham khảo, cổng đã đóng): **0,945 theo lượt nhắc**, 314/595
   theo khái niệm (Anatomy 0,992, Device 0,934, Disease 0,944, Finding 0,886).
+
+## Hoàn thiện cột mở rộng (đo 2026-11-03, D62, D63)
+
+- **Borderline** (cận dưới CI 95% < 0,65, vẫn `scorable`, cờ `borderline` trong `probe.json` của `..._ext1`): pleural
+  thickening C0264545 (0,637), interstitial prominence C5539772 (0,634), nodule C0028259 (0,642). Degenerative C0011164
+  có cận dưới 0,661 nên không borderline.
+- **`IS_A` theo mention phrases của CheXpert labeler** (so khớp như labeler: cụm hoặc gốc từ nằm trong chuỗi pool, "_" là
+  đầu từ). Nối mới: interstitial marking C1849561 → Lung Opacity
+  ("interstitial marking", `lung_opacity.txt`), lung opacification C0746216 → Lung Opacity (gốc "opaci",
+  `lung_opacity.txt`). Đã có từ trước: infection → Pneumonia; scarring, reticular pattern → Lung Opacity; pleural
+  thickening → Pleural Other; rib fracture, multiple fracture → Fracture; linear atelectasis → Atelectasis; mass, nodule,
+  pulmonary nodule, nodular opacity → Lung Lesion; widened mediastinum → Enlarged Cardiomediastinum. Không có cụm: low lung
+  volumes, degenerative, elevated hemidiaphragm, emphysema, tortuous aorta, osteopenia, subcutaneous emphysema,
+  calcification, interstitial prominence. "plate" (`support_devices.txt`) trong "plate like atelectasis" không nối.
+- **Cách gộp cho nhãn yếu có con có cột** (`uv run python artifacts/metrics/scores_ext_combine.py`, kết quả
+  `artifacts/metrics/scores_ext_combine.json`): pool-val, đích là trạng thái đã resolve của nhãn cha (như `quality` của
+  D55), xác suất σ(logit) của ma trận `..._ext1`, AUROC lenient, bootstrap 1.000 lần trên ảnh, chênh lệch ghép cặp.
+
+| Nhãn (present / âm) | (a) cột cha | (b) noisy-OR cha + con | (c) noisy-OR chỉ con | Con có cột |
+|---|---|---|---|---|
+| Fracture (919 / 8.053) | 0,616 [0,596; 0,635] | 0,618 [0,598; 0,638], Δ +0,003 [+0,001; +0,005] | 0,621 [0,602; 0,641], Δ +0,006 [−0,002; +0,013] | rib fracture, multiple fracture |
+| Atelectasis (2.517 / 4.124) | 0,638 [0,624; 0,652] | 0,637 [0,623; 0,651], Δ −0,001 [−0,001; −0,001] | 0,585 [0,570; 0,598], Δ −0,054 [−0,064; −0,043] | linear atelectasis |
+
+- Cả ba cách vẫn dưới 0,65: hai nhãn vẫn yếu (D55). Chọn theo D63: Fracture dùng (b), Atelectasis dùng (a).
+- Alias tiếng Việt: 20/23 khái niệm có cột đã có dòng trong `alias_vi_review.csv` (đã phân xử); 3 khái niệm sinh từ liên kết
+  cặp (low lung volumes C5563137, interstitial marking C1849561, interstitial prominence C5539772) thêm 8 dòng, decision trống
+  (Opus, 2.141 / 318 token).

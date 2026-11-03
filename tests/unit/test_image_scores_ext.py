@@ -24,7 +24,8 @@ def test_candidates_exclude_by_reason_and_keep_the_forced_ones():
                  "Lesion", "Lung", "Old scar"],
         "labels": ["Finding", "Finding", "Finding", "Finding", "Finding", "Anatomy", "Finding"],
         "n_pool": [900, 800, 700, 10, 600, 5000, 650],
-        "in_core": [True] * 7, "scorable": [False] * 7})
+        "in_core": [True] * 7, "chexpert_label": [None] * 7},
+        schema_overrides={"chexpert_label": pl.String})
     strings = pl.DataFrame({"cui": ["C1", "C2", "C3", "C3", "C3", "C4", "C5", "C7"],
                             "string": ["emphysema", "normal heart size", "degenerative",
                                        "degenerative change", "spondylosis", "granuloma",

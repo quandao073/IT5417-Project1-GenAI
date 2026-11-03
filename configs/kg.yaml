@@ -155,6 +155,8 @@ graph:
   phrase_is_a:            # D57 for CUIs reached through a pair link: the labeler phrase is verbatim in <label>.txt
     Edema: [C5194648,     # "vascular prominence" (edema.txt): pairs prominence/prominent + vascular(ity)
             C0242073]     # "vascular congestion", "pulmonary congestion" (edema.txt): congestion + (pulmonary) vascular
+    Lung Opacity: [C1849561,  # "interstitial marking" (lung_opacity.txt): pairs marking + interstitial
+                   C0746216]  # stem "opaci" (lung_opacity.txt): lung opacification
   llm:
     model: {model: claude-opus-5-5, effort: medium, max_tokens: 8000, timeout_seconds: 120}
     workers: 8
