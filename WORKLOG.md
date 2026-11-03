@@ -28,7 +28,7 @@ thì xóa (git giữ lịch sử); không có nhật ký; mã D/T/P không đán
 - **Đang làm:** V2-1 tới V2-5b xong. V2-3 (linker, D56): 95% đầu từ vựng pool nối CUI, cổng đạt theo chuẩn bạc
   (precision 0,985, độ phủ 0,949). V2-4 xong (D57–D60): bảng KG ở `data/kg/graph/` (`cxr kg-build-graph`), cổng nối
   về `scorable` nhận ở 0,899; 6 cạnh `SUGGESTS` mới Claude bên chat đã giữ. Parser đã chuyển sang Anthropic (D61), heldout PASS.
-  Ma trận điểm mở rộng 23 cột (D62, cờ borderline, quy tắc gộp D63); 8 alias mới chờ phân xử. Tiếp theo: V2-6. Ghi chú: V2-4 ở `notes/v2-vocab.md`, `notes/v2-graph.md`; V2-6, V2-9 ở
+  Ma trận điểm mở rộng 23 cột (D62, cờ borderline, quy tắc gộp D63); alias vi đã phân xử hết (473 alias LLM trong `aliases.parquet`). "giảm thể tích phổi" là alias chung của low lung volumes C5563137 và Atelectasis (dạng vi có sẵn trong `concepts.yaml`, nghĩa volume loss), chờ quyết. Tiếp theo: V2-6. Ghi chú: V2-4 ở `notes/v2-vocab.md`, `notes/v2-graph.md`; V2-6, V2-9 ở
   `notes/v2-scores.md`; V2-6, V2-7 ở `notes/v2-eval.md`. TIP và ghi chú đo nằm ở `notes/` (gitignored, chỉ có trên
   máy). Bảng trạng thái và các task sau: `docs/v2-kg-plan.md`.
 - **Chặn:** web UI chờ `pnpm` (T5).

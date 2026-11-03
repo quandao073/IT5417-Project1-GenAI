@@ -92,7 +92,7 @@ MD5 khớp; đủ MSH, NCI, FMA, HPO; không có tiếng Việt; MRCONSO còn 5.
 - Thứ tự: V2-5c → V2-6 (parser đã chuyển sang Anthropic, D61).
 - **Đo 2026-11-02** (D62): giữ 23/30 cột (AUROC lenient 0,675–0,936); ma trận `..._ext1`; độ nối về `scorable` 0,945.
 - **Hoàn thiện 2026-11-03** (D63): 3 cột borderline; thêm `IS_A` → Lung Opacity cho interstitial marking và lung
-  opacification; quy tắc gộp cho nhãn cha yếu (Fracture noisy-OR, Atelectasis cột cha); 8 alias mới chờ phân xử.
+  opacification; quy tắc gộp cho nhãn cha yếu (Fracture noisy-OR, Atelectasis cột cha); 8 alias mới đã phân xử (giữ 6).
 
 ### V2-5 · Ma trận điểm (xong)
 
