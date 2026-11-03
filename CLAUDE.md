@@ -92,6 +92,26 @@ For multi-step tasks, state a brief plan:
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
+
+## 5. Dữ liệu và license
+
+- UMLS cấp license cá nhân, cấm phát tán tập con; repo là public (WORKLOG T38). Mọi thứ trích từ UMLS nằm dưới `data/`
+  (gitignored); repo chỉ chứa script, CUI và mã.
+- Chú thích trong config và code không chép tên khái niệm UMLS (tên đề mục của MSH, NCI, FMA, HPO…): chỉ ghi CUI kèm
+  mô tả tự viết. Cụm từ vựng report và tên nhãn CheXpert (hay cụm của CheXpert labeler) thì được ghi.
+- Trước mỗi PR, chạy `uv run python scripts/umls_leak_check.py main HEAD` (cần UMLS đã lọc ở `data/umls/2026AA/`) và
+  xem từng dòng khớp: cụm report hay tên nhãn thì giữ, tên đề mục nguồn thì thay bằng mô tả tự viết.
+- Không commit `.env`, file dưới `data/`, hay khóa API.
+
+## 6. Quy trình git
+
+- Mỗi task một nhánh tách từ `main`, tên theo công việc, không dùng mã task: `feat/neo4j-loader`, `feat/query-tools`.
+- PR nhỏ, một mục tiêu; merge khi task qua cổng của nó. Merge bằng merge commit (không squash), PR theo thứ tự nếu
+  xếp chồng; nhánh đã merge thì xóa.
+- Tiêu đề commit và PR mô tả việc đã làm, không có mã task (V2-n, Dnn). Mô tả PR: mục tiêu, quyết định WORKLOG liên
+  quan, số đo cổng, thay đổi hành vi mặc định nếu có, cách chạy thử.
+- Không viết lại lịch sử nhánh đã push.
+
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.

@@ -82,19 +82,19 @@ linker:
                 ICD9CM, MTHICD9, ICPC, CCS, CCSR_ICD10CM, CCSR_ICD10PCS]     # statistical classifications
     relas: [regional_part_of, constitutional_part_of, isa]
     anatomy:
-      positive: [C0817096, C0027530, C1140618, C0000726]   # thorax, neck, upper limb, abdomen
-      negative: [C0018670, C0023216, C0559769, C0030797]   # head, lower limb, pelvis (FMA; MSH and NCI)
+      positive: [C0817096, C0027530, C1140618, C0000726]   # vùng ngực, vùng cổ, chi trên, vùng bụng
+      negative: [C0018670, C0023216, C0559769, C0030797]   # vùng đầu, chi dưới, vùng chậu (hai mã: FMA; MSH và NCI)
     observation:
-      positive: [C0035242, C0035204, C4018871,   # respiratory: MSH, NCI, HPO
-                 C0007222, C0243050,             # cardiovascular: MSH and NCI, HPO
-                 C0039978, C4021797,             # thoracic: MSH, HPO
-                 C0016658, C0037933, C4021789,   # bone fracture, spinal diseases, vertebral column (HPO)
-                 C0027651]                       # neoplasm
-      negative: [C0015397, C0038368, C0027765,   # eye, stomatognathic, nervous system diseases
-                 C0037274, C0032962,             # skin diseases, pregnancy complications
-                 C1720887, C1720894,             # female, male urogenital diseases
-                 C0004936, C0013447,             # mental disorders, ear diseases
-                 C0455788]                       # oral cavity finding
+      positive: [C0035242, C0035204, C4018871,   # nhóm bệnh hô hấp (gốc của MSH, NCI, HPO)
+                 C0007222, C0243050,             # nhóm bệnh tim mạch (MSH và NCI; HPO)
+                 C0039978, C4021797,             # nhóm bệnh lồng ngực (MSH; HPO)
+                 C0016658, C0037933, C4021789,   # gãy xương; nhóm bệnh cột sống; bất thường cột sống (HPO)
+                 C0027651]                       # nhóm u, khối tân sinh
+      negative: [C0015397, C0038368, C0027765,   # nhóm bệnh mắt; răng hàm miệng; thần kinh
+                 C0037274, C0032962,             # nhóm bệnh da; biến chứng thai kỳ
+                 C1720887, C1720894,             # nhóm bệnh tiết niệu sinh dục nữ; nam
+                 C0004936, C0013447,             # nhóm rối loạn tâm thần; bệnh tai
+                 C0455788]                       # dấu hiệu khoang miệng
   sapbert:
     model_id: cambridgeltl/SapBERT-from-PubMedBERT-fulltext
     revision: 090663c3ae57bf35ffe4d0d468a2a88d03051a4d
@@ -133,10 +133,10 @@ graph:
   finding_up: 6           # IS_A steps up, stopping at stop_up
   stop_up: [C0035242, C0035204, C4018871, C0007222, C0243050, C0039978, C4021797, C0016658, C0037933, C4021789,
             C0027651,       # the positive roots of the domain
-            C0012634, C0243095, C0037088, C3540840, C2825141, C1704258, C0027653]  # disease, finding, sign or
-                            # symptom, clinical finding, abnormality, neoplasm by site: too general to climb into
+            C0012634, C0243095, C0037088, C3540840, C2825141, C1704258, C0027653]  # các nút quá chung: bệnh nói
+                            # chung, dấu hiệu nói chung (bốn mã), bất thường nói chung, u xếp theo vị trí
   min_n: 20               # SUGGESTS and TYPICALLY_AT kept when n (pool reports) >= min_n
-  devices_parent: C0025080                    # Medical Devices: core devices outside the CheXpert phrases
+  devices_parent: C0025080                    # thiết bị y tế nói chung: cha của thiết bị lõi ngoài cụm từ CheXpert
   prj_labels: {"PRJ:no_finding": Finding, "PRJ:enlarged_cardiomediastinum": Finding,
                "PRJ:pleural_other": Finding, "PRJ:support_devices": Device}
   chexpert_hierarchy:     # child label -> parent label (design, schema decision 4)
