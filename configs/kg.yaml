@@ -22,3 +22,106 @@ vocab:
                worsening, resolved, resolving, persistent, persistently]
     position: [basilar, bibasilar, basal, bibasal, upper, lower, middle, mid, apical, lateral, medial]
     laterality: [left, right, bilateral, bilaterally, unilateral]
+
+# Vocabulary strings -> CUIs, TIP V2-3 (WORKLOG D56). Hand decisions (string -> CUI or skip) live in
+# configs/kg/linker_overrides.yaml.
+linker:
+  scope: 0.95            # head of each kind's D52 vocabulary that is linked
+  review_full: 0.80      # every string of this head is reviewed by hand
+  review_partial: 0.90   # up to here, only strings that are not `exact`, or `exact` with several CUIs
+  labels:                # semantic types per KG label (docs/v2-kg-design.md, label table)
+    Disease: [T047, T191]
+    Finding: [T033, T046, T184, T190, T037]
+    Device: [T074]
+    Anatomy: [T023, T024, T029, T030]
+  kinds: {Observation: [Finding, Disease, Device], Anatomy: [Anatomy]}
+  normal: [clear, normal, unremarkable, normal limits, within normal limits]
+  descriptive: [low, enlarged, prominence, prominent, marking, blunting, elevation, tortuous, thickening]
+  # Anatomy adjective -> noun, matched like a string. Only unambiguous pairs; the others go to SapBERT and review.
+  adjectives:
+    pleural: pleura
+    pulmonary: lung
+    osseous: bone
+    bony: bone
+    mediastinal: mediastinum
+    cardiac: heart
+    aortic: aorta
+    tracheal: trachea
+    thoracic: thorax
+    spinal: spine
+    vertebral: vertebra
+    clavicular: clavicle
+    humeral: humerus
+    scapular: scapula
+    sternal: sternum
+    gastric: stomach
+    esophageal: esophagus
+    abdominal: abdomen
+    diaphragmatic: diaphragm
+    pericardial: pericardium
+    hilar: hilum
+    axillary: axilla
+    venous: vein
+    arterial: artery
+    bronchial: bronchus
+    jugular: jugular vein
+    basilar: lung base
+    bibasilar: lung base
+    basal: lung base
+    bibasal: lung base
+    apical: lung apex
+    biapical: lung apex
+  laterality: [left, right, bilateral]   # a CUI named with one of these moves to its unlateralised parent
+  pairs: {coverage: 0.90, max_pairs: 10} # located_at pairs tried per Observation string
+  # Candidate filter for exact, SapBERT and pair links (D56, option C; notes/v2-link-roots.md). A CUI of the
+  # label table stays unless every name comes from code_sabs, or it lies below a negative root of its kind and
+  # below none of the positive ones. "Below": FMA parts and isa (relas) and every source's CHD rows (T39).
+  domain:
+    code_sabs: [LNC, HL7V2.5, HL7V3.0, HCPCS, CVX, CDCREC, SOP, MTHCMSFRF,  # code systems
+                VANDF, SPN, MTHSPL, RXNORM, ATC, MED-RT,                    # product and drug lists
+                ICD9CM, MTHICD9, ICPC, CCS, CCSR_ICD10CM, CCSR_ICD10PCS]     # statistical classifications
+    relas: [regional_part_of, constitutional_part_of, isa]
+    anatomy:
+      positive: [C0817096, C0027530, C1140618, C0000726]   # thorax, neck, upper limb, abdomen
+      negative: [C0018670, C0023216, C0559769, C0030797]   # head, lower limb, pelvis (FMA; MSH and NCI)
+    observation:
+      positive: [C0035242, C0035204, C4018871,   # respiratory: MSH, NCI, HPO
+                 C0007222, C0243050,             # cardiovascular: MSH and NCI, HPO
+                 C0039978, C4021797,             # thoracic: MSH, HPO
+                 C0016658, C0037933, C4021789,   # bone fracture, spinal diseases, vertebral column (HPO)
+                 C0027651]                       # neoplasm
+      negative: [C0015397, C0038368, C0027765,   # eye, stomatognathic, nervous system diseases
+                 C0037274, C0032962,             # skin diseases, pregnancy complications
+                 C1720887, C1720894,             # female, male urogenital diseases
+                 C0004936, C0013447,             # mental disorders, ear diseases
+                 C0455788]                       # oral cavity finding
+  sapbert:
+    model_id: cambridgeltl/SapBERT-from-PubMedBERT-fulltext
+    revision: 090663c3ae57bf35ffe4d0d468a2a88d03051a4d
+    license: apache-2.0
+    max_length: 25
+    batch_size: 256
+  # Selection step (D56): SapBERT only gathers candidates, the top_k dictionary names of the kind's domain with
+  # cosine >= floor (proposed 2026-11-01), merged with the exact CUIs; two LLMs choose among them.
+  candidates: {top_k: 10, floor: 0.5}
+  llm:
+    prompt_file: prompts/kg_link_select_v1.txt   # relative to configs/; sha256 in the manifest (D20)
+    workers: 8
+    # Two Anthropic models run independently (no OpenAI credit, 2026-11-01). Same family: weaker independence
+    # than two providers (D56). No refusal fallback: a refusal is `none`, reason "refused".
+    models:
+      opus: {model: claude-opus-5-5, effort: medium, max_tokens: 8000, timeout_seconds: 120}
+      sonnet: {model: claude-sonnet-5-5, effort: medium, max_tokens: 8000, timeout_seconds: 120}
+  # Silver-standard judge of the gate sample: Anthropic's most capable model, its own prompt; behind --judge.
+  judge:
+    prompt_file: prompts/kg_link_judge_v1.txt
+    workers: 4
+    model: {model: claude-fable-5-1, effort: high, max_tokens: 16000, timeout_seconds: 300}
+  flags:
+    thin_sources: [CHV, MTH]
+    off_domain_words: [tooth, teeth, dental, knee, hip, foot, brain, cerebral, eye, ocular, retina, breast, uterus,
+                       uterine, ovary, ovarian, prostate, testis]
+  # A phrase of label X matches X's CUI, its children or a CUI below them; for device_label, any device of the domain.
+  chexpert_phrases: {repo: stanfordmlgroup/chexpert-labeler, commit: 44ddeb363149aa657296237f18b5472a73c1756f,
+                     license: MIT, device_label: "PRJ:support_devices"}
+  gate: {precision: 0.85, coverage_by_mentions: 0.90, sample: 200, seed: 20260101}

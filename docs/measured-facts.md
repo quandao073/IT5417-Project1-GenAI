@@ -493,3 +493,99 @@ chính xác. Số ứng viên: Enlarged Cardiomediastinum 1, Cardiomegaly 1, Lun
 Lung Lesion 3, Edema 3, Consolidation 2, Pneumonia 3, Atelectasis 3, Pneumothorax 1, Pleural Effusion 3, Pleural Other 2,
 Fracture 3, Support Devices 3. Bốn nhãn chỉ khớp qua dạng hẹp hơn, không khớp chính tên nhãn: Enlarged Cardiomediastinum,
 Lung Opacity, Pleural Other, Support Devices.
+
+## Ma trận điểm CXR-CLIP FT6, hiệu chỉnh trên pool-val (đo 2026-10-29, V2-5)
+
+**Cách đo:** `uv run cxr build-image-scores --encoder cxrclip_ft6_lr1e-04 --corpus-build-id
+20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1 --pool-build-id 20261024_poolval9k_cxrclip_ft6_lr1e-04_v1 --out
+data/indexes/image_scores/20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1` (6 giây trên CPU). Mỗi nhãn: cosine giữa ảnh và
+câu mẫu `render([nhãn], [])`, hiệu chỉnh bằng logistic một biến, λ 0, trên pool-val: 9.037 ảnh, cả 9.037 thuộc phần
+val của `patient_split` (`models.yaml: image_probe`, val_fraction 0,1, seed 20260101), pool `a9cca8ae…`. Đích của phép
+fit: PRESENT với ABSENT hoặc NOT_MENTIONED, bỏ UNCERTAIN. **AUROC strict** (in ra, ghi trong `probe.json`): PRESENT với
+ABSENT. **AUROC lenient**: PRESENT với ABSENT hoặc NOT_MENTIONED, tính lại từ `probe.npz` trên cùng shard pool-val bằng
+`zero_shot.label_masks` và `zero_shot.auroc`; strict tính lại khớp `probe.json` tới 4 chữ số. Checkpoint
+`runs/FT6_lr1e-04/model.pt` có sha256 `3de67645…`, khớp `model.sha256` và `revision` của candidate.
+
+| Nhãn | AUROC strict | AUROC lenient | PRESENT | ABSENT | NOT_MENTIONED | UNCERTAIN |
+|---|---:|---:|---:|---:|---:|---:|
+| No Finding | n/a (không có ABSENT) | 0,742 | 1.751 | 0 | 7.286 | 0 |
+| Enlarged Cardiomediastinum | 0,667 | 0,604 | 924 | 2.550 | 4.324 | 1.239 |
+| Cardiomegaly | 0,731 | 0,711 | 2.282 | 1.939 | 4.195 | 621 |
+| Lung Opacity | 0,772 | 0,684 | 6.324 | 488 | 1.982 | 243 |
+| Lung Lesion | **0,482** | 0,607 | 921 | 134 | 7.850 | 132 |
+| Edema | 0,752 | 0,733 | 3.327 | 1.607 | 3.208 | 895 |
+| Consolidation | 0,744 | 0,670 | 900 | 2.377 | 3.828 | 1.932 |
+| Pneumonia | 0,551 | 0,629 | 417 | 308 | 6.728 | 1.584 |
+| Atelectasis | 0,610 | 0,638 | 2.517 | 77 | 4.047 | 2.396 |
+| Pneumothorax | 0,699 | 0,707 | 1.033 | 4.719 | 3.110 | 175 |
+| Pleural Effusion | 0,860 | 0,829 | 4.452 | 2.724 | 1.268 | 593 |
+| Pleural Other | **0,479** | 0,583 | 428 | 11 | 8.354 | 244 |
+| Fracture | **0,474** | 0,616 | 919 | 458 | 7.595 | 65 |
+| Support Devices | 0,683 | 0,784 | 7.131 | 279 | 1.583 | 44 |
+
+- `uncalibrated` (dưới 10 ca mỗi lớp): không có. `saturated` (|logit| > 20 trên pool-val): không có.
+- Ma trận `corpus_scores.parquet`: 25.000 dòng, không trùng study, đúng thứ tự `data/canonical/studies.parquet`, đúng 14
+  cột nhãn, không có giá trị rỗng hay vô hạn; `probe.json` ghi `build_id` của build corpus FT6 và revision `3de67645…`.
+- **Nhóm yếu:** Lung Lesion 0,482, Pleural Other 0,479 (chỉ 11 ca ABSENT), Fracture 0,474 và Pneumonia 0,551 (strict).
+  Ba nhãn đầu dưới 0,5: câu mẫu xếp ảnh PRESENT dưới các ảnh có report ghi rõ "no X". Lenient của bốn nhãn: 0,58–0,63.
+- Ba nhãn yếu nhất cũng là ba nhãn yếu nhất ở khối *Image probe* (BiomedCLIP, đo 2026-10-23; bảng theo concept ở
+  `docs/image-probe.md`): zero-shot trên corpus Lung Lesion 0,469 · Pleural Other 0,496 · Fracture 0,520; probe trên
+  corpus 0,533 · 0,563 · 0,487; val AUROC của probe trên cùng lát pool-val (cùng số dương và âm strict như bảng trên)
+  0,495 · 0,222 · 0,476. Pneumonia đứng thứ tư ở probe (0,589) và ở val AUROC (0,578).
+
+## B1 trên dev: CXR-CLIP FT6 so với zero-shot (đo 2026-10-29, V2-5b)
+
+**Cách đo:** build FT6 đăng ký bằng `uv run cxr index --build-id 20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1`
+(collection `cxr_images_20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1`, 25.000 vector, 512 chiều, 23 giây);
+`cxr validate-indexes` 7 × PASS cho build FT6, zero-shot và BiomedCLIP; sha256 của bốn manifest có trước không đổi. Hai
+lần đo cùng code, cùng parser gold (D54): `uv run cxr eval-retrieval --split dev --parsers gold --build-id <build>
+--out artifacts/metrics/retrieval_dev_onepath_{ft6,zeroshot}.json`. Tái lập: lần chạy zero-shot trùng
+`retrieval_dev_onepath_cxrclip.json` (2026-10-24) ở cả 9 chỉ số tổng hợp, từng bit, và ở 38/38 dòng theo câu (bỏ
+latency).
+
+| Dev, parser gold, 38 câu | zero-shot | FT6 |
+|---|---:|---:|
+| nDCG@10 nhị phân (số chính) | 0,482 | **0,539** |
+| nDCG@10 graded | 0,314 | 0,341 |
+| P@10 · MRR | 0,479 · 0,596 | 0,547 · 0,637 |
+| exclude_violation@10 | 0,400 | 0,283 |
+| Latency trong tiến trình p50 / p95 ms | 94 / 122 | 85 / 111 |
+
+- Theo nhóm, nDCG@10 nhị phân zero-shot → FT6 (một câu có thể thuộc nhiều nhóm): single (18) 0,606 → 0,662 · multi
+  (14) 0,256 → 0,259 · negation (12) 0,349 → 0,464, vi phạm exclude 0,400 → 0,283 · uncertainty (4) 0,082 → 0,134 ·
+  **view (4) 0,918 → 0,754**; nhóm view chỉ có 4 câu, để error analysis ở V2-8. Theo câu: FT6 hơn 24, kém 10, hòa 4;
+  sign test hai phía (bỏ 4 câu hòa, n = 34) p ≈ 0,024. EN và VI cùng số (19 câu mỗi bên).
+- Luật D54: FT6 ≥ zero-shot, nên `image_encoder.selected: cxrclip_ft6_lr1e-04`.
+- **Cosine của FT6 lệch âm.** Câu "chest x-ray showing pleural effusion" với 25.000 ảnh corpus (vector đã chuẩn hóa, tính
+  từ shard): FT6 median −0,133, max 0,082; zero-shot median 0,104, max 0,411. Thứ hạng vẫn dùng được, nhưng điểm cosine
+  trả về thường âm, và `tests/integration/test_vector_index.py` (giả định cosine trong (0, 1)) trượt khi encoder
+  mặc định là FT6.
+
+## Linker V2-3: 95% đầu từ vựng pool → CUI (đo 2026-11-01, D56)
+
+**Cách đo:** `uv run cxr kg-link` (luật, miền C, ứng viên exact + 10 tên SapBERT `090663c3` gần nhất, sàn τ 0,5), rồi
+`cxr kg-link-llm --model opus --all` và `--model sonnet --all` (prompt `configs/prompts/kg_link_select_v1.txt`, effort
+medium, không fallback), rồi `cxr kg-link` với `data/kg/link/adjudication.csv` (90 dòng do Claude bên chat ghi). Cổng:
+`cxr kg-link-sample` (200 liên kết LLM đồng thuận, seed 20260101), `--judge` (`claude-fable-5-1`, prompt
+`kg_link_judge_v1.txt`, **chuẩn bạc**), `--score data/kg/link/sample_judged.csv`. UMLS 2026AA Level 0, T024 có trong
+Anatomy.
+
+- Phạm vi: Observation 645 chuỗi (707.479 lượt nhắc), Anatomy 346 (528.767). Miền C: Observation 166.960 / 231.853 CUI
+  của bảng gán nhãn, Anatomy 96.586 / 118.024. Bước chọn: 735 chuỗi, 4.147 ứng viên (trung bình 5,6).
+- Hai model trước phân xử: đồng thuận Observation 382/443, Anatomy 264/292; 89 dòng lệch; 0 từ chối, 0 CUI ngoài danh
+  sách. Phân xử: 90 dòng, cả 90 CUI qua kiểm (có trong MRCONSO, TUI đúng loại, trong miền C); sau đó 0 dòng `none` do lệch.
+- Quyết định cuối (Observation · Anatomy): cui 321 · 263; none 64 · 22; out_of_scope 159 · 42; skip 87 · 19;
+  descriptive 9 · 0; normal 5 · 0.
+- Độ phủ theo lượt nhắc: đã quyết **0,949** (Observation 0,980, Anatomy 0,907); có CUI 0,756.
+- Cổng (chuẩn bạc): precision liên kết cuối **0,985** (197/200, Wilson 95% 0,957–0,995), theo lượt nhắc 0,990.
+  SapBERT argmax trên cùng mẫu: 0,925 (184/199, 1 unsure, Wilson 0,879–0,954), theo lượt nhắc 0,978. Cả hai cổng đạt.
+- Đối chiếu mention phrases CheXpert labeler (`44ddeb36`): liên kết cuối 22/37 khớp (0,595), argmax 18/38 (0,474). Phần
+  lệch là khái niệm chung (nodule, mass, infiltrate, infection…) mà CheXpert gom vào nhãn; xử lý bằng `IS_A` ở V2-4.
+- Chi phí API (giá công bố): Opus 5.5 ≈ 6,27 USD, Sonnet 5.5 ≈ 2,81 USD, giám khảo Fable 5.1 ≈ 3,05 USD (191.252 / 22.808
+  token), chạy thử OpenAI ≈ 0,08 USD.
+- **Sửa 2026-11-01 (sau cổng).** Phân xử thêm 3 liên kết giám khảo chấm sai: "air space", "airspace" (Anatomy) → C0034051
+  (phế nang), "bilateral lower lobe" → C0225758, "hypertension" → C0020542 (tăng áp phổi); 94 dòng phân xử, cả 94 CUI
+  qua kiểm. Sửa luật 7: trước đó một CUI bị coi là mang bên khi chuỗi pool của bất kỳ dòng nào chọn nó có chữ chỉ bên,
+  nên CUI không phân bên cũng bị đẩy lên cha; nay chỉ xét tên ưu tiên của CUI. 13 liên kết Anatomy đổi CUI (lower lobe,
+  upper lobe, hila, lung base…); quy về cha 43, chưa quy được 9. Số quyết định và độ phủ (0,949) không đổi. Trong mẫu
+  cổng chỉ 3 dòng trên đổi CUI, nên precision đo trên mẫu giữ 0,985 và 3 lỗi đó nay đã sửa bằng phân xử.

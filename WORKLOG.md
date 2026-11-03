@@ -17,31 +17,40 @@ thì xóa (git giữ lịch sử); không có nhật ký; mã D/T/P không đán
 
 ## Trạng thái hiện tại
 
-**Cập nhật:** 2026-10-27, trên nhánh `feat/v2-knowledge-graph` (tách từ `main` `1b50c19`).
+**Cập nhật:** 2026-11-01, trên nhánh `feat/v2-knowledge-graph` (tách từ `main` `1b50c19`).
 
 - **Hệ thống đang chạy:** câu hỏi EN/VI → parser (gpt-5-mini, rule dự phòng) → câu mẫu `render(include, exclude)` →
-  text encoder CXR-CLIP → cosine trên Qdrant, chỉ lọc view → top-k → trích câu report sau xếp hạng (D38–D40). Dev
-  nDCG@10 nhị phân 0,482. Đây là baseline B1 của V2.
-- **Scope:** KG theo thiết kế V2 `docs/v2-kg-design.md` (D41, D45–D50). Fine-tune tạm dừng (D42); checkpoint FT6 và
-  lệnh `cxr build-image-scores` chỉ có trên nhánh `feat/label-aware-image-retrieval`, chưa có trên `main`.
-- **Đang làm:** V2-2 xong: từ vựng pool đo xong, cổng PASS (Observation phủ 90% lượt nhắc bằng 265 chuỗi, ngưỡng
-  500); 14 nhãn đã ánh xạ ở `configs/kg/chexpert_cuis.yaml` (D53). Ghi chú cho V2-3, V2-4: `notes/v2-vocab.md`. Tiếp
-  theo là V2-5, rồi V2-5b (TIP đã duyệt). V2-1 xong: UMLS đã lọc vào `data/umls/2026AA/`. TIP và ghi chú đo nằm ở
-  `notes/` (gitignored, chỉ có trên máy). Bảng trạng thái và các task sau: `docs/v2-kg-plan.md`.
+  text encoder CXR-CLIP FT6 → cosine trên Qdrant, chỉ lọc view → top-k → trích câu report sau xếp hạng (D38–D40,
+  D54). Dev nDCG@10 nhị phân 0,539 (parser gold); zero-shot 0,482 là dòng phụ. Đây là baseline B1 của V2.
+- **Scope:** KG theo thiết kế V2 `docs/v2-kg-design.md` (D41, D45–D50). Fine-tune tạm dừng (D42); checkpoint FT6
+  (candidate `cxrclip_ft6_lr1e-04`) và `cxr build-image-scores` đã mang về nhánh này ở V2-5; code fine-tune vẫn chỉ ở
+  `feat/label-aware-image-retrieval`.
+- **Đang làm:** V2-1, V2-2, V2-5, V2-5b xong: UMLS đã lọc vào `data/umls/2026AA/`; 14 nhãn đã ánh xạ
+  (`configs/kg/chexpert_cuis.yaml`, D53); ma trận điểm FT6 25.000 study × 14 nhãn; B1 dùng FT6 (D54: dev 0,539 so với
+  zero-shot 0,482). V2-3 (linker, D56): phần 1 xong (luật `out_of_scope`, danh sách `skip`, miền ứng viên phương án
+  C, T024). Phần 2 xong: Opus và Sonnet chọn cho 735 chuỗi, 89 dòng lệch đã phân xử (`adjudication.csv`, 90 dòng);
+  cổng đạt theo chuẩn bạc (precision 0,985, độ phủ 0,949; `docs/measured-facts.md`); 3 lỗi giám khảo tìm ra đã phân
+  xử, luật 7 đã sửa. V2-3 người dùng duyệt 2026-11-01. Tiếp theo V2-4 (D57; TIP `notes/tip-v2-4.md` chờ duyệt). Parser còn dùng OpenAI
+  (D22) mà không còn credit: cần task chuyển sang Anthropic trước V2-6 (`notes/v2-eval.md`). Ghi chú cho V2-4 ở
+  `notes/v2-vocab.md`; cho V2-6, V2-9 ở `notes/v2-scores.md`. TIP và ghi chú đo nằm ở `notes/` (gitignored, chỉ có trên
+  máy). Bảng trạng thái và các task sau: `docs/v2-kg-plan.md`.
 - **Chặn:** web UI chờ `pnpm` (T5).
 
 Dữ liệu, chỉ mục, artifact đều gitignored; lệnh dựng lại ở README. README không nói:
 
 - Mỗi build có `data/indexes/builds/<build_id>/manifest.json`; API phục vụ `BUILD_ID`, không đặt thì build duy nhất
-  của encoder `selected`. Hai build: `20261023_chexpert25k_cxrclip_v1` (mặc định) và `20261011_chexpert25k_biomedclip_v1`.
+  của encoder `selected`. Ba build: `20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1` (mặc định),
+  `20261023_chexpert25k_cxrclip_v1` (zero-shot) và `20261011_chexpert25k_biomedclip_v1`.
 - `cxr eval-parser` ghi đè `parser_eval.json`, `cxr eval-retrieval` ghi đè `retrieval_eval.json`; các bản heldout được
   trích dẫn đã đóng băng trong `artifacts/metrics/` (tên và sha256 ở `docs/measured-facts.md`).
 - Script thăm dò chỉ đọc nằm ở `artifacts/metrics/*.py` (gitignored); mỗi số đo ghi script của nó.
+- Ma trận điểm V2 nằm ở `data/indexes/image_scores/<build_id>/` (`cxr build-image-scores`). Ba file nằm thẳng trong
+  `data/indexes/image_scores/` là ma trận zero-shot cũ của nhánh V1.1 (câu mẫu cũ), không dùng cho V2.
 
 Kiểm tra sau mỗi thay đổi:
 
 ```bash
-uv run pytest -q                 # 902 passed; model/integration/llm bị bỏ chọn mặc định
+uv run pytest -q                 # 943 passed; model/integration/llm bị bỏ chọn mặc định
 uv run pytest -m model           # bắt buộc khi đổi configs/models.yaml hoặc src/embeddings/ (T37)
 uv run pytest -m integration     # cần `docker compose up -d qdrant`
 uv run pytest -m llm             # parse thật qua LLM, đọc .env
@@ -68,9 +77,13 @@ nào lệch thì bảng này và `docs/scope-and-non-goals.md` đúng.
 | D50 | File gốc ở `data/umls/raw/` (zip và `2026AA/META/`, chỉ đọc); Parquet đã lọc và `manifest.json` ở `data/umls/<version>/`, ghi bởi `cxr kg-filter-umls` | Tách bản gốc của NLM khỏi bản đã lọc; manifest ghi MD5 zip, config, sha256 và số dòng trước, sau khi lọc |
 | D52 | Chốt của V2-2, ghi trước khi đo: từ vựng chỉ đo trên pool (88.853 study). Ghép modifier hai bước: (a) bỏ theo `configs/kg.yaml: vocab.drop_modifiers` (Observation bỏ mức độ, diễn tiến, vị trí, bên; Anatomy chỉ bỏ bên); (b) modifier còn lại chỉ giữ khi chuỗi ghép khớp chính xác một tên trong MRCONSO (thử cả chuỗi, rồi từng modifier), không thì chỉ giữ từ chính. Đưa về số ít chỉ khi dạng số ít có trong pool hoặc MRCONSO, không đổi đuôi `as`, `ss`, `us`, `is`. Cổng: Observation theo quy tắc trên phủ 90% lượt nhắc bằng ≤ 500 chuỗi | TIP V2-2 người dùng duyệt 2026-10-27 (`notes/tip-v2-2.md`) |
 | D53 | 14 nhãn CheXpert → `configs/kg/chexpert_cuis.yaml`, chỉ mã, `check_mapping` kiểm: 10 nhãn là CUI, No Finding là `PRJ:no_finding`. Nhãn mà tên không có trong UMLS và chỉ khớp khái niệm hẹp hơn dùng `PRJ:<tên>`, kèm `is_a` (một CUI cha) và `children` (các CUI hẹp hơn khớp chính xác dạng `en`, nối `IS_A` → PRJ; không lấy CUI thứ hai của cùng dạng): Enlarged Cardiomediastinum, Pleural Other, Support Devices. Cardiomegaly là con của `PRJ:enlarged_cardiomediastinum` (phân cấp CheXpert) | Người dùng chốt 2026-10-27 trên ứng viên V2-2 (xếp theo khớp đúng tên nhãn trước); mã và lý do ở `notes/v2-vocab.md` |
-| D51 | Trong đánh giá V2, **B1 dùng CXR-CLIP FT6**, cùng encoder với ma trận điểm của B2; B1 zero-shot giữ làm dòng phụ. Build corpus FT6 được đăng ký ở V2-5b | Người dùng 2026-10-27: hiệu B2 − B1 phải là đóng góp riêng của KG, không lẫn đóng góp của fine-tune |
+| D56 | Chốt của V2-3 (linker), ghi trước khi đo: liên kết phần đầu phủ 95% lượt nhắc theo D52 (Observation 645, Anatomy 346 chuỗi). Luật theo thứ tự: nhóm normal; override tay `configs/kg/linker_overrides.yaml` (CUI hoặc `skip`, có danh sách từ định tính); 9 từ mô tả đứng một mình; khớp chính xác MRCONSO; tính từ giải phẫu → danh từ; `out_of_scope` (khớp tên MRCONSO nhưng mọi CUI có TUI ngoài bảng gán nhãn; không thêm T073, T082); còn lại qua bước chọn. Bảng gán nhãn thêm **T024 Tissue** vào Anatomy. Mọi ứng viên (exact, SapBERT, cặp) lọc theo miền `linker.domain`, **phương án C (gốc âm)**: bỏ CUI chỉ có tên từ nguồn hệ mã, danh mục sản phẩm, phân loại thống kê (MTH không tính); bỏ CUI dưới gốc âm (Anatomy: đầu, chi dưới, chậu; Observation: bệnh mắt, răng miệng, thần kinh, da, thai, tiết niệu sinh dục, tâm thần, tai) mà không dưới gốc dương nào (lồng ngực, cổ, chi trên, bụng; hô hấp, tim mạch, lồng ngực, gãy xương, cột sống, u); "dưới" đi theo FMA và `CHD` mọi nguồn. Bước chọn, cho mọi chuỗi không do normal, override, `skip`, từ mô tả (quyết qua cặp) hay `out_of_scope` quyết: ứng viên = CUI exact (tính từ thì của danh từ) gộp với CUI của 10 tên SapBERT (commit `090663c3`) gần nhất trong miền, **sàn τ = 0,5** (chốt 2026-11-01; không còn ngưỡng nhận). Hai model Anthropic chạy độc lập, cùng prompt `configs/prompts/kg_link_select_v1.txt` (sha256 vào manifest) và cùng input: `claude-opus-5-5` và `claude-sonnet-5-5` (effort medium), cache `data/kg/link/llm_cache_<opus|sonnet>.jsonl`; không có fallback, model từ chối thì `none` lý do "refused". **Hai model cùng họ nên độc lập yếu hơn hai provider** (không còn credit OpenAI); đồng thuận của chúng không thay được chấm mẫu. Input chỉ gồm chuỗi, loại, lượt nhắc, tối đa 5 chuỗi `located_at` kèm số đếm, ứng viên (CUI, tên, TUI, nguồn, cosine); không gửi text report. Output Pydantic `decision` (cui, skip, out_of_scope, none), `cui`, `reason`; CUI ngoài danh sách thì `rejected`. Đồng thuận thì nhận, lệch thì `none`; `data/kg/link/adjudication.csv` (Claude bên chat ghi) thắng mọi luật. `review.csv` có quyết định và lý do của hai LLM, `agree`, `flags` (nguồn chỉ CHV/MTH, tên có từ ngoài miền, TUI lệch loại, chuỗi `skip` có CUI, `chexpert_mismatch`, bên chưa quy), dòng lệch lên đầu. Chuẩn vàng một phần: mention phrases của `stanfordmlgroup/chexpert-labeler` (MIT, commit `44ddeb36`). CUI mang bên quy về cha không phân bên. Song song, liên kết cặp `located_at` (cặp phủ 90%, tối đa 10, hai thứ tự). Cổng kép: precision ≥ 0,85 trên 200 liên kết LLM đồng thuận chưa phân xử (seed 20260101), bác sĩ chấm hoặc giám khảo `claude-fable-5-1` với prompt riêng (chuẩn bạc, sau cờ `--judge`); mẫu kèm CUI argmax để so "SapBERT argmax" với "SapBERT + LLM"; độ phủ theo lượt nhắc phần đầu 95% ≥ 0,90, chỉ `none` và `pending` là thiếu. Chạy thử tối đa 10 chuỗi mỗi provider rồi dừng trước khi gọi toàn bộ | TIP V2-3 duyệt 2026-10-29; đổi cùng ngày vì chấm sơ bộ cho SapBERT argmax đúng khoảng 1/3. Ngày 2026-11-01 chốt C (gốc dương như spec loại oan lung, rib, consolidation…; `notes/v2-link-roots.md`), bụng thay bụng trên, T024 vì pleura, soft tissue, subcutaneous tissue, costal cartilage, fat là giải phẫu thấy được trên phim ngực và mang T024. Người dùng không phán y khoa: LLM đề xuất, Claude bên chat phân xử |
+| D57 | Chốt cho V2-4: (a) khái niệm chung nối `IS_A` (`source: chexpert`) tới nhãn theo mention phrases của CheXpert labeler (D21): nodule, mass, mass lesion, nodular opacity, nodular density, tumor, neoplasm → Lung Lesion; infiltrate, increased density, reticular pattern, scar → Lung Opacity; fibrosis → `PRJ:pleural_other`; infection, infectious process → Pneumonia. (b) chf và heart failure **không** `IS_A` Edema: là Disease, nối `SUGGESTS` sang Edema, Cardiomegaly, Pleural Effusion với trọng số tính trên pool | Người dùng 2026-11-01, sau đối chiếu cụm từ CheXpert ở V2-3 (`notes/v2-vocab.md`) |
+| D55 | Mỗi khái niệm scorable mang `quality` = AUROC lenient trên pool-val (kèm khoảng tin cậy bootstrap 95%, tính ở V2-6, chỉ để báo cáo); ngưỡng **0,65**, so với ước lượng điểm. Dưới ngưỡng: vẫn chấm khi hỏi trực tiếp hoặc leo `IS_A`, kèm cảnh báo bắt buộc; không làm đích của `SUGGESTS`, `TYPICALLY_AT`, mở rộng "rộng hơn". Theo V2-5, sáu khái niệm dưới ngưỡng: Pleural Other, Enlarged Cardiomediastinum, Lung Lesion, Fracture, Pneumonia, Atelectasis. Giữ đủ 14 cột, không hạ trọng số tay; ablation bật/tắt cổng ở V2-8 | Người dùng chốt 2026-10-29, trước khi đo dev (thay P15); `notes/v2-scores.md` |
+| D54 | Luật V2-5b, ghi trước khi đo: API đổi encoder mặc định sang FT6 (`image_encoder.selected: cxrclip_ft6_lr1e-04`) khi nDCG@10 nhị phân trên dev của FT6 ≥ của zero-shot, cả hai đo bằng `eval-retrieval --parsers gold`, cùng code; thấp hơn thì dừng và báo. Điều kiện tái lập: zero-shot phải ra đúng 0,482, lệch thì dừng. FT6 thua thì B1 và B2 cùng dùng zero-shot (D51 đổi theo) và ma trận V2-5 dựng lại bằng zero-shot | TIP V2-5b người dùng duyệt 2026-10-27, bước 4 sửa 2026-10-29: parser gold cho cả hai build, vì parse LLM không tái lập (T18) |
+| D51 | Trong đánh giá V2, **B1 dùng CXR-CLIP FT6**, cùng encoder với ma trận điểm của B2; B1 zero-shot giữ làm dòng phụ. Build corpus FT6 `20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1` đã đăng ký (V2-5b) | Người dùng 2026-10-27: hiệu B2 − B1 phải là đóng góp riêng của KG, không lẫn đóng góp của fine-tune |
 | D39 | Một đường tìm kiếm; **thứ hạng chỉ từ ảnh, API không đọc nhãn**. Câu mẫu do code dựng (`templates.render`: "no X", No Finding là "normal chest", thứ tự CHEXPERT_LABELS, từ chối "A and no A"); lọc view là lọc metadata; câu report trích sau xếp hạng, chỉ để hiển thị. Không khái niệm → câu tự do của parser; chỉ phủ định → "no X" kèm warning; UNCERTAIN như PRESENT; trên 2 ràng buộc kèm warning | Hybrid thỏa ràng buộc nhờ lọc trên chính nhãn làm đáp án; một đường áp dụng được cho ảnh chưa có report |
-| D38 | Encoder mặc định CXR-CLIP SwinT bản M (sha256 ghim trong `models.yaml`, CC BY-NC 4.0); BiomedCLIP vẫn là candidate | Hòa zero-shot trên dev, CXR-CLIP nhanh hơn 2,4 lần (luật hòa của gate Phase 2) |
+| D38 | Encoder mặc định CXR-CLIP SwinT bản fine-tune FT6 (`cxrclip_ft6_lr1e-04`, từ 2026-10-29; sha256 ghim trong `models.yaml`, CC BY-NC 4.0). Bản M zero-shot và BiomedCLIP vẫn là candidate, build vẫn đăng ký. Trọng số FT6 chỉ có trên máy (`runs/`, sinh bằng code fine-tune của nhánh V1.1) | CXR-CLIP hòa BiomedCLIP zero-shot trên dev và nhanh hơn 2,4 lần (luật hòa Phase 2); FT6 hơn zero-shot trên dev, 0,539 so với 0,482 (D54) |
 | D40 | Sổ đăng ký build: manifest riêng mỗi build ghi encoder; `config_hash` chỉ phủ `data.yaml` + candidate của encoder + `normalize`; mọi lệnh encode text nạp encoder qua `index.build_encoder` (từ chối revision khác build) | Hai encoder so được trên cùng pipeline mà không làm hỏng build của nhau |
 | D22 | Parser: OpenAI `gpt-5-mini-2025-08-07`, JSON schema theo 14 khái niệm; rule parser khi LLM lỗi hoặc thiếu key. Ollama qwen 3B còn chạy được (`LLM_PROVIDER=ollama`) nhưng trượt heldout | Bake-off trên dev theo luật viết trước; heldout PASS. Truy vấn đi ra OpenAI, không chứa dữ liệu bệnh nhân |
 | D20 | Prompt là file có version; sha256 của prompt đã render nằm trong khóa cache và trong JSON đo; chỉ chỉnh prompt và lexicon trên dev | Mọi số đo truy được về prompt |
@@ -112,6 +125,7 @@ nào lệch thì bảng này và `docs/scope-and-non-goals.md` đúng.
 | T36 | `data/` dùng chung giữa các nhánh; `data/indexes/build_manifest*.json` là của nhánh `feat/label-aware-image-retrieval`. Ngày 2026-10-27 đã xóa phần dữ liệu riêng của nhánh đó: `training/.venv`, `data/colab_bundle`, `data/train_cache`, `data/b16_rehearsal`, `data/exp_cxrclip` (giữ `runs/` và các embedding) | Lưu sha256 manifest trước khi index, kiểm lại sau. Quay lại nhánh V1.1 thì phải dựng lại cache train và bundle Colab |
 | T37 | Model test bị bỏ chọn mặc định, nên `pytest -q` xanh vẫn lọt lỗi adapter | Chạy `-m model` khi đổi `models.yaml` hoặc `src/embeddings/` |
 | T38 | Repo GitHub public; UMLS cấp license cá nhân, cấm phát tán tập con, phải báo cáo sử dụng hằng năm (tháng 1) | Mọi thứ trích từ UMLS nằm dưới `data/` (gitignored); repo chỉ chứa script và CUI |
+| T40 | Cosine câu–ảnh của FT6 lệch âm (median −0,13, max 0,08 cho một câu trên 25.000 ảnh; zero-shot median 0,10). Thứ hạng đúng, giá trị tuyệt đối thì không | Không đặt ngưỡng hay giả định dấu trên cosine thô; điểm cần ý nghĩa tuyệt đối thì dùng logit đã hiệu chỉnh của ma trận V2-5 |
 | T39 | MRREL không đồng nhất giữa các nguồn: phân cấp MSH là `PAR`/`CHD` với RELA **rỗng**, còn NCI, FMA, HPO dùng `isa`/`inverse_isa`; bộ phận trong FMA nằm ở `regional_part_of` và `constitutional_part_of`, RELA `part_of` chỉ có 23 dòng. REL/RELA mô tả quan hệ của CUI2 đối với CUI1 | Lọc `IS_A`, `PART_OF` theo cả REL lẫn RELA của từng nguồn; kiểm chiều trên một cặp đã biết trước khi tin (`docs/measured-facts.md`, *UMLS 2026AA*) |
 
 ---

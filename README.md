@@ -27,9 +27,10 @@ câu hỏi (EN/VI)
   `no X` cho bệnh bị loại, `normal chest` cho No Finding, thứ tự cố định (nên "A and B" và
   "B and A" là một câu). Câu không có khái niệm nào thì dùng câu tự do của parser. Câu chỉ có
   phủ định, có ý "có thể", hoặc có trên hai ràng buộc vẫn được tìm, kèm cảnh báo trong response.
-- **Encoder.** Mặc định là CXR-CLIP SwinT (Kakao Brain, huấn luyện trên MIMIC-CXR). BiomedCLIP là
-  encoder thay thế; mỗi lần embed tạo một *build* riêng (`<ngày>_chexpert25k_<encoder>_v1`), và
-  server phục vụ build chọn bằng `BUILD_ID`.
+- **Encoder.** Mặc định là CXR-CLIP SwinT bản fine-tune FT6 (`cxrclip_ft6_lr1e-04`): checkpoint
+  MIMIC-CXR của Kakao Brain, tinh chỉnh trên bệnh nhân ngoài corpus. Bản zero-shot gốc (`cxrclip`) và
+  BiomedCLIP là encoder thay thế; mỗi lần embed tạo một *build* riêng
+  (`<ngày>_chexpert25k_<encoder>_v1`), và server phục vụ build chọn bằng `BUILD_ID`.
 - **Bằng chứng.** Mỗi kết quả kèm câu nguyên văn trong report có nhắc tới bệnh được hỏi, gắn
   polarity (`affirmed`, `negated`, `uncertain`). Câu trích được thêm sau khi xếp hạng và không
   làm đổi thứ hạng.
@@ -41,13 +42,22 @@ câu hỏi (EN/VI)
 ## Đang xây: V2 với Knowledge Graph
 
 V2 thêm một Knowledge Graph tri thức y khoa dựng từ UMLS và RadGraph, làm trung gian giữa câu hỏi và điểm ảnh của
-CXR-CLIP. Thiết kế ở `docs/v2-kg-design.md`, tiến độ ở `docs/v2-kg-plan.md`. Hiện mới có bước lọc UMLS:
+CXR-CLIP. Thiết kế ở `docs/v2-kg-design.md`, tiến độ ở `docs/v2-kg-plan.md`. Đã có các bước dựng đầu vào; linker,
+KG trên Neo4j và đường truy vấn qua KG chưa có:
 
 ```bash
 # Cần license UMLS của chính bạn. Giải nén Metathesaurus Level 0 Subset 2026AA vào data/umls/raw/
 # (đường dẫn khác thì đặt UMLS_ZIP, UMLS_META_DIR trong .env)
-uv run cxr kg-filter-umls     # ghi data/umls/2026AA/{mrconso,mrsty,mrrel,mrsab}.parquet và manifest.json
+uv run cxr kg-filter-umls          # data/umls/2026AA/{mrconso,mrsty,mrrel,mrsab}.parquet và manifest.json
+uv run cxr kg-pool-vocab           # từ vựng RadGraph-XL trên pool và đường cong độ phủ, ghi data/kg/vocab/
+uv run cxr kg-chexpert-candidates  # ứng viên CUI cho 14 nhãn để duyệt tay; bản đã chốt: configs/kg/chexpert_cuis.yaml
+uv run cxr build-image-scores --encoder cxrclip_ft6_lr1e-04 \
+  --corpus-build-id 20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1 \
+  --pool-build-id 20261024_poolval9k_cxrclip_ft6_lr1e-04_v1   # ma trận điểm 25.000 study × 14 nhãn
 ```
+
+Ma trận điểm là cosine với câu mẫu của từng nhãn, hiệu chỉnh trên pool-val, ghi vào
+`data/indexes/image_scores/<build_id>/`. Shard pool-val và trọng số FT6 sinh trên nhánh `feat/label-aware-image-retrieval`.
 
 Dữ liệu UMLS chỉ nằm trong `data/umls/` (gitignored), không bao giờ vào git hay Docker image. Nguồn UMLS dùng: tên tiếng
 Anh từ các nguồn mức 0 (`SRL = 0`), quan hệ từ MSH, NCI, FMA, HPO (`configs/kg.yaml`).
@@ -91,6 +101,11 @@ print(c(Path('data/cache/models/cxrclip/swint_m.tar'), Path('data/cache/models/c
 File đầu ra phải đúng tên `swint_m.pt`: sha256 của nó được ghim trong `configs/models.yaml`, nên
 một file khác sẽ bị từ chối khi nạp. BiomedCLIP và cấu hình Swin/BERT tự tải từ Hugging Face theo
 revision đã ghim.
+
+Trọng số FT6 của encoder mặc định (`runs/FT6_lr1e-04/model.pt`, sha256 ghim ở
+`image_encoder.candidates.cxrclip_ft6_lr1e-04.revision`) không được phát hành: file sinh ra từ checkpoint trên bằng code
+fine-tune của nhánh `feat/label-aware-image-retrieval`. Thiếu file này thì phục vụ bản zero-shot:
+`BUILD_ID=20261023_chexpert25k_cxrclip_v1`.
 
 ## Dựng chỉ mục
 
