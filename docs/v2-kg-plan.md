@@ -20,6 +20,11 @@ ghi vào `docs/measured-facts.md`, quyết định vào `WORKLOG.md`. Ngưỡng 
 | V2-7 | Benchmark và pooling | V2-6, V2-5b | ⏳ |
 | V2-8 | Đánh giá chính thức, heldout một lần | V2-7 | ⏳ |
 | V2-9 | Agent (ablation) và UI | V2-8; UI chờ `pnpm` (T5) | ⏳ |
+| V2-10 | Thêm ảnh không dựng lại KG: embed rồi nối logit vào ma trận bằng probe đã có (N6) | V2-6 | ⏳ |
+| V2-11 | CI: pytest + ruff mỗi lần push (N12) | — | ⏳ |
+| V2-12 | Số đo vận hành: log JSON từng request, báo cáo độ trễ, chi phí LLM, tỉ lệ fallback (N10) | V2-6 | ⏳ |
+| V2-13 | Runbook và chạy thử `docker compose` trên máy sạch (N12, T15) | V2-6 | ⏳ |
+| V2-14 | Quy trình kiểm lại hiệu chỉnh cho ảnh từ nguồn khác (N7) | V2-6 | ⏳ |
 
 **TIẾP THEO:** V2-6. Ma trận điểm đã mở rộng 23 cột (D62); parser dùng `claude-haiku-5-5` (D61). TIP nằm ở `notes/tip-*.md` (gitignored).
 
@@ -122,7 +127,24 @@ phụ trong bảng đánh giá.
   template có tham số, không do LLM viết).
 - **6c.** LLM chọn CUI trong ứng viên; LLM viết diễn giải từ đường đi và điểm; rào chắn: kiểm căn cứ, chặn ngôn ngữ
   chẩn đoán, cảnh báo bắt buộc, ghi vết.
-- **Cổng:** khoảng 20 câu EN/VI chạy end-to-end bằng B2.
+- **6d. Yêu cầu phi chức năng gộp vào V2-6** (`docs/v2-kg-design.md`, *Yêu cầu phi chức năng*): ngân sách độ trễ
+  và đo từng bước (N1); diễn giải streaming (N2); timeout 3 s mỗi lượt LLM, circuit breaker, fallback tất định (N3);
+  ma trận điểm nạp vào RAM, chấm điểm không đọc Neo4j (N4); `PREDICTED` chỉ top-N mỗi khái niệm (N5); API vẫn trả kết
+  quả khi mất LLM hoặc Neo4j, `/health` báo Neo4j (N8); phản hồi ghi `kg_build_id`, phiên bản ma trận, model, sha256
+  prompt (N9).
+- **Cổng:** khoảng 20 câu EN/VI chạy end-to-end bằng B2; p95 < 5 s chưa tính diễn giải; test lỗi LLM cho fallback
+  < 1 s.
+
+### V2-10 – V2-14 · Vận hành (sau V2-6)
+
+- **V2-10.** Lệnh thêm ảnh: embed shard mới, nối logit bằng probe đã hiệu chỉnh, không đổi các dòng cũ của ma trận,
+  không dựng lại KG; 1.000 ảnh < 5 phút CPU.
+- **V2-11.** CI (GitHub Actions): `uv sync`, `pytest -q`, `ruff check`; không cần dữ liệu thật; < 5 phút.
+- **V2-12.** Nạp `configs/logging.yaml` (đang chưa dùng); mỗi request một dòng log JSON có độ trễ từng bước, token và
+  chi phí LLM, cờ fallback, các id truy vết; lệnh báo cáo p50/p95, tỉ lệ fallback, chi phí mỗi 1.000 câu.
+- **V2-13.** Runbook: dựng từ đầu, nâng cấp encoder hoặc KG, khôi phục khi Qdrant hoặc Neo4j hỏng; build và chạy
+  thật image API (T15).
+- **V2-14.** Ảnh từ nguồn khác: ≥ 200 ảnh có nhãn, AUROC lenient theo cột, gắn cờ cột < 0,65 cho nguồn đó.
 
 ### V2-7 · Benchmark và pooling
 
