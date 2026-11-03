@@ -100,7 +100,9 @@ def build_query_parser(settings: Settings, *, llm_factory=None,
         client = llm_factory(settings.llm_base_url, settings.llm_model,
                              settings.llm_timeout_seconds, **common)
     else:
-        key = settings.llm_api_key.get_secret_value() if settings.llm_api_key else None
+        secret = (settings.anthropic_api_key if settings.llm_provider == "anthropic"
+                  else settings.llm_api_key)
+        key = secret.get_secret_value() if secret else None
         try:
             client = llm.make_client(settings.llm_provider, settings.llm_base_url,
                                      settings.llm_model, settings.llm_timeout_seconds,

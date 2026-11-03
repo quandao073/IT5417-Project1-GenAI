@@ -201,7 +201,7 @@ class TestHealth:
         assert body["dimension"] == 4 and body["vectors"] == 8
         assert body["report_index"] == "ok" and body["report_studies"] == 4
         assert body["llm"] == "disabled" and body["encoder"] == "fake"
-        assert body["studies"] == 4 and body["llm_model"] == "gpt-5-mini-2025-08-07"
+        assert body["studies"] == 4 and body["llm_model"] == "claude-haiku-5-5"
 
     def test_not_ready_health_is_503_with_reason(self, world, tmp_path):
         settings, _, _ = world

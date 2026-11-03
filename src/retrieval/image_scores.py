@@ -30,15 +30,17 @@ MAX_LOGIT = 20.0    # sigma(20) = 1 - 2e-9: beyond it the term only measures sep
 
 
 def calibrate(text_vectors: np.ndarray, pool_vectors: np.ndarray, pool_statuses: np.ndarray, *,
-              lam: float = 0.0, max_iter: int = 50, tol: float = 1e-6) -> tuple[Probe, dict]:
+              lam: float = 0.0, max_iter: int = 50, tol: float = 1e-6,
+              concepts: tuple[str, ...] = tuple(CHEXPERT_LABELS)) -> tuple[Probe, dict]:
     """(probe, {"calibration": {label: {a, b, n_pos, n_neg, val_auroc}}, "uncalibrated",
     "saturated"}).
 
-    `text_vectors` [14, D] are the L2-normalised captions in CHEXPERT_LABELS order;
-    `pool_vectors` [n, D] and `pool_statuses` [n, 14] are the pool-val slice."""
+    `text_vectors` [k, D] are the L2-normalised captions in `concepts` order (the 14 labels
+    unless the matrix is extended); `pool_vectors` [n, D] and `pool_statuses` [n, k] are the
+    pool-val slice."""
     X = np.asarray(pool_vectors, dtype=np.float64)
     W, b, calibration, uncalibrated, saturated = [], [], {}, [], []
-    for j, label in enumerate(CHEXPERT_LABELS):
+    for j, label in enumerate(concepts):
         t = np.asarray(text_vectors[j], dtype=np.float64)
         cos = X @ t
         y, keep = make_targets(pool_statuses[:, j])
@@ -61,7 +63,7 @@ def calibrate(text_vectors: np.ndarray, pool_vectors: np.ndarray, pool_statuses:
         calibration[label] = {"a": a, "b": bias, "n_pos": n_pos, "n_neg": n_neg,
                               "val_auroc": val_auroc}
     probe = Probe(W=np.asarray(W, dtype=np.float32), b=np.asarray(b, dtype=np.float32),
-                  concepts=tuple(CHEXPERT_LABELS))
+                  concepts=tuple(concepts))
     return probe, {"calibration": calibration, "uncalibrated": uncalibrated,
                    "saturated": saturated}
 
@@ -72,5 +74,5 @@ def corpus_scores(probe: Probe, corpus_vectors: np.ndarray, studies: pl.DataFram
     logits = probe.logits(corpus_vectors)
     return pl.DataFrame({
         "study_id": studies["study_id"], "image_id": studies["selected_image_id"],
-        **{c: logits[:, j] for j, c in enumerate(CHEXPERT_LABELS)},
+        **{c: logits[:, j] for j, c in enumerate(probe.concepts)},
     })

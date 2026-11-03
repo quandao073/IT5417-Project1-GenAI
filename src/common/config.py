@@ -29,6 +29,14 @@ VECTOR_INDEX_CONFIGS: tuple[str, ...] = ("data", "models:image_encoder")
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _llm_default(key: str, fallback: str) -> str:
+    """models.yaml:llm.<key>; `fallback` only for a config dir without that section (tests)."""
+    try:
+        return load_config("models").get("llm", {}).get(key, fallback)
+    except FileNotFoundError:
+        return fallback
+
+
 def default_config_dir() -> Path:
     """Locate configs/: an explicit override, the working directory, then the repo."""
     if override := os.getenv("CONFIG_DIR"):
@@ -98,19 +106,20 @@ class Settings(BaseSettings):
     # Blank in .env.example: the API then serves the selected encoder's only build.
     build_id: str | None = None
 
-    # OpenAI by default (WORKLOG D22, replacing the local qwen 3B of D5). `openai` is
-    # any OpenAI-compatible API, so Gemini works too through its OpenAI endpoint.
-    # `ollama` is still available: LLM_PROVIDER=ollama, LLM_BASE_URL=http://localhost:11434,
-    # LLM_MODEL=qwen2.5:3b-instruct-q4_K_M. Without a key the parser runs rule-only.
-    llm_provider: Literal["ollama", "openai"] = "openai"
-    llm_base_url: str = "https://api.openai.com/v1"
-    # A dated snapshot, never an alias, so a parse is reproducible; options per model
-    # live in models.yaml:llm.hosted_request.
-    llm_model: str = "gpt-5-mini-2025-08-07"
-    # SecretStr keeps the key out of repr() and therefore out of logs and tracebacks.
-    # Read from LLM_API_KEY, else the conventional OPENAI_API_KEY.
+    # Anthropic by default (WORKLOG D61, replacing OpenAI gpt-5-mini of D22): provider and
+    # model come from models.yaml:llm unless LLM_PROVIDER / LLM_MODEL override them. `openai`
+    # (any OpenAI-compatible API) and `ollama` stay available behind LLM_PROVIDER. Without a
+    # key the parser runs rule-only.
+    llm_provider: Literal["anthropic", "ollama", "openai"] = Field(
+        default_factory=lambda: _llm_default("provider", "anthropic"))
+    llm_base_url: str = "https://api.openai.com/v1"   # used by ollama and openai only
+    # Options per model live in models.yaml:llm.hosted_request.
+    llm_model: str = Field(default_factory=lambda: _llm_default("model", "claude-haiku-5-5"))
+    # SecretStr keeps a key out of repr() and therefore out of logs and tracebacks.
+    # OpenAI-compatible: LLM_API_KEY, else the conventional OPENAI_API_KEY.
     llm_api_key: SecretStr | None = Field(
         default=None, validation_alias=AliasChoices("llm_api_key", "openai_api_key"))
+    anthropic_api_key: SecretStr | None = None
     llm_timeout_seconds: int = 20
     llm_disabled: bool = False
 
@@ -128,7 +137,16 @@ class Settings(BaseSettings):
     def _blank_is_unset(cls, value: str | None) -> str | None:
         return value or None
 
-    @field_validator("llm_api_key", mode="after")
+    @field_validator("llm_provider", "llm_model", mode="before")
+    @classmethod
+    def _blank_is_the_config_default(cls, value, info):
+        """A blank LLM_PROVIDER / LLM_MODEL (as in .env.example) means models.yaml:llm."""
+        if value in ("", None):
+            key = info.field_name.removeprefix("llm_")
+            return _llm_default(key, {"provider": "anthropic", "model": "claude-haiku-5-5"}[key])
+        return value
+
+    @field_validator("llm_api_key", "anthropic_api_key", mode="after")
     @classmethod
     def _blank_key_is_unset(cls, value: SecretStr | None) -> SecretStr | None:
         return value if value and value.get_secret_value() else None

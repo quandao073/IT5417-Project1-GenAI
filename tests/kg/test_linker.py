@@ -328,12 +328,16 @@ def test_mentions_carry_their_entity_and_the_anatomy_heads_they_are_located_at()
         "6": entity("patchy", 6, relations=[("modify", "7"), ("located_at", "4")]),
         "7": entity("consolidation", 7),                                  # through its modifier
         "8": entity("tube", 8, relations=[("located_at", "2")]),          # not an Anatomy
+        "9": entity("chf", 9),
+        "10": entity("small", 10, relations=[("modify", "11"), ("suggestive_of", "9")]),
+        "11": entity("edema", 11),                                        # through its modifier
     }
-    got = {tokens[head]: (eid, located) for _, _, tokens, head, eid, located
+    got = {tokens[head]: (eid, located, suggests) for _, _, tokens, head, eid, located, suggests
            in vocab._mentions(entities)}
-    assert got["effusion"] == ("2", ["1"])
-    assert got["opacity"] == ("5", ["4"]) and got["consolidation"] == ("7", ["4"])
-    assert got["tube"] == ("8", []) and got["lobe"] == ("4", [])
+    assert got["effusion"] == ("2", ["1"], [])
+    assert got["opacity"] == ("5", ["4"], []) and got["consolidation"] == ("7", ["4"], [])
+    assert got["tube"] == ("8", [], []) and got["lobe"] == ("4", [], [])
+    assert got["edema"] == ("11", [], ["9"])
 
 
 def test_overrides_hold_strings_and_codes_only(tmp_path):
@@ -432,3 +436,31 @@ def test_cli_stops_when_the_vocabulary_differs_from_v2_2(world, umls, tmp_path, 
                  "--radgraph-dir", str(rg), "--umls-dir", str(umls), "--vocab-dir",
                  str(vocab_dir), "--out", str(tmp_path / "link")]) == 1
     assert "differs" in capsys.readouterr().err
+
+
+def test_descriptive_pairs_go_to_the_llms_and_take_their_agreement():
+    pairs = pl.DataFrame({"obs": ["enlarged", "enlarged", "effusion", "blunting"],
+                          "anat": ["cardiac silhouette", "heart", "pleural", "sulcus"],
+                          "n": [9, 5, 7, 3], "share": [0.5] * 4,
+                          "phrase": [None, "enlarged heart", "pleural effusion", None],
+                          "cui": [None, "C0018800", "C0032227", None]})
+    sent = lk.descriptive_pairs(pairs, CFG, heads={"blunting sulcus"})
+    assert sent["string"].to_list() == ["enlarged cardiac silhouette"]   # a head string stays
+    both = {("Observation", "enlarged cardiac silhouette"): choice("cui", "C0018800")}
+    out, review = lk.decide_pairs(pairs, sent, {"opus": both, "sonnet": both}, {})
+    assert out.select("cui", "via").rows() == [("C0018800", "llm"), ("C0018800", "exact"),
+                                               ("C0032227", "exact"), (None, None)]
+    assert review["agree"].to_list() == [True]
+
+
+def test_pair_overrides_are_checked_and_applied(tmp_path):
+    path = tmp_path / "o.yaml"
+    path.write_text("observation: {}\npairs: {congestion + vascular: C0242073}\n", encoding="utf-8")
+    hand = lk.load_overrides(path)[lk.PAIRS]
+    pairs = pl.DataFrame({"obs": ["congestion", "congestion"], "anat": ["vascular", "venous"],
+                          "cui": [None, "C0042484"], "via": [None, "exact"]})
+    assert lk.override_pairs(pairs, hand).select("cui", "via").rows() == [
+        ("C0242073", "override"), ("C0042484", "exact")]
+    path.write_text("pairs: {congestion vascular: C0242073}\n", encoding="utf-8")
+    with pytest.raises(lk.LinkerError):
+        lk.load_overrides(path)

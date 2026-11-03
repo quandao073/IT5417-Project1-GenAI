@@ -7,10 +7,10 @@ schema, and the retry/fallback path has to work regardless. Transport failures
 raise LLMError (the caller falls back at once); bad content raises
 LLMInvalidOutput (the caller retries once with the error fed back).
 
-Two adapters share that contract: `OllamaClient` (the local default, D5) and
-`OpenAICompatClient`, which speaks the OpenAI chat-completions API and so also
-serves Gemini through its OpenAI-compatible endpoint. Both receive the same
-prompt and schema, so swapping the model measures the model and nothing else.
+Three adapters share that contract: `AnthropicClient` (the default, D61), `OllamaClient`
+(local) and `OpenAICompatClient`, which speaks the OpenAI chat-completions API and so
+also serves Gemini through its OpenAI-compatible endpoint. All receive the same prompt
+and schema, so swapping the model measures the model and nothing else.
 """
 
 from __future__ import annotations
@@ -236,6 +236,73 @@ class OpenAICompatClient:
         return content, (time.perf_counter() - started) * 1000
 
 
+class AnthropicClient:
+    """Claude through the Anthropic SDK; the default since the switch away from OpenAI (D61).
+
+    The schema is a strict tool the model must call, so the reply is the tool input. The
+    system prompt carries a cache breakpoint: it is the same ~2.6k tokens for every query.
+    Sampling parameters are not sent (current Claude models reject non-default values);
+    `effort` and `tool_choice` come from models.yaml:llm.hosted_request.
+    """
+
+    TOOL = "submit_query"
+
+    def __init__(self, model: str, timeout_s: float, *, api_key: str,
+                 max_tokens: int = 2048, options: dict | None = None, client=None):
+        import anthropic
+
+        options = dict(options or {})
+        self.model, self.max_tokens = model, max_tokens
+        self.effort = options.get("effort")
+        self.tool_choice = options.get("tool_choice", "tool")
+        self.usage = {"calls": 0, "input_tokens": 0, "output_tokens": 0,
+                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+        self._client = client or anthropic.Anthropic(api_key=api_key, timeout=timeout_s,
+                                                     max_retries=1)
+
+    def probe(self) -> ProbeStatus:
+        import anthropic
+
+        try:
+            self._client.models.retrieve(self.model)
+        except anthropic.NotFoundError:
+            return "missing_model"
+        except Exception:  # noqa: BLE001 - a bad key or no network both mean "not usable"
+            return "unreachable"
+        return "ok"
+
+    def version(self) -> str | None:
+        return None   # a hosted API has no server version to record
+
+    def chat(self, messages: list[dict], schema: dict) -> tuple[str, float]:
+        """One call; returns (the tool input as JSON, wall ms)."""
+        import anthropic
+
+        system = [{"type": "text", "text": messages[0]["content"],
+                   "cache_control": {"type": "ephemeral"}}]
+        tool = {"name": self.TOOL, "description": "Submit the parsed search query.",
+                "input_schema": _strict(schema), "strict": True}
+        choice = ({"type": "tool", "name": self.TOOL} if self.tool_choice == "tool"
+                  else {"type": "auto"})
+        extra = {"output_config": {"effort": self.effort}} if self.effort else {}
+        started = time.perf_counter()
+        try:
+            response = self._client.messages.create(
+                model=self.model, max_tokens=self.max_tokens, system=system,
+                messages=messages[1:], tools=[tool], tool_choice=choice, **extra)
+        except anthropic.APIError as exc:
+            raise LLMError(f"{type(exc).__name__}: {exc}") from exc
+        self.usage["calls"] += 1
+        for name in list(self.usage)[1:]:
+            self.usage[name] += getattr(response.usage, name, 0) or 0
+        if response.stop_reason == "refusal":
+            raise LLMError("the model declined (stop_reason refusal)")
+        call = next((b for b in response.content if b.type == "tool_use"), None)
+        if call is None:
+            raise LLMInvalidOutput(f"no {self.TOOL} call (stop_reason {response.stop_reason})")
+        return json.dumps(call.input), (time.perf_counter() - started) * 1000
+
+
 def request_options(llm_cfg: dict, model: str) -> dict:
     """The hosted-request fields for `model` (models.yaml:llm.hosted_request), else default."""
     table = llm_cfg["hosted_request"]
@@ -245,7 +312,12 @@ def request_options(llm_cfg: dict, model: str) -> dict:
 def make_client(provider: str, base_url: str, model: str, timeout_s: float, *,
                 api_key: str | None, num_predict: int, seed: int, keep_alive: str,
                 options: dict | None = None):
-    """The adapter `LLM_PROVIDER` names. `openai` covers any OpenAI-compatible API."""
+    """The adapter `LLM_PROVIDER` names: `anthropic` (default), `ollama`, or `openai`, which
+    covers any OpenAI-compatible API and stays behind that flag."""
+    if provider == "anthropic":
+        if not api_key:
+            raise ValueError("LLM_PROVIDER=anthropic needs ANTHROPIC_API_KEY")
+        return AnthropicClient(model, timeout_s, api_key=api_key, options=options)
     if provider == "ollama":
         return OllamaClient(base_url, model, timeout_s, num_predict=num_predict, seed=seed,
                             keep_alive=keep_alive)
@@ -253,4 +325,4 @@ def make_client(provider: str, base_url: str, model: str, timeout_s: float, *,
         if not api_key:
             raise ValueError("LLM_PROVIDER=openai needs LLM_API_KEY")
         return OpenAICompatClient(base_url, model, timeout_s, api_key=api_key, options=options)
-    raise ValueError(f"unknown LLM provider {provider!r}; expected ollama or openai")
+    raise ValueError(f"unknown LLM provider {provider!r}; expected anthropic, ollama or openai")

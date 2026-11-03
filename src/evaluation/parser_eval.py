@@ -179,7 +179,8 @@ def evaluate_benchmark(rows: Sequence[BenchmarkQuery], parser: QueryParser,
         golds = [r.gold for r in rows]
         metrics = evaluate(golds, [p.query for p in preds])
         entry = {"metrics": metrics, **breakdowns(rows, preds),
-                 "latency_ms": percentiles([p.ms for p in preds[1:]] or [0.0]),
+                 "latency_ms": {**percentiles([p.ms for p in preds[1:]] or [0.0]),
+                                "mean": sum(p.ms for p in preds[1:]) / max(len(preds) - 1, 1)},
                  "fallback_rate": sum(p.fallback_used for p in preds) / len(preds),
                  "retry_rate": sum(p.retried for p in preds) / len(preds),
                  "mismatches": [

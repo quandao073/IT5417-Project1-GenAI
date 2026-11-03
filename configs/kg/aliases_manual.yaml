@@ -1,0 +1,4 @@
+# Hand-written KG aliases (never configs/concepts.yaml, the frozen parser lexicon): CUI -> forms.
+# Codes and the project's own strings only (T38).
+vi:
+  C5563137: [thể tích phổi thấp]   # low lung volumes (user 2026-11-03); "giảm thể tích phổi" stays shared with Atelectasis

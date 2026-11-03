@@ -21,7 +21,7 @@ câu hỏi (EN/VI)
   → trích câu trong report của từng ca, chỉ để hiển thị
 ```
 
-- **Parser.** LLM (`gpt-5-mini`, output ràng buộc bằng JSON schema theo 14 khái niệm CheXpert);
+- **Parser.** LLM (`claude-haiku-5-5`, output ràng buộc bằng tool có JSON schema theo 14 khái niệm CheXpert);
   thiếu key hoặc LLM lỗi thì dùng rule parser có từ điển song ngữ.
 - **Câu mẫu.** Một hàm duy nhất dựng câu từ các ràng buộc: mỗi khái niệm một cụm cố định,
   `no X` cho bệnh bị loại, `normal chest` cho No Finding, thứ tự cố định (nên "A and B" và
@@ -81,7 +81,7 @@ dùng Git Bash.
 
 ```bash
 uv sync --all-extras
-echo "OPENAI_API_KEY=sk-..." > .env          # tùy chọn; không có thì dùng rule parser
+echo "ANTHROPIC_API_KEY=sk-ant-..." > .env # tùy chọn; không có thì dùng rule parser
 ```
 
 Khi chạy trực tiếp trên máy, `.env` chỉ cần dòng trên; mọi đường dẫn và địa chỉ đã có giá trị mặc

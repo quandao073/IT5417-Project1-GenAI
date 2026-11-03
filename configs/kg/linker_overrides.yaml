@@ -6,6 +6,10 @@ observation:
   collapsed lung: C0004144   # Atelectasis (D21); MRCONSO also names the Pneumothorax CUI so
   effusion: C0032227         # Pleural Effusion, when no location is given (D21)
   edema: C0034063            # the pulmonary edema CUI of Edema, when no location is given (D21)
+  # Consistency with the existing rules (user 2026-11-02), not to pass the V2-4 gate
+  abnormality: skip
+  acute disease: skip
+  disease: skip
   # Qualitative words with no concept of their own (user 2026-10-29)
   appearance: skip
   central: skip
@@ -50,3 +54,8 @@ anatomy:
   upper: skip
   volume: skip
   zone: skip
+# located_at pairs, "observation + anatomy": CUI (user 2026-11-02). "vascular congestion" and "pulmonary congestion"
+# are CheXpert labeler phrases of Edema; the pair "congestion + pulmonary" already links to C0242073 exactly.
+pairs:
+  congestion + vascular: C0242073
+  congestion + pulmonary vascular: C0242073
