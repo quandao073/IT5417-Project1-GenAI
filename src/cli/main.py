@@ -21,7 +21,7 @@ from src.data import canonical, probe_pool
 from src.data.audit import CorpusMode, run_audit
 from src.data.labels import CHEXPERT_LABELS
 from src.embeddings import embed, index, spike, validate
-from src.embeddings.probe import patient_split, save_probe
+from src.embeddings.probe import Probe, patient_split, save_probe
 from src.evaluation import parser_benchmark as pb
 from src.evaluation import parser_eval as pe
 from src.evaluation import vector_baseline as vb
@@ -39,6 +39,7 @@ from src.kg import (
 )
 from src.query.schema import ParseError
 from src.retrieval import image_scores as iscores
+from src.retrieval import image_scores_ext as iext
 from src.retrieval import label_filter as lf
 from src.retrieval import report_index
 from src.retrieval.templates import render
@@ -596,6 +597,125 @@ def _cmd_build_image_scores(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_build_image_scores_ext(args: argparse.Namespace) -> int:
+    """Extra score-matrix columns (src/retrieval/image_scores_ext.py, D62): candidates from the KG
+    core, silver labels from RadGraph on pool-val, the calibration of the 14 columns, the D55
+    gate. Writes a new matrix version: the 14 columns unchanged plus the columns that pass."""
+    cfg = load_config("kg")
+    ecfg = cfg["scores_ext"]
+    base_dir = Path(args.base)
+    base_meta = json.loads((base_dir / "probe.json").read_text(encoding="utf-8"))
+    build_id = base_meta["build_id"]
+    graph_dir, link_dir = Path(args.graph_dir), Path(args.link_dir)
+    nodes = pl.read_parquet(graph_dir / "nodes.parquet")
+    edges = pl.read_parquet(graph_dir / "edges.parquet")
+    links = pl.read_parquet(link_dir / "links.parquet")
+    pairs = pl.read_parquet(link_dir / "pair_links.parquet")
+    strings = iext.pool_strings(links, pairs)
+    below = iext.descendants(edges, nodes["cui"].to_list())
+    table = iext.candidates(nodes, strings, below, ecfg)
+    Path(args.candidates).parent.mkdir(parents=True, exist_ok=True)
+    picked = table.filter(pl.col("status") == "candidate")
+
+    canonical_dir = Path(args.canonical_dir)
+    args.pool_build_id = base_meta["pool_build_id"]
+    expect = {k: base_meta["encoder"][k] for k in ("model_id", "revision", "dim")}
+    error, pool = _load_pool(args, expect, pl.read_parquet(canonical_dir / "images.parquet"))
+    if error:
+        print(error, file=sys.stderr)
+        return 1
+    encoder = _build_encoder({"build_id": build_id, "encoder": base_meta["encoder"]["name"],
+                              "embedding_model": {"revision": expect["revision"]}})
+    if encoder is None:
+        return 1
+    X, _, pool_patients, pool_meta = pool
+    _, image_ids = vb._all_vectors(Path(args.pool_dir) / "embeddings" / args.pool_build_id)
+    images = pl.read_parquet(Path(args.pool_dir) / probe_pool.POOL_IMAGES)
+    study_of = dict(zip(images["image_id"], images["study_id"], strict=True))
+    split = load_config("models")["image_probe"]
+    val = patient_split(pool_patients, val_fraction=split["val_fraction"], seed=split["seed"])
+    val_studies = [study_of[i] for i, v in zip(image_ids, val, strict=True) if v]
+
+    sections = vocab.pool_sections(images, Path(args.plus_csv))
+    sections = sections.filter(pl.col("study_id").is_in(val_studies))
+    found, _ = vocab.read_mentions(sections, Path(args.radgraph_dir))
+    mentions = vocab.apply_rules(found, cfg["vocab"],
+                                 vocab.mrconso_names(Path(args.umls_dir) / "mrconso.parquet"))
+    mcuis = graph.mention_cuis(mentions, links, pairs)
+    concepts = {c: below.get(c, {c}) for c in picked["cui"]}
+    statuses = iext.silver_statuses(mcuis, val_studies, concepts)
+
+    captions = {c: cap.split(" | ") for c, cap in picked.select("cui", "captions").iter_rows()}
+    text = []
+    for cui in concepts:
+        vectors = encoder.encode_texts(captions[cui]).astype("float64")
+        vectors /= np.linalg.norm(vectors, axis=1, keepdims=True)
+        mean = vectors.mean(axis=0)
+        text.append(mean / np.linalg.norm(mean))
+    probe, fit = iscores.calibrate(np.asarray(text), X[val], statuses, concepts=tuple(concepts))
+    logits = probe.logits(X[val])
+    results = {}
+    for j, cui in enumerate(concepts):
+        res = iext.lenient_auroc(logits[:, j], statuses[:, j], n_boot=ecfg["bootstrap"]["n"],
+                                 seed=ecfg["bootstrap"]["seed"])
+        if res["n_present"] < ecfg["min_present"]:
+            res["decision"] = f"dropped: {res['n_present']} PRESENT < {ecfg['min_present']}"
+        elif not res["auroc_lenient"] >= ecfg["quality"]:
+            res["decision"] = f"dropped: lenient AUROC < {ecfg['quality']}"
+        else:
+            res["decision"] = "kept"
+        # kept but borderline when the interval's lower end is under the gate (D62)
+        res["borderline"] = res["decision"] == "kept" and res["ci95"][0] < ecfg["quality"]
+        results[cui] = {**res, "calibration": fit["calibration"][cui], "captions": captions[cui]}
+    kept = [c for c in concepts if results[c]["decision"] == "kept"]
+
+    result_rows = {c: (r["n_present"], r["auroc_lenient"], r["ci95"][0], r["ci95"][1],
+                       r["decision"]) for c, r in results.items()}
+    table.with_columns(*[pl.col("cui").replace_strict(
+        {c: v[i] for c, v in result_rows.items()}, default=None, return_dtype=t).alias(n)
+        for i, (n, t) in enumerate([("n_present", pl.Int64), ("auroc_lenient", pl.Float64),
+                                    ("ci95_low", pl.Float64), ("ci95_high", pl.Float64),
+                                    ("decision", pl.String)])]).write_csv(args.candidates)
+
+    base_probe = np.load(base_dir / "probe.npz")
+    keep_idx = [list(concepts).index(c) for c in kept]
+    W = np.concatenate([base_probe["W"], probe.W[keep_idx]])
+    bias = np.concatenate([base_probe["b"], probe.b[keep_idx]])
+    names = (*[str(c) for c in base_probe["concepts"]], *kept)
+    full = Probe(W=W.astype(np.float32), b=bias.astype(np.float32), concepts=names)
+    studies = pl.read_parquet(canonical_dir / "studies.parquet")
+    # the 14 columns are copied, not recomputed, so they stay identical to the base matrix
+    extra = Probe(W=probe.W[keep_idx], b=probe.b[keep_idx], concepts=tuple(kept))
+    base_scores = pl.read_parquet(base_dir / "corpus_scores.parquet")
+    ext_scores = iscores.corpus_scores(extra, _corpus_rows(args, build_id, studies), studies)
+    if not base_scores["study_id"].equals(ext_scores["study_id"]):
+        print("STOP: the base matrix rows are not in canonical studies order", file=sys.stderr)
+        return 1
+    scores = base_scores.hstack(ext_scores.drop("study_id", "image_id"))
+    out = Path(args.out or f"{base_dir}_ext1")
+    meta = {**base_meta, "columns": {
+                "base": [str(c) for c in base_probe["concepts"]],
+                "extended": {c: {"name": picked.filter(pl.col("cui") == c)["name"].item(),
+                                 **results[c]} for c in kept}},
+            "extension": {"base_matrix": str(base_dir), "pool_sha256": pool_meta["pool_sha256"],
+                          "config": ecfg, "caption_rule": "render: the bare phrase; the most "
+                          "frequent pool strings of the concept and its IS_A descendants, "
+                          "embeddings averaged", "dropped": {c: results[c] for c in concepts
+                                                             if c not in kept}},
+            "git_commit": _git_commit(),
+            "built_at": datetime.now(UTC).isoformat(timespec="seconds")}
+    save_probe(out, full, meta, scores)
+
+    # Counts and codes only (T38): names stay in the files under data/.
+    for cui, r in results.items():
+        print(f"{cui}  present {r['n_present']:>5}  AUROC {r['auroc_lenient']:.3f}  "
+              f"CI [{r['ci95'][0]:.3f}, {r['ci95'][1]:.3f}]  {r['decision']}"
+              + ("  borderline" if r["borderline"] else ""))
+    print(f"kept {len(kept)} of {len(concepts)}; matrix: {out} ({scores.height:,} studies x "
+          f"{len(names)} columns); candidates: {args.candidates}")
+    return 0
+
+
 def _cmd_parse(args: argparse.Namespace) -> int:
     parser, status = _build_parser_or_exit(args.parser == "llm")
     result = parser.parse(args.text, mode=args.parser)
@@ -630,6 +750,16 @@ def _cmd_eval_parser(args: argparse.Namespace) -> int:
                      "model": Settings().llm_model,
                      "ollama_version": parser.llm.version() if parser.llm else None,
                      "prompt_sha256": parser.prompt_sha256}
+    usage = getattr(parser.llm, "usage", None)
+    price = load_config("models")["llm"].get("prices", {}).get(Settings().llm_model)
+    if usage and price and usage["calls"]:
+        # one warm-up call and every retry included; cache writes 1.25x, reads 0.1x (list prices)
+        usd = (usage["input_tokens"] * price["input"] + usage["output_tokens"] * price["output"]
+               + usage["cache_creation_input_tokens"] * price["input"] * 1.25
+               + usage["cache_read_input_tokens"] * price["input"] * 0.1) / 1e6
+        report["llm"]["usage"] = {**usage, "usd": usd, "usd_per_call": usd / usage["calls"]}
+        print(f"LLM usage: {usage}; ${usd:.4f} total, ${1000 * usd / usage['calls']:.3f} "
+              f"per 1,000 calls")
     _merge_json(Path(args.out), "eval", report)
 
     for mode, entry in report["parsers"].items():
@@ -638,6 +768,7 @@ def _cmd_eval_parser(args: argparse.Namespace) -> int:
               f"concept={_f(m['concept_macro_f1'])} status={_f(m['status_macro_f1'])} "
               f"view={_f(m['view_macro_f1'])} exact={m['exact_match_rate']:.3f} "
               f"p50={entry['latency_ms']['p50']:.0f}ms p95={entry['latency_ms']['p95']:.0f}ms "
+              f"mean={entry['latency_ms']['mean']:.0f}ms "
               f"fallback={entry['fallback_rate']:.3f}")
         if args.verbose:
             for miss in entry["mismatches"]:
@@ -902,6 +1033,7 @@ def _cmd_kg_link(args: argparse.Namespace) -> int:
               for m in _LLM_MODELS}
     final = linker.decide(links, chosen, adjudication, umls, lcfg, domain)
     pairs, pair_review = linker.decide_pairs(pairs, descriptive, chosen, adjudication)
+    pairs = linker.override_pairs(pairs, overrides[linker.PAIRS])
     info = linker.describe(set(cands["cui"]) | set(final["cui"].drop_nulls())
                            | set(final["lateral_from"].drop_nulls()), umls)
 
@@ -1079,6 +1211,11 @@ def _cmd_kg_build_graph(args: argparse.Namespace) -> int:
     grown = graph.expand(graph.core(links, pairs, mapping, gcfg), umls, lcfg, gcfg, domain)
     mcuis = graph.mention_cuis(mentions, links, pairs)
     nodes = graph.nodes_table(grown, mapping, umls, lcfg, gcfg, graph.n_pool(mcuis))
+    # a concept with a column in the extended score matrix is scorable too (D62)
+    matrix_meta = Path(args.image_scores) / "probe.json"
+    extended = (list(json.loads(matrix_meta.read_text(encoding="utf-8"))["columns"]["extended"])
+                if matrix_meta.is_file() else [])
+    nodes = nodes.with_columns(pl.col("scorable") | pl.col("cui").is_in(extended))
     phrase_dir = Path(args.chexpert_dir) / lcfg["chexpert_phrases"]["commit"]
     device_phrases = chexpert_phrases.load(phrase_dir)["Support Devices"]
     groups = graph.device_groups(links, grown, umls, lcfg, device_phrases, gcfg["devices_parent"],
@@ -1107,7 +1244,9 @@ def _cmd_kg_build_graph(args: argparse.Namespace) -> int:
     if (out / "alias_vi_review.csv").exists():
         alias_rows = graph.aliases(nodes, umls, load_config("concepts")["concepts"], mapping,
                                    pl.read_csv(out / "alias_vi_review.csv",
-                                               infer_schema_length=0).fill_null(""))
+                                               infer_schema_length=0).fill_null(""),
+                                   yaml.safe_load((default_config_dir() / "kg" /
+                                                   "aliases_manual.yaml").read_text(encoding="utf-8")))
 
     out.mkdir(parents=True, exist_ok=True)
     nodes.write_parquet(out / "nodes.parquet")
@@ -1139,7 +1278,8 @@ def _cmd_kg_build_graph(args: argparse.Namespace) -> int:
             alias_rows.group_by("lang", "source").len()
             .select(pl.concat_str("lang", "source", separator="/"), "len").iter_rows()),
         "devices": {k: len(v) for k, v in groups.items()}, "generic_missing": missing,
-        "chf_cuis": chf, "git_commit": _git_commit()}
+        "chf_cuis": chf, "scorable_extended": len(extended),
+        "image_scores": str(args.image_scores), "git_commit": _git_commit()}
     (out / "manifest.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     (out / "devices.json").write_text(json.dumps(groups, indent=2), encoding="utf-8")
 
@@ -1197,6 +1337,8 @@ def _cmd_kg_graph_llm(args: argparse.Namespace) -> int:
         top = (edges.filter(pl.col("rel") == graph.SUGGESTS)
                .sort(["n", "p"], descending=True).head(mcfg["suggests_top"]))
         cuis = set(top["src"]) | set(top["dst"])
+    elif args.cuis:
+        cuis = set(args.cuis)      # e.g. the concepts that just got a column (D62)
     else:
         cuis = set(nodes.filter(pl.col("scorable"))["cui"]) | set(
             nodes.filter(~pl.col("scorable")).sort("n_pool", descending=True)
@@ -1249,27 +1391,38 @@ def _cmd_kg_graph_llm(args: argparse.Namespace) -> int:
         pl.DataFrame(rows).write_csv(path)
     else:
         blocked = [*concepts["blocked_phrases"]["vi"], *gcfg["alias_common_phrases"]]
-        label_of = dict(nodes.filter(pl.col("scorable")).select("cui", "chexpert_label")
-                        .iter_rows())
+        label_of = dict(nodes.filter(pl.col("chexpert_label").is_not_null())
+                        .select("cui", "chexpert_label").iter_rows())
+        # rows already in the file keep their adjudication; only concepts not yet in it are added
+        path = out / "alias_vi_review.csv"
+        old = (pl.read_csv(path, infer_schema_length=0).fill_null("") if path.exists()
+               else pl.DataFrame(schema={c: pl.String for c in (
+                   "cui", "name", "chexpert_label", "n_pool", "alias", "opus_reason", "flags",
+                   "decision", "note")}))
         rows = []
         for it in items:
             answer = answers.get(("alias", it["string"]))
-            if answer is None:
+            if answer is None or it["string"] in set(old["cui"]):
                 continue
             proposed = list(dict.fromkeys(a.strip().lower() for a in answer["aliases"]
                                           if a.strip()))[:mcfg["alias_max"]]
             for alias in proposed or [""]:
                 rows.append({"cui": it["string"], "name": it["input"]["name"],
                              "chexpert_label": it["input"]["chexpert_label"] or "",
-                             "n_pool": it["input"]["n_pool_reports"], "alias": alias,
+                             "n_pool": str(it["input"]["n_pool_reports"]), "alias": alias,
                              "opus_reason": answer["reason"]})
-        flagged = graph_llm.alias_flags([(r["cui"], r["alias"]) for r in rows if r["alias"]],
-                                        blocked, existing_vi, label_of)
-        flags = iter(flagged)
+        named = [r for r in rows if r["alias"]]
+        everyone = [(c, a) for c, a in old.filter(pl.col("alias") != "")
+                    .select("cui", "alias").iter_rows()] + [(r["cui"], r["alias"]) for r in named]
+        flagged = graph_llm.alias_flags(everyone, blocked, existing_vi, label_of)[-len(named):]
+        flags = iter(flagged if named else [])
         for r in rows:
             r["flags"] = next(flags) if r["alias"] else "none_proposed"
             r["decision"], r["note"] = "", ""
-        pl.DataFrame(rows).write_csv(out / "alias_vi_review.csv")
+        new = pl.DataFrame(rows, schema={c: pl.String for c in old.columns}) if rows else None
+        (pl.concat([old, new.select(old.columns)]) if new is not None else old).write_csv(path)
+        print(f"alias_vi_review.csv: {len(rows)} new rows for "
+              f"{len({r['cui'] for r in rows})} concepts, decision empty")
     print(json.dumps({"task": args.task, "model": chooser.model, "prompt_sha256": prompt_sha,
                       **stats}, indent=2))
     return 0
@@ -1395,6 +1548,22 @@ def build_parser() -> argparse.ArgumentParser:
                      help="default: artifacts/metrics/image_scores_<encoder>.json")
     bis.set_defaults(func=_cmd_build_image_scores)
 
+    bie = sub.add_parser("build-image-scores-ext",
+                         help="extra score-matrix columns for core findings without one")
+    bie.add_argument("--base", default="data/indexes/image_scores/"
+                                       "20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1")
+    bie.add_argument("--pool-dir", default="data/probe_pool")
+    bie.add_argument("--plus-csv", default="data/raw/chexpert-plus/df_chexpert_plus_240401.csv")
+    bie.add_argument("--radgraph-dir", default="data/raw/chexpert-plus/radgraph_xl")
+    bie.add_argument("--umls-dir", default="data/umls/2026AA")
+    bie.add_argument("--link-dir", default="data/kg/link")
+    bie.add_argument("--graph-dir", default="data/kg/graph")
+    bie.add_argument("--embeddings", default="data/indexes/embeddings")
+    bie.add_argument("--canonical-dir", default="data/canonical")
+    bie.add_argument("--candidates", default="data/kg/scores_ext/candidates.csv")
+    bie.add_argument("--out", default=None, help="default: <base>_ext1")
+    bie.set_defaults(func=_cmd_build_image_scores_ext)
+
     prs = sub.add_parser("parse", help="Phase 4: parse one request, print the SearchQuery")
     prs.add_argument("text")
     prs.add_argument("--parser", choices=["auto", "rule", "llm"], default="auto")
@@ -1484,6 +1653,9 @@ def build_parser() -> argparse.ArgumentParser:
     kgg.add_argument("--vocab-dir", default="data/kg/vocab")
     kgg.add_argument("--link-dir", default="data/kg/link")
     kgg.add_argument("--chexpert-dir", default="data/kg/chexpert_phrases")
+    kgg.add_argument("--image-scores", default="data/indexes/image_scores/"
+                     "20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1_ext1",
+                     help="score matrix whose extended columns make their concepts scorable")
     kgg.add_argument("--out", default="data/kg/graph")
     kgg.set_defaults(func=_cmd_kg_build_graph)
 
@@ -1493,6 +1665,8 @@ def build_parser() -> argparse.ArgumentParser:
     budget = kgr.add_mutually_exclusive_group(required=True)
     budget.add_argument("--limit", type=int, help="at most this many uncached items")
     budget.add_argument("--all", action="store_true", help="every uncached item")
+    kgr.add_argument("--cuis", nargs="+", default=None,
+                     help="alias task: only these concepts (rows already in the file are kept)")
     kgr.add_argument("--umls-dir", default="data/umls/2026AA")
     kgr.add_argument("--out", default="data/kg/graph")
     kgr.set_defaults(func=_cmd_kg_graph_llm)

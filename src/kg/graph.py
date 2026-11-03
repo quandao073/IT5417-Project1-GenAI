@@ -200,6 +200,7 @@ def chexpert_edges(mapping: dict, gcfg: dict, links: pl.DataFrame,
                 rows.append((obs[s], ids[label]))
             else:
                 missing.append(s)
+    rows += [(c, ids[label]) for label, cuis in gcfg.get("phrase_is_a", {}).items() for c in cuis]
     rows += [(c, ids["Support Devices"]) for c in groups["support_devices"]]
     rows += [(c, gcfg["devices_parent"]) for c in groups["other"]]
     rows = [(a, ISA, b, "chexpert") for a, b in dict.fromkeys(rows) if a != b]
@@ -279,9 +280,10 @@ def apply_review(edges: pl.DataFrame, review: pl.DataFrame) -> pl.DataFrame:
 
 
 def aliases(nodes: pl.DataFrame, umls_dir: Path, concepts: dict, mapping: dict,
-            vi_review: pl.DataFrame) -> pl.DataFrame:
+            vi_review: pl.DataFrame, manual: dict | None = None) -> pl.DataFrame:
     """cui, text, norm, lang, source: the English MRCONSO names of every node, the en and vi forms
-    of configs/concepts.yaml for the 14 labels, and the Vietnamese aliases kept on review."""
+    of configs/concepts.yaml for the 14 labels, the Vietnamese aliases kept on review, and the
+    hand-written ones of configs/kg/aliases_manual.yaml ({lang: {cui: [forms]}})."""
     cuis = [c for c in nodes["cui"] if not c.startswith("PRJ:")]
     mrconso = (pl.scan_parquet(umls_dir / "mrconso.parquet").filter(pl.col("CUI").is_in(cuis))
                .select(pl.col("CUI").alias("cui"), pl.col("STR").alias("text")).unique()
@@ -294,7 +296,10 @@ def aliases(nodes: pl.DataFrame, umls_dir: Path, concepts: dict, mapping: dict,
     kept = (vi_review.filter(pl.col("decision") == KEEP, pl.col("alias") != "")
             .select("cui", pl.col("alias").alias("text"), pl.lit("vi").alias("lang"),
                     pl.lit("llm").alias("source")))
-    out = pl.concat([mrconso, yaml_rows, kept])
+    hand = pl.DataFrame([(cui, text, lang, "manual") for lang, by_cui in (manual or {}).items()
+                         for cui, forms in by_cui.items() for text in forms],
+                        schema=["cui", "text", "lang", "source"], orient="row")
+    out = pl.concat([mrconso, yaml_rows, kept, hand])
     return (out.with_columns(pl.col("text").str.to_lowercase().str.replace_all(r"[^\w]+", " ")
                              .str.strip_chars().alias("norm"))
             .unique(["cui", "norm", "lang"], keep="first", maintain_order=True)

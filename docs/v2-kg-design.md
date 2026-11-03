@@ -328,6 +328,27 @@ Hiệu B2 − B1 là đóng góp riêng của KG; hiệu B1 − B0 là đóng g�
 
 **Chi phí.** Ghi số lượt gọi LLM mỗi câu, latency p50 và p95 của từng bước.
 
+## Yêu cầu phi chức năng
+
+Mục tiêu đo được, chốt 2026-11-03 sau khi rà repo. Cột "Hiện trạng" là số đã đo hoặc chỗ còn thiếu (`docs/measured-facts.md`).
+
+| # | Yêu cầu | Mục tiêu | Hiện trạng | Đo bằng |
+| --- | --- | --- | --- | --- |
+| N1 | Độ trễ một câu hỏi, chưa tính diễn giải | p95 < 5 s, theo ngân sách: parser ≤ 2,5 s; chọn khái niệm (LLM) ≤ 2,5 s; KG + chấm điểm + trích câu ≤ 0,3 s | Parser Haiku heldout p95 2,1 s; encode + Qdrant p95 ≈ 0,16 s; bước KG chưa có | `latency_ms` theo từng bước trong log của mỗi request |
+| N2 | Diễn giải | Streaming; token đầu < 1,5 s sau khi có kết quả; kết quả hiển thị không chờ diễn giải | Chưa có | thời điểm token đầu trong log |
+| N3 | LLM lỗi | Fallback tất định (rule parser; chọn ứng viên đầu khi đạt ngưỡng) trong < 1 s với lỗi kết nối hoặc HTTP; LLM chậm bị cắt ở 3 s mỗi lượt gọi; sau 3 lỗi liên tiếp, bỏ qua LLM 60 s (circuit breaker), lúc đó fallback < 50 ms | Rule fallback có; timeout là 20 s; chưa có breaker | test giả lập lỗi, đo thời gian tới phản hồi |
+| N4 | Chấm điểm | Đọc ma trận điểm trong RAM, không đọc Neo4j; top-k trên 1 triệu ảnh × 37 cột < 100 ms | Ma trận 25.000 × 37 (3,7 MB) chưa nạp vào API; 1 triệu × 37 float32 ≈ 148 MB | benchmark `score_images` trên ma trận giả 1 triệu dòng |
+| N5 | `PREDICTED` trong Neo4j | Chỉ top-N ảnh mỗi khái niệm để demo và giải thích (N = 100, cấu hình được); toàn bộ điểm ở ma trận | Chưa nạp | số cạnh `PREDICTED` = N × số khái niệm `scorable` |
+| N6 | Thêm ảnh | Thêm 1.000 ảnh không dựng lại KG, không hiệu chỉnh lại: embed rồi nối logit bằng probe đã có; < 5 phút trên CPU | KG độc lập với ảnh (D46); embed theo shard có resume; chưa có lệnh nối thêm vào ma trận | thời gian lệnh thêm ảnh; ma trận cũ không đổi từng bit |
+| N7 | Ảnh từ nơi khác | Trước khi phục vụ: kiểm lại hiệu chỉnh trên ≥ 200 ảnh có nhãn của nguồn mới; cột có AUROC lenient < 0,65 (D55) trên nguồn đó bị gắn cờ cho nguồn đó | Chưa có quy trình | báo cáo AUROC theo cột và theo nguồn |
+| N8 | Tin cậy dịch vụ | Mất LLM hoặc Neo4j thì API vẫn trả kết quả theo đường của 14 nhãn kèm cảnh báo; `/health` báo trạng thái từng phụ thuộc | `/health` có Qdrant, report index, LLM; Neo4j chưa có | test với từng phụ thuộc bị tắt |
+| N9 | Truy vết | Mỗi phản hồi và dòng log có `request_id`, `kg_build_id`, `build_id` và phiên bản ma trận, model parser, sha256 prompt, revision encoder | Phản hồi có `request_id`, `build_id`; model và prompt chỉ ở `/health` và báo cáo đo | kiểm schema phản hồi |
+| N10 | Theo dõi | Log JSON mỗi request: độ trễ từng bước, token và chi phí LLM, cờ fallback; báo cáo tổng hợp p50/p95, tỉ lệ fallback, chi phí mỗi 1.000 câu | `configs/logging.yaml` có cấu hình JSON nhưng chưa nạp ở đâu; chi phí và fallback chỉ đo trong `eval-parser` | báo cáo từ log |
+| N11 | Tùy chỉnh | Ngưỡng, model, prompt, encoder, ma trận điểm đọc từ `configs/` hoặc `.env`, không hard-code | Hầu hết đã có; vài hằng số còn trong code (`MIN_CLASS`, `MAX_LOGIT`, `SEMANTIC_MAX`) | rà khi review |
+| N12 | Chuẩn kỹ thuật | CI chạy pytest + ruff mỗi lần push (< 5 phút); `docker compose up` một lệnh chạy được stack; runbook cho dựng, nâng cấp, khôi phục | Chưa có CI; compose có healthcheck nhưng image API chưa từng build (T15); README có lệnh, chưa có runbook | CI xanh; `make up` trên máy sạch |
+
+Lý do chọn số: N1 giữ 5 s như đề xuất ban đầu nhưng chia ngân sách, vì hai lượt LLM (parser, chọn khái niệm) đã chiếm khoảng 4 s ở p95; nếu không đạt thì gộp hai lượt thành một. N3 không thể có fallback < 1 s cho LLM treo nếu chỉ dựa vào timeout, nên thêm timeout 3 s mỗi lượt (p95 đo được 2,1 s) và circuit breaker. N4 cho thấy ma trận trong RAM đủ cho 1 triệu ảnh, nên Neo4j không nằm trên đường chấm điểm.
+
 ## Lộ trình và rủi ro
 
 Bắt đầu bằng probe chỉ đọc. Mỗi bước có cổng dừng; ngưỡng của cổng chốt trước khi đo.

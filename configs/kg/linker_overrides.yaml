@@ -54,3 +54,8 @@ anatomy:
   upper: skip
   volume: skip
   zone: skip
+# located_at pairs, "observation + anatomy": CUI (user 2026-11-02). "vascular congestion" and "pulmonary congestion"
+# are CheXpert labeler phrases of Edema; the pair "congestion + pulmonary" already links to C0242073 exactly.
+pairs:
+  congestion + vascular: C0242073
+  congestion + pulmonary vascular: C0242073
