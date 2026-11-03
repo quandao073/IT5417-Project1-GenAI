@@ -6,7 +6,8 @@
 với `configs/retrieval.yaml` chỉ sửa comment (trọng số không đổi, xem *Lưới dev và ablation*) ·
 **build_id corpus:** `20261011_chexpert25k_biomedclip_v1` · **build_id pool:**
 `20261023_pool88k_biomedclip_v1` · **probe_id:** `20261011_chexpert25k_biomedclip_v1_probe_lam0.1` ·
-**Thiết kế:** `docs/superpowers/specs/2026-10-23-image-concept-probe-design.md`
+**Thiết kế:** bản gốc không nằm trong git; các quyết định C1–C10 của nó ghi ở D29 trong WORKLOG cũ, xem
+`git log -p WORKLOG.md` (commit `59b5db6`)
 
 Nguồn của mọi số dưới đây (đều gitignored, đều là **file mới** của nhánh; không lệnh nào của nhánh ghi vào
 `retrieval_eval.json`, `retrieval_dev.json` hay `vector_baseline.json` của `main`, spec C8):
