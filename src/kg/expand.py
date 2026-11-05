@@ -23,6 +23,7 @@ from src.kg.messages import Warn
 
 PRESENT, ABSENT = "PRESENT", "ABSENT"
 SINGLE, NOISY_OR, WEIGHTED = "single", "noisy_or", "weighted"
+ANATOMY_FETCH = 50      # TYPICALLY_AT findings read for a region before the weak ones are dropped
 
 
 @dataclass(frozen=True)
@@ -125,8 +126,9 @@ def expand_concepts(store, cui: str, polarity: str, cfg: dict, term: str = "") -
             intent.warnings.append(Warn("disease_inferred", {"name": name}))
             return intent
     if label == "Anatomy":
-        rows = store.anatomy_findings(cui, cfg["part_depth"], cfg["min_n"], cfg["anatomy_top"])
-        found = _strong(store, [r["cui"] for r in rows])
+        # the best `anatomy_top` findings that are not weak: ask for more, a weak one takes no slot
+        rows = store.anatomy_findings(cui, cfg["part_depth"], cfg["min_n"], ANATOMY_FETCH)
+        found = _strong(store, [r["cui"] for r in rows])[:cfg["anatomy_top"]]
         if found:
             region = {r["cui"]: r["region"] for r in rows}
             intent.kind, intent.combine = "anatomy", NOISY_OR

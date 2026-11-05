@@ -123,7 +123,11 @@ phụ trong bảng đánh giá.
 Kết quả: D65 (Neo4j, nạp, chấm điểm trong RAM), D66 (đường truy vấn, rào chắn, API). `explain_path` là đường đi do
 `expand_concepts` ghi sẵn (`Intent.path`) cộng điểm từng khái niệm của mỗi ảnh (`ScoreMatrix.probabilities`), không có
 truy vấn Cypher thứ năm. Smoke 24 câu và số đo N1–N4 ở `docs/measured-facts.md`; việc còn lại của 6e (luật chọn cho "giảm
-thể tích phổi trái") chờ Claude bên chat phân xử.
+thể tích phổi trái") đạt ở D67 (chú giải đi cùng ứng viên).
+
+Sau smoke có đợt sửa định tuyến và độ phủ KG (D67): nhãn cha không nuốt khái niệm con, vị trí chỉ cảnh báo khi đi cùng dấu hiệu, cạnh
+thủ công (Pleural Diseases, interstitial lung disease), `sides`, nạp sẵn ma trận. Việc còn lại trước V2-7: Disease chưa có đường
+tới cột (76/124, chờ phân xử), N2 chưa đạt, góc sườn hoành bão hòa, bật SapBERT cho ablation.
 
 - **6a.** Service `neo4j` (Community, profile `kg`); nạp `Concept`, `Alias`, `SemanticType`, `Image`, cạnh tri thức và
   `PREDICTED` bằng `UNWIND` (chậm thì `neo4j-admin database import full`); user chỉ đọc; build manifest;

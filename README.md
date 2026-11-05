@@ -68,6 +68,8 @@ uv run cxr kg-load-neo4j                       # nạp bảng KG và top-N PREDI
 uv run cxr validate-indexes --kg --kg-matrix data/indexes/image_scores/<build_id>_ext1
 uv run cxr kg-query "tràn dịch màng phổi, không có tim to"              # hoặc --file câu_hỏi.txt --out x.jsonl
 uv run cxr kg-bench-scoring                    # chấm điểm + top-k trên ma trận giả 1 triệu ảnh x 37 cột
+uv run python scripts/kg_label_shadows.py    # dạng của 14 nhãn trùng alias của khái niệm con đã scorable (kg.yaml: ambiguous_forms)
+uv run cxr eval-parser --split dev --parsers llm --kg-prompt prompts/query_parser_v3.txt   # prompt parser KG, chỉ bộ dev
 ```
 
 API đọc ma trận `_ext1` và bảng KG của `data/kg/graph/` (compose mount sẵn). Mất Neo4j hay LLM thì `/search/kg` vẫn trả kết

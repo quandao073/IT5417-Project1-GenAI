@@ -115,3 +115,9 @@ def test_a_hand_written_suggests_edge_counts_without_a_pool_count(store):
     got = expand.expand_concepts(store, "C14", PRESENT, EXPAND_CFG, "interstitial disease")
     assert got.kind == "disease" and got.combine == WEIGHTED
     assert [(c.cui, round(c.weight, 2)) for c in got.columns] == [("C11", 0.5), ("C3", 0.5)]
+
+
+def test_a_weak_finding_takes_no_slot_of_the_region_s_top_findings(store):
+    # C4 (weak) has the strongest TYPICALLY_AT edge of the region: it must not push C1 out
+    got = expand.expand_concepts(store, "C9", PRESENT, {**EXPAND_CFG, "anatomy_top": 1}, "space")
+    assert got.kind == "anatomy" and [c.cui for c in got.columns] == ["C1"]

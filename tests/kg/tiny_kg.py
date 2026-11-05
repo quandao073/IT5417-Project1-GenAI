@@ -51,6 +51,7 @@ def edges() -> pl.DataFrame:
             _edge("C1", "SUGGESTS", "C6", n=40, n_src=400, p=0.1, review="drop"),
             _edge("C1", "TYPICALLY_AT", "C9", n=50, n_src=200, p=0.25),
             _edge("C2", "TYPICALLY_AT", "C9", n=5, n_src=100, p=0.05),
+            _edge("C4", "TYPICALLY_AT", "C9", n=60, n_src=100, p=0.5),    # the strongest, but weak
             # by hand: no pool count, kept whatever min_n says
             _edge("C3", "SUGGESTS", "C14", source="manual", p=0.5),
             _edge("C11", "SUGGESTS", "C14", source="manual", p=0.5)]
