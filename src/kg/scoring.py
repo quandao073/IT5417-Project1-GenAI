@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
-from src.kg.expand import ABSENT, NOISY_OR, SINGLE, WEIGHTED, Column, Intent
+from src.kg.expand import ABSENT, NOISY_OR, SINGLE, WEIGHTED, WEIGHTED_OR, Column, Intent
 
 _TINY = np.float32(-1e-30)
 
@@ -108,6 +108,13 @@ class ScoreMatrix:
                 term = self._lsn[j] + np.float32(np.log(c.weight))
                 out = term if out is None else np.logaddexp(out, term)
             return out
+        if intent.combine == WEIGHTED_OR:                 # sum of log(1 - w sigma(z))
+            self._fill(self._lsp, js, 1)
+            s = np.zeros(self.z.shape[1], dtype=np.float32)
+            for j, c in zip(js, intent.columns, strict=True):
+                s += np.log1p(-np.float32(c.weight) * np.exp(self._lsp[j]))
+            s = np.minimum(s, _TINY)
+            return s if absent else np.log(-np.expm1(s))
         self._fill(self._lsn, js, -1)                     # noisy-OR: sum of log sigma(-z)
         s = np.minimum(self._sum(self._lsn, intent.columns), _TINY)
         return s if absent else np.log(-np.expm1(s))
@@ -142,6 +149,9 @@ class ScoreMatrix:
                      for c in intent.columns]
                 if intent.combine == WEIGHTED:
                     whole = sum(c.weight * v for c, v in zip(intent.columns, p, strict=True))
+                elif intent.combine == WEIGHTED_OR:
+                    whole = 1 - float(np.prod([1 - c.weight * v
+                                               for c, v in zip(intent.columns, p, strict=True)]))
                 else:
                     whole = 1 - float(np.prod([1 - v for v in p]))
                 entry[i] = {"intent": whole,

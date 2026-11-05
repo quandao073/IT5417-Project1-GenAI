@@ -17,6 +17,7 @@ import numpy as np
 import polars as pl
 
 from src.common.config import Settings, default_config_dir, load_config
+from src.kg import lookup
 from src.kg.guard import Guard, GuardedClient
 from src.kg.llm_query import ConceptChooser, Explainer, GroundingIndex, sha256
 from src.kg.pipeline import KGSearch
@@ -58,6 +59,7 @@ def build_kg_search(settings: Settings, manifest: dict, images: pl.DataFrame, *,
                     warm_up: bool = False) -> tuple[KGSearch, list[str]]:
     """(the search, notes on what is degraded at startup)."""
     cfg, models, concepts = load_config("kg"), load_config("models"), load_config("concepts")
+    cfg["query"]["modifiers"] = lookup.modifier_words(cfg, _yaml("linker_overrides.yaml"))
     graph_dir = Path(settings.kg_graph_dir)
     matrix_dir = (Path(settings.kg_matrix_dir) if settings.kg_matrix_dir else
                   Path(settings.indexes_dir) / "image_scores" / f"{manifest['build_id']}_ext1")
@@ -113,10 +115,11 @@ def build_kg_search(settings: Settings, manifest: dict, images: pl.DataFrame, *,
         choose_text = _text(kl["select"]["prompt_file"])
         chooser = ConceptChooser(client("select", ("choose_concept", "Choose the concept that "
                                                    "matches the phrase.")), guard, choose_text,
-                                 kl["select"]["timeout_seconds"], gloss=_gloss())
-        index = GroundingIndex.build(nodes, pl.read_parquet(graph_dir / "aliases.parquet",
-                                                            columns=["cui", "norm"]),
-                                     cfg["explain"])
+                                 kl["select"]["timeout_seconds"], gloss=_gloss(),
+                                 cache_file=Path(kl["select"]["cache_file"]))
+        index = GroundingIndex.build(
+            nodes, pl.read_parquet(graph_dir / "aliases.parquet",
+                                   columns=["cui", "norm", "lang", "source"]), cfg["explain"])
         explain_text = _text(kl["explain"]["prompt_file"])
         explainer = Explainer(client("explain", ("write_explanation", "Write the summary and "
                                                  "one line per image.")), guard, explain_text,
@@ -126,8 +129,12 @@ def build_kg_search(settings: Settings, manifest: dict, images: pl.DataFrame, *,
                      "select_prompt_sha256": chooser.prompt_sha256,
                      "explain_model": kl["explain"]["model"],
                      "explain_prompt_sha256": explainer.prompt_sha256}
-    use_sapbert = cfg["query"]["lookup"]["sapbert"]["enabled"]
-    semantic = _alias_index(cfg, graph_dir) if use_sapbert else None
+    semantic = None
+    if cfg["query"]["lookup"]["sapbert"]["enabled"]:
+        try:
+            semantic = _alias_index(cfg, graph_dir)
+        except Exception as exc:  # noqa: BLE001 - no model, no network: lookup without the stage
+            notes.append(f"sapbert: {type(exc).__name__}: {exc}"[:200])
     if semantic is not None:
         versions["lookup_sapbert"] = cfg["linker"]["sapbert"]["revision"]
     search = KGSearch(cfg=cfg, matrix=matrix, parser=parser, store=store, quality=quality,
@@ -155,11 +162,14 @@ def _alias_index(cfg: dict, graph_dir: Path):
                               graph_dir.parent / "sapbert_alias")
 
 
-def _gloss() -> dict[str, str]:
+def _yaml(name: str) -> dict:
     import yaml
 
-    manual = yaml.safe_load((default_config_dir() / "kg" / "aliases_manual.yaml")
-                            .read_text(encoding="utf-8"))
+    return yaml.safe_load((default_config_dir() / "kg" / name).read_text(encoding="utf-8"))
+
+
+def _gloss() -> dict[str, str]:
+    manual = _yaml("aliases_manual.yaml")
     return {cui: " ".join(text.split()) for cui, text in manual.get("gloss", {}).items()}
 
 

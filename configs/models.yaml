@@ -160,7 +160,8 @@ kg_llm:
   # A refused or unroutable connection must fail in under a second (N3); Windows takes 2 s to refuse a loopback connection.
   connect_timeout_seconds: 0.8
   parser: {model: claude-haiku-5-5, timeout_seconds: 3}
-  select: {model: claude-haiku-5-5, timeout_seconds: 3, prompt_file: prompts/kg_choose_concept_v2.txt}
+  select: {model: claude-haiku-5-5, timeout_seconds: 3, prompt_file: prompts/kg_choose_concept_v2.txt,
+           cache_file: data/kg/cache/chooser.jsonl}   # the model's choices, kept across restarts
   explain: {model: claude-haiku-5-5, timeout_seconds: 15, max_tokens: 1500,
-            prompt_file: prompts/kg_explain_v2.txt}
+            prompt_file: prompts/kg_explain_v3.txt}
   breaker: {failures: 3, cooldown_seconds: 60}

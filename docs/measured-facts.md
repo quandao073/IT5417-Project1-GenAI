@@ -826,3 +826,25 @@ nhắc. Hiệu chỉnh như 14 cột (`image_scores.calibrate`); AUROC lenient (
 - **SapBERT lúc chạy** (`query.lookup.sapbert.enabled`, mặc định tắt; từ điển = 37.660 alias của KG, cache
   `data/kg/sapbert_alias/`): bật thử, "mediastinum looks wider" → Widened mediastinum, cos 0,933 (cùng cos với
   Enlarged Cardiomediastinum, 0,933), chooser chọn đúng.
+
+## Lookup, vùng giải phẫu, grounding sau smoke lượt e (đo 2026-11-05, D68)
+
+- **Phân bố điểm của vùng giải phẫu đứng một mình**, noisy-OR có trọng số p của `TYPICALLY_AT`, mọi nút Anatomy của KG
+  (`expand_concepts` trên Neo4j đã nạp, 25.000 ảnh của ma trận `..._ext1`; kết quả đầy đủ `data/kg/graph/anatomy_distribution.json`):
+  5.256 nút Anatomy, 131 có đường, 66 tập cột khác nhau. **Không vùng nào có ảnh ≥ 0,95** (trước: góc sườn hoành 47,8%); max
+  lớn nhất 0,947 (cơ hoành, cột elevated hemidiaphragm p = 1,0). p99 của từng tập: dưới 0,01 ở 27 tập, 0,01–0,1 ở 23, 0,1–0,33 ở 15,
+  một tập trên 0,5 (màng phổi C0032225: p50 0,642, p99 0,818, vì pleural thickening p = 1,0 và tràn dịch p = 0,894). Vài vùng của
+  smoke: góc sườn hoành C0230151 p50 0,004, p99 0,004; đỉnh phổi C0225703 p50 0,047, p99 0,327; thùy trên C0225756 p50 0,002,
+  p99 0,024; thùy dưới C0225758 p50 0,023, p99 0,067. Giá trị tuyệt đối thấp vì p là tỉ lệ lượt nhắc dấu hiệu nằm ở vùng đó
+  (thường < 0,2); chỉ thứ hạng có nghĩa, phần trăm của ý vùng trong diễn giải thường làm tròn về 0%.
+- **Disease lõi chưa có đường** (`scripts/kg_disease_routes.py`, sau 3 cạnh `manual` mới): 71 / 124 (trước 76); trong đó 4 ở
+  nhóm `round_two_columns` (C0036439, C3494893, C0032320, C1167782), 67 chờ phân xử. Route của 124: direct 7, narrower 33, disease
+  11, wider 2, none 71.
+- **N4** (`cxr kg-bench-scoring`, 1.000.000 × 37): nạp sẵn 194,9 ms; truy vấn đầu sau nạp: điển hình 38,0 ms, nặng 62,5 ms.
+- **Smoke lượt f** (24 câu, `cxr kg-query`, cache chooser trống lúc đầu): N1 p50 1,88 s, p95 **3,63 s**, max 5,16 s (1/24 trên 5 s:
+  câu 24, chooser hết giờ 3 s rồi lấy ứng viên đầu). Parser p95 2,13 s (0 câu vượt 2,5 s); chooser (9 lượt LLM) p50 1,72, p95 2,58 s
+  (1 vượt 2,5 s, 1 hết giờ); KG + chấm điểm p95 76 ms, max 303 ms (lượt SapBERT đầu tiên, mã hóa lạnh). **N2** token đầu p50
+  1,06 s, p95 **1,51 s**, max 1,57 s, 2/24 trên 1,5 s: **vẫn chưa đạt** (lượt e 1,70 s). 24/24 diễn giải `ok`, không câu nào
+  bị bỏ.
+- SapBERT lúc chạy, bước cuối: mã hóa một cụm 70 ms (300 ms lần đầu); câu 22 tìm được C0746459 (cos 0,933), "loculated" và
+  "sỏi thận" không có alias nào ≥ 0,8.
