@@ -109,3 +109,15 @@ def test_the_explanation_gets_the_ranked_results_and_a_failing_model_does_not_ra
     assert got.status == "failed"
     sent = chat.calls[0][1]["content"]
     assert '"rank": 2' in sent and '"rank": 3' not in sent
+
+
+def test_a_side_alone_is_not_a_term_and_a_page_without_results_is_not_explained():
+    reply = parse_reply(include=["Cardiomegaly"], terms=[("bên phải", "PRESENT")])
+    got = make_search(parser_chat=Chat(reply)).search("tim to bên phải")
+    assert "unrecognized" not in codes(got) and "side_ignored" in codes(got)
+    assert [i.term for i in got.intents] == ["Cardiomegaly"]
+    chat = Chat({"summary": "x", "images": []})
+    nothing = make_search(parser_chat=Chat(parse_reply(terms=[("xyz qwerty", "PRESENT")])),
+                          explain_chat=chat)
+    result = nothing.search("xyz qwerty")
+    assert result.rows == [] and nothing.explain(result) is None and chat.calls == []

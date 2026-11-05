@@ -100,6 +100,7 @@ def build_kg_search(settings: Settings, manifest: dict, images: pl.DataFrame, *,
             return llm.AnthropicClient(
                 c["model"], c["timeout_seconds"], api_key=key.get_secret_value(),
                 max_tokens=c.get("max_tokens", 2048), max_retries=0, tool=tool,
+                connect_timeout_s=kl["connect_timeout_seconds"],
                 options=llm.request_options(models["llm"], c["model"]))
 
         pclient = GuardedClient(client("parser"), guard, kl["parser"]["timeout_seconds"])

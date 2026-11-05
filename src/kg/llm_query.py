@@ -143,8 +143,8 @@ class GroundingIndex:
         for cui in keep:
             for norm in by_cui.get(cui, ()):
                 words = norm.split()
-                if (len(words) == 1 and (len(norm) < cfg["min_single_word_chars"]
-                                         or norm in stop)) or not words:
+                if not words or norm in stop or (len(words) == 1
+                                                 and len(norm) < cfg["min_single_word_chars"]):
                     continue
                 index.setdefault(norm, set()).add(cui)
         return cls(index, by_cui, cfg)
@@ -165,6 +165,8 @@ class GroundingIndex:
               numbers: set[str]) -> str | None:
         """None when the sentence is grounded, else why it is not."""
         low = sentence.casefold()
+        if "<" in sentence or ">" in sentence:      # a tool-call fragment that leaked into the text
+            return "markup in the text"
         for word in self.diagnostic:
             if word in low:
                 return f"diagnostic wording: {word}"

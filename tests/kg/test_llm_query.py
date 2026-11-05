@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import time
 
+import polars as pl
 import pytest
 
 from src.common.config import load_config
 from src.kg import expand, lookup
 from src.kg.expand import PRESENT
 from src.kg.guard import Guard
-from src.kg.llm_query import ConceptChooser, Explainer, build_facts
+from src.kg.llm_query import ConceptChooser, Explainer, GroundingIndex, build_facts
 from src.query.llm_parser import LLMError, LLMInvalidOutput
+from tests.kg import tiny_kg
 from tests.kg.fake_store import FakeStore
 from tests.kg.search_kit import Chat, index
 
@@ -165,3 +167,19 @@ def test_a_failed_call_is_reported_as_failed(reply):
     intents, facts = page()
     got = explainer(reply).explain(facts, intents)
     assert got.status == "failed" and got.error
+
+
+def test_markup_that_leaked_into_the_text_is_not_an_explanation():
+    intents, facts = page()
+    reply = {"summary": "Câu hỏi tìm tràn dịch màng phổi.</summary><parameter name=\"images\">[]",
+             "images": []}
+    got = explainer(reply).explain(facts, intents)
+    assert got.status == "ungrounded" and got.dropped[0]["why"] == "markup in the text"
+
+
+def test_a_generic_phrase_of_two_words_is_not_a_mention_of_a_concept():
+    nodes = tiny_kg.nodes().filter(pl.col("cui") == "C3")
+    aliases = pl.DataFrame({"cui": ["C3", "C3"], "norm": ["bất thường", "phù phổi nặng"]})
+    cfg = {**load_config("kg")["explain"], "generic_words": ["bất thường"]}
+    got = GroundingIndex.build(nodes, aliases, cfg)
+    assert "bất thường" not in got.aliases and "phù phổi nặng" in got.aliases

@@ -16,7 +16,7 @@ ghi vào `docs/measured-facts.md`, quyết định vào `WORKLOG.md`. Ngưỡng 
 | V2-3 | Linker chuỗi → CUI | V2-2 | ✅ |
 | V2-4 | Mở rộng có kiểm soát; trọng số `SUGGESTS`, `TYPICALLY_AT` trên pool | V2-3 | ✅ |
 | V2-5c | Mở rộng ma trận điểm ngoài 14 nhãn (khái niệm lõi có lượt nhắc lớn) | V2-4 | ✅ |
-| V2-6 | Neo4j, bốn tool, LLM chọn khái niệm và diễn giải; B2 chạy end-to-end | V2-4, V2-5 | ⏳ |
+| V2-6 | Neo4j, bốn tool, LLM chọn khái niệm và diễn giải; B2 chạy end-to-end | V2-4, V2-5 | ✅ 2026-11-05 (D65, D66) |
 | V2-7 | Benchmark và pooling | V2-6, V2-5b | ⏳ |
 | V2-8 | Đánh giá chính thức, heldout một lần | V2-7 | ⏳ |
 | V2-9 | Agent (ablation) và UI | V2-8; UI chờ `pnpm` (T5) | ⏳ |
@@ -26,7 +26,7 @@ ghi vào `docs/measured-facts.md`, quyết định vào `WORKLOG.md`. Ngưỡng 
 | V2-13 | Runbook và chạy thử `docker compose` trên máy sạch (N12, T15) | V2-6 | ⏳ |
 | V2-14 | Quy trình kiểm lại hiệu chỉnh cho ảnh từ nguồn khác (N7) | V2-6 | ⏳ |
 
-**TIẾP THEO:** V2-6. Ma trận điểm đã mở rộng 23 cột (D62); parser dùng `claude-haiku-5-5` (D61). TIP nằm ở `notes/tip-*.md` (gitignored).
+**TIẾP THEO:** V2-7. B2 chạy end-to-end (`cxr kg-query`, `POST /api/v1/search/kg`; D66); ma trận 37 cột (D62); parser dùng `claude-haiku-5-5` (D61). TIP nằm ở `notes/tip-*.md` (gitignored).
 
 ## Dữ liệu
 
@@ -118,7 +118,12 @@ phụ trong bảng đánh giá.
 - **Đo 2026-10-29** (parser gold, cùng code): FT6 0,539 so với zero-shot 0,482; theo câu 24 hơn, 10 kém, 4 hòa, sign test
   p ≈ 0,024. Zero-shot tái lập đúng 0,482. Theo D54, `selected` đổi sang FT6.
 
-### V2-6 · Neo4j, bốn tool, LLM
+### V2-6 · Neo4j, bốn tool, LLM (xong 2026-11-05)
+
+Kết quả: D65 (Neo4j, nạp, chấm điểm trong RAM), D66 (đường truy vấn, rào chắn, API). `explain_path` là đường đi do
+`expand_concepts` ghi sẵn (`Intent.path`) cộng điểm từng khái niệm của mỗi ảnh (`ScoreMatrix.probabilities`), không có
+truy vấn Cypher thứ năm. Smoke 24 câu và số đo N1–N4 ở `docs/measured-facts.md`; việc còn lại của 6e (luật chọn cho "giảm
+thể tích phổi trái") chờ Claude bên chat phân xử.
 
 - **6a.** Service `neo4j` (Community, profile `kg`); nạp `Concept`, `Alias`, `SemanticType`, `Image`, cạnh tri thức và
   `PREDICTED` bằng `UNWIND` (chậm thì `neo4j-admin database import full`); user chỉ đọc; build manifest;

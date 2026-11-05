@@ -12,4 +12,4 @@ Choose the one candidate that means what the user means by the term in a chest X
 - Do not choose by the order of the list.
 - If no candidate means what the user asks, choose "none".
 
-Call the tool with choice (a candidate's cui exactly as listed, or "none") and a reason of at most 20 words.
+Call the tool with choice (a candidate's cui exactly as listed, or "none") and a reason of at most 10 words.

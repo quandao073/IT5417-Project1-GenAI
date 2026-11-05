@@ -212,15 +212,17 @@ query:
     min_n: 20              # same cut as graph.min_n
     weak_or_children: [C0016658]   # weak labels that D63 scores noisy-OR with their scorable children (Fracture)
   # Forms of concepts.yaml that mean two things: left out of the KG parser's concept list so that the question's
-  # words reach lookup_concept and the language model chooses with the whole question (WORKLOG D64).
-  ambiguous_forms: [giảm thể tích phổi]
+  # words reach lookup_concept and the language model chooses with the whole question (WORKLOG D64). The nodule forms
+  # name a concept that has its own, better scored column than the weak Lung Lesion label.
+  ambiguous_forms: [giảm thể tích phổi, nốt phổi, pulmonary nodule, lung nodule]
 
 # Grounding of the explanation: a sentence is dropped when it names a finding or disease of the graph that the facts do
 # not contain, quotes a number the facts do not contain, or uses diagnostic wording.
 explain:
   top_results: 10
   generic_words: [disease, disorder, finding, findings, abnormality, condition, lesion, failure, syndrome,
-                  process, change, changes, pattern, thickening, enlargement, density, opacity, opacities]
+                  process, change, changes, pattern, thickening, enlargement, density, opacity, opacities,
+                  bất thường, tổn thương]
   min_single_word_chars: 7     # a one-word alias shorter than this is too common to count as a mention
   # "loại trừ" / "rules out" are not here: they say what the user excluded, which the explanation must be able to say.
   diagnostic: [diagnos, confirm, suffers from, suffering from, patient has, patient with, patient is,

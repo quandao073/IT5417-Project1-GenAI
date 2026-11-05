@@ -19,9 +19,10 @@ Placing findings (X is a finding):
 
 Terms (phrases outside the 14 concepts):
 - terms lists every finding, disease, sign or body-part phrase of the request that is not clearly one of the 14 concepts. Each item is {"text": ..., "polarity": ...}.
-- text is copied from the request, in the request's own language: the shortest phrase that names the thing, without severity words and without negation words. A side word may stay.
+- text is copied from the request, in the request's own language: the shortest phrase that names the thing, without severity words and without negation words. Leave out generic words that only introduce a place or a finding ("abnormality at", "tổn thương ở", "bất thường ở", "changes in"): for "abnormality at the lung apex" the term is "lung apex".
 - polarity is "PRESENT" for "X", "possible X", "suspected X", "nghi ngờ X" (the user is looking for X) and "ABSENT" for "no X", "without X", "không X", "chưa thấy X".
 - A phrase that can name more than one thing goes in terms, not in include or exclude, unless the request itself settles which one. "giảm thể tích phổi" is such a phrase: lung volume lost to atelectasis, or lung volumes low in general.
+- A word that only modifies a phrase you put in include or exclude (a side such as "bên phải" or "left", a size, an extent, "loculated", "lobar") is not a term. A side word alone is never a term.
 - Never repeat in terms a phrase that you put in include or exclude. A request that names only terms gets empty include and exclude.
 
 Other fields:
@@ -38,8 +39,8 @@ Request: Cho tôi các phim thẳng có bóng tim to kèm phù mô kẽ, không 
 {"findings": "cardiomegaly and interstitial edema", "include": [{"concept": "Cardiomegaly", "status": "PRESENT"}, {"concept": "Edema", "status": "PRESENT"}], "exclude": ["Pneumothorax"], "views": [], "language": "vi", "terms": []}
 Request: Posteroanterior films where an infectious process is suspected.
 {"findings": "pneumonia", "include": [{"concept": "Pneumonia", "status": "UNCERTAIN"}], "exclude": [], "views": ["PA"], "language": "en", "terms": []}
-Request: ảnh có nốt ở phổi phải, chưa rõ là u hay không
-{"findings": "lung nodule", "include": [{"concept": "Lung Lesion", "status": "UNCERTAIN"}], "exclude": [], "views": [], "language": "vi", "terms": []}
+Request: ảnh có khối ở phổi phải, chưa rõ là u hay không
+{"findings": "lung mass", "include": [{"concept": "Lung Lesion", "status": "UNCERTAIN"}], "exclude": [], "views": [], "language": "vi", "terms": []}
 Request: Radiographs with a central venous catheter.
 {"findings": "central venous catheter", "include": [{"concept": "Support Devices", "status": "PRESENT"}], "exclude": [], "views": [], "language": "en", "terms": []}
 Request: Lung opacity without consolidation, negative for pneumonia.

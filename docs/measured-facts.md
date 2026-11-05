@@ -762,3 +762,31 @@ nhắc. Hiệu chỉnh như 14 cột (`image_scores.calibrate`); AUROC lenient (
 - Alias tiếng Việt: 20/23 khái niệm có cột đã có dòng trong `alias_vi_review.csv` (đã phân xử); 3 khái niệm sinh từ liên kết
   cặp (low lung volumes C5563137, interstitial marking C1849561, interstitial prominence C5539772) thêm 8 dòng, decision trống
   (Opus, 2.141 / 318 token).
+
+## Neo4j và đường truy vấn KG (đo 2026-11-05, D65, D66)
+
+- **Nạp Neo4j 5.26 Community** (`cxr kg-load-neo4j`, `data/kg/graph/neo4j_load.json`): 8,0 s; 9.632 Concept, 37.658 Alias,
+  2.152 Image (chỉ ảnh trong top-N của một khái niệm), `PREDICTED` 3.700 = 37 khái niệm scorable × N = 100; 11 check
+  của `validate-indexes --kg` PASS. `cxr kg-quality` tái lập đúng sáu khái niệm yếu của D55.
+- **N4, chấm điểm** (`cxr kg-bench-scoring`, ma trận giả 1.000.000 × 37 float32 = 148 MB, top-10, 15 lần lặp, đọc RAM,
+  không Neo4j): truy vấn điển hình (8 cột) lần đầu 94,4 ms, các lần sau p50 39,1 / p95 40,5 ms; truy vấn nặng (cả 37 cột)
+  lần đầu 158,0 ms, sau đó p50 64,0 / p95 67,2 ms. **Mục tiêu < 100 ms đạt cho truy vấn điển hình; truy vấn chạm cả 37
+  cột chỉ đạt khi cột đã được nhớ (log σ tính lười, lưu theo cột).** Trên ma trận thật 25.000 × 37 bước `score_ms` p95 1 ms.
+- **Smoke 24 câu EN/VI** (`notes/v2-6-smoke.md`, cục bộ; Haiku `claude-haiku-5-5` cho parser, chọn khái niệm, diễn giải;
+  Neo4j local; một lần chạy cuối, `cxr kg-query`, mỗi câu một request tuần tự). Độ trễ chưa tính diễn giải (N1): p50
+  1,85 s, p95 3,50 s, max 3,96 s (mục tiêu p95 < 5 s: đạt). Theo bước: parser p50 1,61 / p95 2,21 s (ngân sách 2,5 s; 1/24 vượt);
+  chọn khái niệm (8 câu có gọi LLM) p50 1,59 / p95 2,02 s (ngân sách 2,5 s; đạt); lookup + expand + chấm điểm p95 24 ms
+  (ngân sách 0,3 s; đạt). Ba lượt chạy trước (giữa các sửa ghi dưới đây) cho p95 tổng 4,3 s (max 5,2 s, một câu vì chooser hết 3 s), 4,4 s và 3,9 s: đạt nhưng sát; parser
+  p95 2,4–2,8 s, mỗi lượt có 1–4 câu vượt 2,5 s (độ trễ Haiku dao động giữa các lượt).
+- **N2, diễn giải** (một lượt gọi cho cả trang, streaming nội bộ): token đầu sau khi nhận request p50 1,10 s, p95 1,71 s,
+  max 1,74 s, 6/23 câu trên 1,5 s: **mục tiêu "< 1,5 s" chưa đạt ở p95**. Tổng thời gian diễn giải p50 3,25 s, p95 3,79 s.
+  Kết quả đi trước diễn giải (sự kiện NDJSON `results`). 23/24 diễn giải `ok`, 1 `no_results` (không gọi LLM khi không có ảnh).
+- **N3, LLM lỗi** (`HTTPS_PROXY` trỏ cổng đóng; khóa sai cho HTTP 401; 6 câu, đường thật qua Neo4j): lỗi kết nối 0,81 s;
+  HTTP 401 0,25–0,41 s (đều < 1 s); sau 3 lỗi liên tiếp breaker mở, câu sau 2–4 ms (< 50 ms). LLM treo bị cắt ở giới hạn
+  (test đơn vị với treo 30 s, giới hạn 0,3 s). Trên Windows từ chối kết nối loopback mất 2 s nên thêm `connect_timeout_seconds`
+  0,8 (trước đó lỗi kết nối 2,05 s).
+- Sửa giữa các lượt chạy (không dùng câu smoke để chỉnh luật chọn): `NEO4J_URI` 127.0.0.1 (kết nối Neo4j mới từng tốn 2 s
+  vì IPv6); term chỉ là bên ("bên phải") không còn thành "không nhận ra"; không gọi diễn giải khi không có ảnh; prompt parser
+  bỏ từ chung chung khỏi term và không coi từ bổ nghĩa là term; "nốt phổi", "pulmonary nodule", "lung nodule" vào
+  `ambiguous_forms`; chooser trả lý do tối đa 10 từ; grounding bỏ câu có markup rò rỉ và coi "bất thường", "tổn thương"
+  là từ chung (trước đó 12/24 diễn giải mất hết dòng theo ảnh vì hai cụm này).

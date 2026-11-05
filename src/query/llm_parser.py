@@ -266,7 +266,8 @@ class AnthropicClient:
 
     def __init__(self, model: str, timeout_s: float, *, api_key: str,
                  max_tokens: int = 2048, options: dict | None = None, client=None,
-                 max_retries: int = 1, tool: tuple[str, str] | None = None):
+                 max_retries: int = 1, tool: tuple[str, str] | None = None,
+                 connect_timeout_s: float | None = None):
         """`max_retries` is the SDK's own (0 on the KG query path, where a failure falls back at
         once, N3); `tool` is (name, description) of the schema tool when it is not the parser's."""
         import anthropic
@@ -280,7 +281,9 @@ class AnthropicClient:
         self.tool_choice = options.get("tool_choice", "tool")
         self.usage = {"calls": 0, "input_tokens": 0, "output_tokens": 0,
                       "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
-        self._client = client or anthropic.Anthropic(api_key=api_key, timeout=timeout_s,
+        timeout = (timeout_s if connect_timeout_s is None
+                   else anthropic.Timeout(timeout_s, connect=connect_timeout_s))
+        self._client = client or anthropic.Anthropic(api_key=api_key, timeout=timeout,
                                                      max_retries=max_retries)
 
     def _stream(self, request: dict, started: float):

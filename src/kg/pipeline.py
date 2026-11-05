@@ -149,9 +149,12 @@ class KGSearch:
                            for term in query.terms]
                 for term, future in zip(query.terms, futures, strict=True):
                     found, choice, intent = future.result()
-                    intents.append(intent)
                     if found.sides:
                         warnings.append(Warn("side_ignored"))
+                    if not found.core:          # "bên phải" alone: a side, not a concept
+                        trace["terms"].append({"term": term.text, "skipped": "side only"})
+                        continue
+                    intents.append(intent)
                     if choice.via == "deterministic" and len(found.candidates) > 1:
                         warnings.append(Warn("chosen_deterministic", {
                             "term": term.text, "name": intent.name}))
@@ -197,8 +200,9 @@ class KGSearch:
                         rows, trace, timings, degraded)
 
     def explain(self, result: KGResult, top: int | None = None):
-        """The explanation of the page, or None when no explainer is configured."""
-        if self.explainer is None:
+        """The explanation of the page, or None when no explainer is configured or there is
+        nothing to explain (no results)."""
+        if self.explainer is None or not result.rows:
             return None
         rows = result.rows[:top or self.cfg["explain"]["top_results"]]
         probs = self.matrix.probabilities([r["row"] for r in rows], result.intents)

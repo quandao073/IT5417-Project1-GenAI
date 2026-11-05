@@ -157,6 +157,8 @@ image_probe:
 # wall-clock limit per call; after `failures` in a row every call fails at once for `cooldown_seconds` and the deterministic
 # route answers. The explanation takes longer than the others because the results are already on screen (N2).
 kg_llm:
+  # A refused or unroutable connection must fail in under a second (N3); Windows takes 2 s to refuse a loopback connection.
+  connect_timeout_seconds: 0.8
   parser: {model: claude-haiku-5-5, timeout_seconds: 3}
   select: {model: claude-haiku-5-5, timeout_seconds: 3, prompt_file: prompts/kg_choose_concept_v1.txt}
   explain: {model: claude-haiku-5-5, timeout_seconds: 15, max_tokens: 1500,

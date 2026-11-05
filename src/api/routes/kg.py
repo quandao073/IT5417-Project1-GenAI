@@ -76,8 +76,8 @@ def results_event(state: AppState, result: KGResult) -> dict:
 
 def explanation_event(result: KGResult, explanation) -> dict:
     if explanation is None:
-        return {"event": "explanation", "request_id": result.request_id, "status": "disabled",
-                "fallback": "path"}
+        return {"event": "explanation", "request_id": result.request_id,
+                "status": "disabled" if result.rows else "no_results", "fallback": "path"}
     return {"event": "explanation", "request_id": result.request_id,
             "status": explanation.status, "summary": explanation.summary,
             "images": [{"rank": k, "line": v} for k, v in sorted(explanation.images.items())],

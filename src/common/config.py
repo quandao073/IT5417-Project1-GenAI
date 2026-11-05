@@ -101,7 +101,7 @@ class Settings(BaseSettings):
 
     # The knowledge graph (docker compose --profile kg); without it the KG search falls back to
     # the 14 labels (docs/v2-kg-design.md, N8).
-    neo4j_uri: str = "bolt://localhost:7687"
+    neo4j_uri: str = "bolt://127.0.0.1:7687"
     neo4j_user: str = "neo4j"
     neo4j_password: SecretStr = SecretStr("cxr-local-neo4j")   # compose.yaml default, loopback only
     kg_enabled: bool = True
