@@ -61,6 +61,7 @@ class Lookup:
     core: str
     sides: list[str] = field(default_factory=list)
     candidates: list[Candidate] = field(default_factory=list)
+    timings: dict = field(default_factory=dict)       # ms of each step, set by the pipeline
 
     def to_dict(self) -> dict:
         return {"term": self.term, "core": self.core, "sides": self.sides,

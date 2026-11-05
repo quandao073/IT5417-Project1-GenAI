@@ -20,6 +20,8 @@ from fastapi import HTTPException, Request
 
 from src.common.config import Settings, load_config
 from src.embeddings import index
+from src.kg import runtime as kg_runtime
+from src.kg.pipeline import KGSearch
 from src.query import llm_parser as llm
 from src.query.parser import QueryParser
 from src.query.rule_parser import RuleParser
@@ -58,6 +60,10 @@ class AppState:
     report_meta: dict = field(default_factory=dict)
     report_min_token_chars: int = 3
     evidence: EvidenceMatcher | None = None
+    # The KG search (src/kg/pipeline.py); None when its files are missing or it is disabled.
+    kg: KGSearch | None = None
+    kg_reason: str | None = None
+    kg_notes: list[str] = field(default_factory=list)   # what is degraded at startup
 
 
 def _open_report_index(state: AppState, studies: int) -> None:
@@ -127,7 +133,7 @@ def build_query_parser(settings: Settings, *, llm_factory=None,
 
 
 def build_state(settings: Settings, *, encoder_loader=None, client_factory=None,
-                llm_factory=None, warm_up: bool = False) -> AppState:
+                llm_factory=None, warm_up: bool = False, kg_factory=None) -> AppState:
     state = AppState(settings=settings)
     client_factory = client_factory or _default_client
     try:
@@ -174,10 +180,24 @@ def build_state(settings: Settings, *, encoder_loader=None, client_factory=None,
         state.report_min_token_chars = (
             load_config("retrieval")["report_search"]["min_token_chars"])
         state.evidence = EvidenceMatcher(concepts_cfg)
+        _attach_kg(state, manifest, images, kg_factory or kg_runtime.build_kg_search, warm_up)
     except Exception as exc:  # noqa: BLE001 - every failure is a readiness reason
         state.ready = False
         state.not_ready_reason = str(exc)
     return state
+
+
+def _attach_kg(state: AppState, manifest: dict, images: pl.DataFrame, factory,
+               warm_up: bool) -> None:
+    """The KG search is optional: any problem leaves the 14-label search serving."""
+    if not state.settings.kg_enabled:
+        state.kg_reason = "KG_ENABLED is false"
+        return
+    try:
+        state.kg, state.kg_notes = factory(state.settings, manifest, images, warm_up=warm_up)
+    except Exception as exc:  # noqa: BLE001 - missing tables, another matrix build, bad config
+        state.kg_reason = f"{type(exc).__name__}: {exc}"
+        logger.warning("KG search disabled: %s", state.kg_reason)
 
 
 def get_state(request: Request) -> AppState:

@@ -113,3 +113,9 @@ class HealthResponse(BaseModel):
     report_studies: int | None
     llm: Literal["ok", "disabled", "unreachable", "missing_model"]
     llm_model: str
+    # The KG search: "disabled" when it is not built, "unreachable" when it runs on the
+    # 14-label route because Neo4j is down or holds other tables (docs/v2-kg-design.md, N8).
+    neo4j: Literal["ok", "disabled", "unreachable"] = "disabled"
+    kg_build_id: str | None = None
+    matrix_version: str | None = None
+    kg_notes: list[str] = Field(default_factory=list)

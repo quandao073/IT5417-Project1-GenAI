@@ -708,6 +708,56 @@ def _cmd_kg_bench_scoring(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_kg_query(args: argparse.Namespace) -> int:
+    """Run questions through the KG search with the real tables, matrix, Neo4j and language model
+    (no API, no Qdrant): one JSON record per question with the trace, the explanation and the
+    time of every step. Questions: arguments, or --file with one per line (`#` starts a comment)."""
+    import time
+
+    from src.api.routes.kg import explanation_event
+    from src.kg import runtime
+
+    sys.stdout.reconfigure(encoding="utf-8")        # Vietnamese on a cp1252 console
+    settings = Settings()
+    matrix = Path(args.matrix)
+    meta = json.loads((matrix / "probe.json").read_text(encoding="utf-8"))
+    images = pl.read_parquet(Path(settings.canonical_dir) / "images.parquet",
+                             columns=["image_id", "projection"])
+    search, notes = runtime.build_kg_search(
+        settings.model_copy(update={"kg_matrix_dir": matrix}), {"build_id": meta["build_id"]},
+        images)
+    questions = list(args.questions)
+    if args.file:
+        questions += [ln.strip() for ln in Path(args.file).read_text(encoding="utf-8")
+                      .splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
+    print(json.dumps({"notes": notes, "versions": search.versions}, ensure_ascii=False),
+          file=sys.stderr)
+    out = open(args.out, "w", encoding="utf-8") if args.out else None  # noqa: SIM115
+    for question in questions:
+        result = search.search(question, top_k=args.top_k)
+        started = time.perf_counter()
+        explanation = None if args.no_explain else search.explain(result)
+        record = {
+            "question": question, "request_id": result.request_id, "language": result.language,
+            "parsed": {"include": [c.model_dump() for c in result.query.include],
+                       "exclude": result.query.exclude, "views": result.query.views,
+                       "terms": [t.model_dump() for t in result.query.terms]},
+            "intents": [i.to_dict() for i in result.intents], "warnings": result.warnings_text(),
+            "degraded": result.degraded, "trace": result.trace,
+            "results": [{k: r[k] for k in ("rank", "image_id", "view", "score")}
+                        for r in result.rows],
+            "timings_ms": result.timings,
+            "explanation": explanation_event(result, explanation),
+            "explain_wall_ms": round((time.perf_counter() - started) * 1000, 1)}
+        line = json.dumps(record, ensure_ascii=False)
+        if out:
+            out.write(line + "\n")
+        print(f"{result.timings['total_ms']:7.0f} ms  {question}")
+    if out:
+        out.close()
+    return 0
+
+
 def _cmd_build_image_scores_ext(args: argparse.Namespace) -> int:
     """Extra score-matrix columns (src/retrieval/image_scores_ext.py, D62): candidates from the KG
     core, silver labels from RadGraph on pool-val, the calibration of the 14 columns, the D55
@@ -1678,6 +1728,16 @@ def build_parser() -> argparse.ArgumentParser:
     kgb.add_argument("--k", type=int, default=10)
     kgb.add_argument("--repeats", type=int, default=15)
     kgb.set_defaults(func=_cmd_kg_bench_scoring)
+
+    kgq = sub.add_parser("kg-query", help="run questions through the KG search (real data)")
+    kgq.add_argument("questions", nargs="*")
+    kgq.add_argument("--file", default=None, help="one question per line")
+    kgq.add_argument("--matrix", default="data/indexes/image_scores/"
+                     "20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1_ext1")
+    kgq.add_argument("--top-k", type=int, default=10)
+    kgq.add_argument("--no-explain", action="store_true")
+    kgq.add_argument("--out", default=None, help="JSONL, one record per question")
+    kgq.set_defaults(func=_cmd_kg_query)
 
     kgn = sub.add_parser("kg-load-neo4j", help="load the KG and the top-N PREDICTED edges")
     kgn.add_argument("--graph-dir", default="data/kg/graph")

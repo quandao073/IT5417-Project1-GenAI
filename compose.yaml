@@ -33,7 +33,11 @@ services:
       - ./data/raw/CheXpert-v1.0-small:/app/data/raw/CheXpert-v1.0-small:ro
       - ./data/canonical:/app/data/canonical:ro
       - ./data/indexes:/app/data/indexes:ro
+      - ./data/kg/graph:/app/data/kg/graph:ro
       - hf_cache:/app/.hf_cache
+    environment:
+      # Only reachable with `--profile kg`; without it the KG search runs on the 14 labels.
+      NEO4J_URI: bolt://neo4j:7687
     depends_on:
       qdrant:
         condition: service_healthy

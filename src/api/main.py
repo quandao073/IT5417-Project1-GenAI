@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from src.api.dependencies import AppState, build_state
-from src.api.routes import health, images, query, search
+from src.api.routes import health, images, kg, query, search
 from src.common.config import Settings
 
 
@@ -24,6 +24,7 @@ def create_app(state: AppState | None = None) -> FastAPI:
         app.state.cxr = state
     app.include_router(health.router)
     app.include_router(search.router)
+    app.include_router(kg.router)
     app.include_router(query.router)
     app.include_router(images.router)
     return app

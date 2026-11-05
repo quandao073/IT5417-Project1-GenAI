@@ -104,6 +104,10 @@ class Settings(BaseSettings):
     neo4j_uri: str = "bolt://localhost:7687"
     neo4j_user: str = "neo4j"
     neo4j_password: SecretStr = SecretStr("cxr-local-neo4j")   # compose.yaml default, loopback only
+    kg_enabled: bool = True
+    kg_graph_dir: Path = Path("data/kg/graph")          # quality.json, neo4j_load.json, aliases
+    # blank: <indexes_dir>/image_scores/<serving build id>_ext1
+    kg_matrix_dir: Path | None = None
 
     image_root: Path = Path("data/raw/CheXpert-v1.0-small")
     canonical_dir: Path = Path("data/canonical")
@@ -142,6 +146,11 @@ class Settings(BaseSettings):
     @classmethod
     def _blank_is_unset(cls, value: str | None) -> str | None:
         return value or None
+
+    @field_validator("kg_matrix_dir", mode="before")
+    @classmethod
+    def _blank_path_is_unset(cls, value):
+        return None if value in ("", None) else value
 
     @field_validator("llm_provider", "llm_model", mode="before")
     @classmethod
