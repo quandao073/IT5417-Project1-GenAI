@@ -145,9 +145,9 @@ class TestShippedFile:
                      for ch in normalize(r.query))
             assert vi == (r.language == "vi"), r.id
 
-    def test_few_shot_examples_are_not_heldout_queries(self, rows):
-        prompt = llm.load_prompt(load_config("models")["llm"]["prompt_file"],
-                                 load_config("concepts"))
+    @pytest.mark.parametrize("key", ["prompt_file", "kg_prompt_file"])
+    def test_few_shot_examples_are_not_heldout_queries(self, rows, key):
+        prompt = llm.load_prompt(load_config("models")["llm"][key], load_config("concepts"))
         examples = {normalize(e) for e in llm.prompt_examples(prompt)}
         heldout = {normalize(r.query) for r in rows if r.split == "heldout"}
         assert not examples & heldout

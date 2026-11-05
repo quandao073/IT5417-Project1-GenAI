@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from src.common.config import default_config_dir
 from src.data.labels import CHEXPERT_LABELS
-from src.query.schema import Constraint, Language, View, canonical_concept
+from src.query.schema import Constraint, Language, Term, View, canonical_concept
 
 ProbeStatus = Literal["ok", "missing_model", "unreachable"]
 _EXAMPLE = re.compile(r"^Request: (.+)$", re.MULTILINE)
@@ -43,6 +43,7 @@ class LLMOutput(BaseModel):
     include: list[Constraint] = Field(default_factory=list)
     exclude: list[str] = Field(default_factory=list)
     views: list[View] = Field(default_factory=list)
+    terms: list[Term] = Field(default_factory=list)
     language: Language
 
     @field_validator("exclude")
@@ -51,10 +52,11 @@ class LLMOutput(BaseModel):
         return [canonical_concept(name) for name in value]
 
 
-def output_schema() -> dict:
-    """Hand-built (not model_json_schema) so there are no $refs for the grammar builder."""
+def output_schema(with_terms: bool = False) -> dict:
+    """Hand-built (not model_json_schema) so there are no $refs for the grammar builder.
+    `with_terms` adds the `terms` array of the KG parser prompt (query_parser_v2)."""
     concept = {"type": "string", "enum": list(CHEXPERT_LABELS)}
-    return {
+    schema = {
         "type": "object",
         "properties": {
             "findings": {"type": "string"},
@@ -69,6 +71,14 @@ def output_schema() -> dict:
         },
         "required": ["findings", "include", "exclude", "views", "language"],
     }
+    if with_terms:
+        schema["properties"]["terms"] = {"type": "array", "items": {
+            "type": "object",
+            "properties": {"text": {"type": "string"},
+                           "polarity": {"type": "string", "enum": ["PRESENT", "ABSENT"]}},
+            "required": ["text", "polarity"]}}
+        schema["required"] = [*schema["required"], "terms"]
+    return schema
 
 
 def parse_output(content: str) -> LLMOutput:
@@ -85,16 +95,23 @@ def parse_output(content: str) -> LLMOutput:
         raise LLMInvalidOutput(f"{'.'.join(str(p) for p in first['loc'])}: {first['msg']}") from exc
 
 
-def render_prompt(template: str, concepts_cfg: dict) -> str:
-    lines = [f"- {concept}: {', '.join(forms['en'])} | {', '.join(forms['vi'])}"
-             for concept, forms in concepts_cfg["concepts"].items()]
+def render_prompt(template: str, concepts_cfg: dict, drop_forms: tuple[str, ...] = ()) -> str:
+    """The prompt with the concept list filled in; `drop_forms` are forms left out of the list
+    (kg.yaml query.ambiguous_forms: a form that names two concepts)."""
+    drop = {f.casefold() for f in drop_forms}
+
+    def forms(names: list[str]) -> str:
+        return ", ".join(n for n in names if n.casefold() not in drop)
+
+    lines = [f"- {concept}: {forms(f['en'])} | {forms(f['vi'])}"
+             for concept, f in concepts_cfg["concepts"].items()]
     return template.replace("{{CONCEPTS}}", "\n".join(lines))
 
 
-def load_prompt(relative_path: str, concepts_cfg: dict) -> str:
+def load_prompt(relative_path: str, concepts_cfg: dict, drop_forms: tuple[str, ...] = ()) -> str:
     """`relative_path` is relative to configs/ (models.yaml:llm.prompt_file)."""
     text = (default_config_dir() / relative_path).read_text(encoding="utf-8")
-    return render_prompt(text, concepts_cfg)
+    return render_prompt(text, concepts_cfg, drop_forms)
 
 
 def prompt_examples(prompt: str) -> list[str]:

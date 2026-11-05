@@ -199,6 +199,22 @@ scores_ext:
     C3263723: injury, trauma
     C0024115: lung disease
 
+# Query path (docs/v2-kg-design.md, "Truy vấn online"; WORKLOG D66).
+query:
+  lookup: {max_candidates: 5, fulltext_limit: 12, min_dice: 0.5}
+  sides: [bên trái, bên phải, hai bên, trái, phải, left, right, bilateral, bilaterally]
+  expand:
+    down_depth: 4          # IS_A steps down to scorable concepts (wider)
+    up_depth: 6            # IS_A steps up to the nearest scorable ancestor (narrower)
+    suggests_depth: 2      # IS_A steps below a disease whose SUGGESTS edges count
+    part_depth: 5          # PART_OF steps below an anatomy region
+    anatomy_top: 5         # findings kept for a region, by p
+    min_n: 20              # same cut as graph.min_n
+    weak_or_children: [C0016658]   # weak labels that D63 scores noisy-OR with their scorable children (Fracture)
+  # Forms of concepts.yaml that mean two things: left out of the KG parser's concept list so that the question's
+  # words reach lookup_concept and the language model chooses with the whole question (WORKLOG D64).
+  ambiguous_forms: [giảm thể tích phổi]
+
 # Neo4j (docker compose --profile kg; WORKLOG D65). PREDICTED only for the top_n best images of each scorable concept.
 neo4j:
   top_n: 100

@@ -60,6 +60,7 @@ def kg_neo4j():
                 edges=tiny_kg.edges(), scores=tiny_kg.scores(), images=tiny_kg.images(),
                 concept_columns=tiny_kg.COLUMNS, top_n=TOP_N, batch=5,
                 build={"kg_build_id": "kg_test", "matrix_version": "matrix_test@0"})
+            session.run("CALL db.awaitIndexes(60)").consume()
         yield driver, manifest
     finally:
         if driver is not None:

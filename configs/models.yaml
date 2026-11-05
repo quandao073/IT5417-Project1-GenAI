@@ -122,6 +122,8 @@ llm:
   # Relative to configs/. The rendered prompt's sha256 is part of the parse-cache
   # key and of parser_eval.json, so a prompt edit never reuses a stale parse.
   prompt_file: prompts/query_parser_v1.txt
+  # The KG search's parser: the same task plus `terms` for phrases outside the 14 labels (WORKLOG D66).
+  kg_prompt_file: prompts/query_parser_v2.txt
   num_predict: 300
   seed: 20260101
   # Ollama unloads after 5 min by default; a pause in a demo must not pay the reload.

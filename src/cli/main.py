@@ -698,6 +698,16 @@ def _cmd_kg_load_neo4j(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_kg_bench_scoring(args: argparse.Namespace) -> int:
+    """Time `score_images` + top-k on a random matrix of --rows images (src/kg/scoring.py, N4)."""
+    from src.kg import scoring
+
+    out = scoring.benchmark(args.rows, [f"c{i}" for i in range(args.columns)], k=args.k,
+                            repeats=args.repeats)
+    print(json.dumps(out, indent=1))
+    return 0
+
+
 def _cmd_build_image_scores_ext(args: argparse.Namespace) -> int:
     """Extra score-matrix columns (src/retrieval/image_scores_ext.py, D62): candidates from the KG
     core, silver labels from RadGraph on pool-val, the calibration of the 14 columns, the D55
@@ -1660,6 +1670,14 @@ def build_parser() -> argparse.ArgumentParser:
     kgq.add_argument("--canonical-dir", default="data/canonical")
     kgq.add_argument("--out", default="data/kg/graph/quality.json")
     kgq.set_defaults(func=_cmd_kg_quality)
+
+    kgb = sub.add_parser("kg-bench-scoring",
+                         help="time score_images + top-k on a random matrix (target < 100 ms)")
+    kgb.add_argument("--rows", type=int, default=1_000_000)
+    kgb.add_argument("--columns", type=int, default=37)
+    kgb.add_argument("--k", type=int, default=10)
+    kgb.add_argument("--repeats", type=int, default=15)
+    kgb.set_defaults(func=_cmd_kg_bench_scoring)
 
     kgn = sub.add_parser("kg-load-neo4j", help="load the KG and the top-N PREDICTED edges")
     kgn.add_argument("--graph-dir", default="data/kg/graph")
