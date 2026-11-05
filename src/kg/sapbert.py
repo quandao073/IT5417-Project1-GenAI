@@ -70,6 +70,28 @@ def name_vectors(names: Sequence[str], encoder, cache_dir: Path) -> np.ndarray:
     return vectors
 
 
+class AliasIndex:
+    """The SapBERT stage of `lookup_concept`, behind `kg.yaml: query.lookup.sapbert.enabled`: the
+    aliases of the graph embedded once (cached like the linker's dictionary), searched by cosine.
+    Built only when the flag is on, so the API does not load the model otherwise."""
+
+    def __init__(self, encoder, cuis: Sequence[str], texts: Sequence[str],
+                 norms: Sequence[str], cache_dir: Path):
+        self.encoder, self.cuis, self.texts = encoder, list(cuis), list(texts)
+        self.vectors = name_vectors(list(norms), encoder, cache_dir)
+        self._allowed = np.ones(len(self.cuis), dtype=bool)
+
+    def search(self, norm: str, k: int) -> list[dict]:
+        """[{cui, text, score}] best first, one row per concept."""
+        rows, cos = nearest(self.encoder.encode([norm]), self.vectors, self._allowed, k=k * 3)
+        seen, out = set(), []
+        for row, score in zip(rows[0], cos[0], strict=True):
+            if self.cuis[row] not in seen:
+                seen.add(self.cuis[row])
+                out.append({"cui": self.cuis[row], "text": self.texts[row], "score": float(score)})
+        return out[:k]
+
+
 def nearest(queries: np.ndarray, vectors: np.ndarray, allowed: np.ndarray, k: int = 1,
             chunk: int = 65536) -> tuple[np.ndarray, np.ndarray]:
     """(rows, cosines), each [n, k] best first: the k best allowed dictionary rows for each unit

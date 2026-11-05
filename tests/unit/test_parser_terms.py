@@ -1,4 +1,4 @@
-"""`terms` of the KG parser prompt (query_parser_v2): schema, query model, parser, renderer."""
+"""`terms` of the KG parser prompt (query_parser_v3): schema, query model, parser, renderer."""
 
 from __future__ import annotations
 
@@ -79,3 +79,19 @@ def test_the_kg_prompt_renders_and_every_example_parses_to_the_terms_schema():
     for line in json_lines:
         out = llm.parse_output(line)
         assert out.terms is not None
+
+
+def test_sides_are_part_of_the_kg_schema_and_the_query_only():
+    assert "sides" not in llm.output_schema()["properties"]
+    schema = llm.output_schema(with_terms=True)
+    assert schema["properties"]["sides"]["items"]["enum"] == ["left", "right", "bilateral"]
+    assert "sides" in schema["required"]
+    kg = parser(True).parse("tràn khí bên phải", mode="llm")
+    assert kg.query.sides == []                                   # the scripted reply names none
+    reply = {**REPLY, "sides": ["right", "right", "bilateral"]}
+    two = QueryParser(RuleParser(load_config("concepts")), template="x {}",
+                      llm_client=Scripted(reply), system_prompt="p", with_terms=True)
+    assert two.parse("x", mode="llm").query.sides == ["right", "bilateral"]
+    assert parser(False).parse("x", mode="llm").query.sides == []
+    with pytest.raises(ValueError):
+        SearchQuery(language="vi", sides=["up"])

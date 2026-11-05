@@ -16,7 +16,7 @@ def test_the_loader_writes_every_table_and_exactly_top_n_predicted_per_scorable(
     assert manifest["nodes"]["Concept"] == len(tiny_kg.NAMES)
     assert manifest["nodes"]["Alias"] == tiny_kg.aliases().height
     assert manifest["edges"]["PREDICTED"] == scorable * 3          # top_n = 3
-    assert manifest["edges"]["SUGGESTS"] == 4 and manifest["edges"]["TYPICALLY_AT"] == 2
+    assert manifest["edges"]["SUGGESTS"] == 6 and manifest["edges"]["TYPICALLY_AT"] == 3
     assert manifest["edges"]["HAS_ALIAS"] == tiny_kg.aliases().height
     with driver.session() as session:
         row = session.run("MATCH (c:Concept {cui: 'C4'}) RETURN c.weak AS weak, "

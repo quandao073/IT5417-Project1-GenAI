@@ -153,3 +153,13 @@ def test_aliases_keep_only_reviewed_vietnamese_forms(tmp_path):
     assert set(got.select("text", "lang", "source").rows()) == {
         ("Pneumonia", "en", "mrconso"), ("viêm phổi", "vi", "concepts_yaml")}  # llm form, same norm
     assert "phổi" not in got["text"].to_list()
+
+
+def test_manual_edges_carry_the_source_and_equal_weights():
+    cfg = {"manual_edges": {"is_a": [["C1", "C2"]], "suggests": {"C9": ["C3", "C4", "C5"]}}}
+    edges = graph.manual_edges(cfg)
+    assert edges["source"].unique().to_list() == ["manual"]
+    assert edges.filter(pl.col("rel") == "IS_A").select("src", "dst").rows() == [("C1", "C2")]
+    s = edges.filter(pl.col("rel") == "SUGGESTS")
+    assert s["dst"].unique().to_list() == ["C9"] and s["p"].to_list() == [0.3333] * 3
+    assert s["n"].null_count() == 3 and graph.manual_edges({}).height == 0

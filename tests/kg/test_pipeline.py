@@ -108,7 +108,7 @@ def test_the_explanation_gets_the_ranked_results_and_a_failing_model_does_not_ra
     got = search.explain(result, top=2)
     assert got.status == "failed"
     sent = chat.calls[0][1]["content"]
-    assert '"rank": 2' in sent and '"rank": 3' not in sent
+    assert '"rank":2' in sent and '"rank":3' not in sent
 
 
 def test_a_side_alone_is_not_a_term_and_a_page_without_results_is_not_explained():
@@ -121,3 +121,25 @@ def test_a_side_alone_is_not_a_term_and_a_page_without_results_is_not_explained(
                           explain_chat=chat)
     result = nothing.search("xyz qwerty")
     assert result.rows == [] and nothing.explain(result) is None and chat.calls == []
+
+
+def test_a_location_beside_a_finding_only_warns_and_a_location_alone_is_scored():
+    both = parse_reply(include=["Cardiomegaly"], terms=[("pleural space", "PRESENT")])
+    got = make_search(parser_chat=Chat(both)).search("tim to ở khoang màng phổi")
+    assert [i.term for i in got.intents] == ["Cardiomegaly"]
+    assert "location_ignored" in codes(got) and got.trace["location_ignored"] == ["Pleural space"]
+    alone = make_search(parser_chat=Chat(parse_reply(terms=[("pleural space", "PRESENT")])))
+    got = alone.search("khoang màng phổi")
+    assert [i.kind for i in got.intents] == ["anatomy"] and got.rows
+    assert "location_ignored" not in codes(got)
+
+
+def test_the_side_warning_comes_from_the_parser_or_from_unambiguous_words():
+    reply = {**parse_reply(include=["Cardiomegaly"]), "sides": ["left"]}
+    got = make_search(parser_chat=Chat(reply)).search("tim to")          # the question names none
+    assert "side_ignored" in codes(got) and got.trace["parser"]["sides"] == ["left"]
+    plain = make_search(parser_chat=Chat(parse_reply(include=["Cardiomegaly"])))
+    assert "side_ignored" in codes(plain.search("tim to hai bên"))
+    assert "side_ignored" not in codes(plain.search("phim không phải tim to"))   # "phải" alone
+    rule = make_search().search("pleural effusion on the left")           # the 14-label route
+    assert "side_ignored" in codes(rule) and rule.rows

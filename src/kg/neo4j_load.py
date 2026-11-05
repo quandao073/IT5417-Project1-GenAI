@@ -118,7 +118,7 @@ def load_edges(session, edges: pl.DataFrame, size: int) -> None:
     for rel, kind in KNOWLEDGE_EDGES.items():
         part = rest.filter(pl.col("rel") == rel)
         props = ("{source: r.source}" if kind == "source" else
-                 "{n: r.n, n_src: r.n_src, p: r.p, review: r.review}")
+                 "{n: r.n, n_src: r.n_src, p: r.p, review: r.review, source: r.source}")
         _run(session, f"UNWIND $rows AS r MATCH (a:Concept {{cui: r.src}}), (b:Concept "
              f"{{cui: r.dst}}) CREATE (a)-[:{rel} {props}]->(b)", part.to_dicts(), size)
 

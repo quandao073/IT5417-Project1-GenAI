@@ -207,6 +207,20 @@ def chexpert_edges(mapping: dict, gcfg: dict, links: pl.DataFrame,
     return _edges(pl.DataFrame(rows, schema=["src", "rel", "dst", "source"], orient="row")), missing
 
 
+def manual_edges(gcfg: dict) -> pl.DataFrame:
+    """IS_A and SUGGESTS edges written by hand in configs/kg.yaml (graph.manual_edges), source
+    `manual`. A SUGGESTS edge carries equal weights p = 1/k and no pool count, so queries keep it
+    whatever `min_n` says (the `source` is how they tell)."""
+    cfg = gcfg.get("manual_edges", {})
+    rows = [(child, ISA, parent, "manual", None, None, None)
+            for child, parent in cfg.get("is_a", [])]
+    for disease, findings in cfg.get("suggests", {}).items():
+        rows += [(f, SUGGESTS, disease, "manual", None, None, round(1 / len(findings), 4))
+                 for f in findings]
+    return _edges(pl.DataFrame(rows, schema=["src", "rel", "dst", "source", "n", "n_src", "p"],
+                               orient="row"))
+
+
 def _edges(df: pl.DataFrame) -> pl.DataFrame:
     for name, dtype in EDGE_SCHEMA.items():
         if name not in df.columns:
@@ -297,7 +311,8 @@ def aliases(nodes: pl.DataFrame, umls_dir: Path, concepts: dict, mapping: dict,
             .select("cui", pl.col("alias").alias("text"), pl.lit("vi").alias("lang"),
                     pl.lit("llm").alias("source")))
     hand = pl.DataFrame([(cui, text, lang, "manual") for lang, by_cui in (manual or {}).items()
-                         for cui, forms in by_cui.items() for text in forms],
+                         if lang in ("en", "vi") for cui, forms in by_cui.items()
+                         for text in forms],
                         schema=["cui", "text", "lang", "source"], orient="row")
     out = pl.concat([mrconso, yaml_rows, kept, hand])
     return (out.with_columns(pl.col("text").str.to_lowercase().str.replace_all(r"[^\w]+", " ")

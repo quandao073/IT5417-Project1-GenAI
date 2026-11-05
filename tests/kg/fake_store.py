@@ -81,7 +81,8 @@ class FakeStore:
         best = {}
         for t, _, _ in self._below(cui, depth):
             for e in self.edges:
-                kept = (e["rel"] == "SUGGESTS" and e["dst"] == t and e["n"] >= min_n
+                kept = (e["rel"] == "SUGGESTS" and e["dst"] == t
+                        and (e["source"] == "manual" or e["n"] >= min_n)
                         and (e["review"] or "keep") != "drop"
                         and self.nodes[e["src"]]["scorable"])
                 if kept and (e["src"] not in best or best[e["src"]]["p"] < e["p"]):

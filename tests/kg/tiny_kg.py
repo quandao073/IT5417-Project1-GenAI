@@ -18,10 +18,11 @@ COLUMNS = {"C1": "Pleural Effusion", "C2": "Cardiomegaly", "C3": "Edema", "C4": 
 NAMES = {"C1": "Pleural effusion", "C2": "Cardiomegaly", "C3": "Edema", "C4": "Pneumonia",
          "C5": "Lobar pneumonia", "C6": "Heart failure", "C7": "Pleural disease",
          "C8": "Pleura", "C9": "Pleural space", "C10": "Fracture", "C11": "Rib fracture",
-         "C12": "Lung volume loss", "C13": "Low lung volumes"}
+         "C12": "Lung volume loss", "C13": "Low lung volumes", "C14": "Interstitial disease"}
 LABELS = {"C1": "Finding", "C2": "Finding", "C3": "Finding", "C4": "Disease", "C5": "Disease",
           "C6": "Disease", "C7": "Disease", "C8": "Anatomy", "C9": "Anatomy", "C10": "Finding",
-          "C11": "Finding", "C12": "Finding", "C13": "Finding"}
+          "C11": "Finding", "C12": "Finding", "C13": "Finding",
+          "C14": "Disease"}
 LABEL_OF = {"C1": "Pleural Effusion", "C2": "Cardiomegaly", "C3": "Edema", "C4": "Pneumonia",
             "C10": "Fracture"}
 QUALITY = {"C1": 0.83, "C2": 0.71, "C3": 0.73, "C4": 0.63, "C10": 0.62, "C11": 0.74}
@@ -49,7 +50,11 @@ def edges() -> pl.DataFrame:
             _edge("C4", "SUGGESTS", "C6", n=30, n_src=100, p=0.3, review="keep"),
             _edge("C1", "SUGGESTS", "C6", n=40, n_src=400, p=0.1, review="drop"),
             _edge("C1", "TYPICALLY_AT", "C9", n=50, n_src=200, p=0.25),
-            _edge("C2", "TYPICALLY_AT", "C9", n=5, n_src=100, p=0.05)]
+            _edge("C2", "TYPICALLY_AT", "C9", n=5, n_src=100, p=0.05),
+            _edge("C4", "TYPICALLY_AT", "C9", n=60, n_src=100, p=0.5),    # the strongest, but weak
+            # by hand: no pool count, kept whatever min_n says
+            _edge("C3", "SUGGESTS", "C14", source="manual", p=0.5),
+            _edge("C11", "SUGGESTS", "C14", source="manual", p=0.5)]
     return pl.DataFrame(rows, schema={"src": pl.String, "rel": pl.String, "dst": pl.String,
                                       "source": pl.String, "n": pl.Int64, "n_src": pl.Int64,
                                       "p": pl.Float64, "review": pl.String})
@@ -64,7 +69,8 @@ def aliases() -> pl.DataFrame:
             ("C8", "pleura", "en"), ("C9", "pleural space", "en"), ("C10", "fracture", "en"),
             ("C11", "rib fracture", "en"),
             ("C12", "giảm thể tích phổi", "vi"), ("C13", "giảm thể tích phổi", "vi"),
-            ("C13", "thể tích phổi thấp", "vi")]
+            ("C13", "thể tích phổi thấp", "vi"), ("C14", "interstitial disease", "en"),
+            ("C10", "broken bone", "en"), ("C11", "broken bone", "en")]
     return pl.DataFrame([{"cui": c, "text": t, "norm": t, "lang": lang, "source": "test"}
                          for c, t, lang in rows])
 

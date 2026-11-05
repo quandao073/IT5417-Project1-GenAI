@@ -2,3 +2,10 @@
 # Codes and the project's own strings only (T38).
 vi:
   C5563137: [thể tích phổi thấp]   # low lung volumes (user 2026-11-03); "giảm thể tích phổi" stays shared with Atelectasis
+  C0032226: [bệnh lý màng phổi, bệnh màng phổi]   # the general concept above all pleural conditions: the parent of effusion, pneumothorax, thickening
+
+# One line per concept whose aliases are shared with another concept: when to use it. The concept chooser sees it
+# beside the candidate (WORKLOG D67); text of our own.
+gloss:
+  C0004144: Use for volume loss confined to one side or one lobe (xẹp phổi; giảm thể tích phổi trái, phải hay một thùy).
+  C5563137: Use for low lung volumes of both lungs, the whole chest (thể tích phổi thấp; giảm thể tích phổi hai bên).

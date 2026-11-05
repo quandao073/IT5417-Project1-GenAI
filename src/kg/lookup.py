@@ -1,6 +1,8 @@
 """`lookup_concept` (docs/v2-kg-design.md, "Truy vấn online" step 2): a phrase of the question to
 at most five candidate concepts of the graph: by exact alias (the phrase or its singular), and
-only when none matches, by fulltext alias.
+only when none matches, by fulltext alias. Of equal matches a scorable concept comes
+first, a weak one (D55) after the strong ones: the specific concept with its own column before the
+weak label that covers it.
 
 The side of the question ("trái", "left") is not part of a concept (schema decision 3): it is cut
 before the lookup and reported, so "giảm thể tích phổi trái" finds the aliases of
@@ -48,7 +50,7 @@ class Candidate:
     label: str | None
     scorable: bool
     parents: list[str]
-    match: str            # exact | fulltext
+    match: str            # exact | sapbert | fulltext
     alias: str
     score: float
     n_pool: int
@@ -68,8 +70,9 @@ class Lookup:
                 "candidates": [asdict(c) for c in self.candidates]}
 
 
-def lookup_concept(store, term: str, cfg: dict) -> Lookup:
-    """`cfg` is configs/kg.yaml: query (lookup limits, sides)."""
+def lookup_concept(store, term: str, cfg: dict, semantic=None) -> Lookup:
+    """`cfg` is configs/kg.yaml: query (lookup limits, sides). `semantic` is the optional SapBERT
+    stage (sapbert.AliasIndex): when no alias is the phrase it comes before the fulltext one."""
     qcfg = cfg["lookup"]
     core, sides = strip_sides(normalize(term), cfg["sides"])
     result = Lookup(term=term, core=core, sides=sides)
@@ -79,6 +82,11 @@ def lookup_concept(store, term: str, cfg: dict) -> Lookup:
     for form in dict.fromkeys([core, singular_candidate(core) or core]):
         for row in store.aliases_exact(form):
             hits.setdefault(row["cui"], ("exact", row["text"], 1.0))
+    if not hits and semantic is not None:
+        floor = qcfg["sapbert"]["min_cos"]
+        for row in semantic.search(core, qcfg["sapbert"]["top"]):
+            if row["score"] >= floor:
+                hits.setdefault(row["cui"], ("sapbert", row["text"], round(row["score"], 3)))
     if not hits:                          # fulltext only when no alias is the phrase itself
         tokens = core.split()
         for row in store.aliases_fulltext(core, qcfg["fulltext_limit"]):
@@ -90,7 +98,7 @@ def lookup_concept(store, term: str, cfg: dict) -> Lookup:
     ranked = sorted(
         (c for c in hits if c in info),
         key=lambda c: (hits[c][0] != "exact", -hits[c][2], not info[c]["scorable"],
-                       -(info[c]["n_pool"] or 0), c))
+                       bool(info[c]["weak"]), -(info[c]["n_pool"] or 0), c))
     for cui in ranked[:qcfg["max_candidates"]]:
         match, alias, score = hits[cui]
         i = info[cui]

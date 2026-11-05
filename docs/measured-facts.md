@@ -790,3 +790,39 @@ nhắc. Hiệu chỉnh như 14 cột (`image_scores.calibrate`); AUROC lenient (
   bỏ từ chung chung khỏi term và không coi từ bổ nghĩa là term; "nốt phổi", "pulmonary nodule", "lung nodule" vào
   `ambiguous_forms`; chooser trả lý do tối đa 10 từ; grounding bỏ câu có markup rò rỉ và coi "bất thường", "tổn thương"
   là từ chung (trước đó 12/24 diễn giải mất hết dòng theo ảnh vì hai cụm này).
+
+## Định tuyến và độ phủ KG sau smoke V2-6 (đo 2026-11-05, D67)
+
+- **Rà nhãn cha nuốt khái niệm con** (`scripts/kg_label_shadows.py`; dạng của `concepts.yaml` (en, vi) trùng alias của một
+  khái niệm scorable nằm dưới nhãn theo `IS_A`): 10 dạng, ở 4 nhãn: Enlarged Cardiomediastinum → C0746459 (3 dạng), Lung
+  Lesion → C0034079 (3), Pleural Other → C0264545 (2), Fracture → C0035522 (2). Các nhãn khác (kể cả Atelectasis,
+  Lung Opacity, 14 nhãn còn lại) không có dạng nào bị nuốt. Cả 10 dạng vào `ambiguous_forms`.
+- **Parser KG, bộ dev 40 câu** (`cxr eval-parser --split dev --parsers llm --kg-prompt …`, Haiku, 14 nhãn; không chạy
+  heldout): prompt v3, ba lượt, concept macro-F1 **0,810** cả ba (status 0,968, view 1,000, exact 0,875, schema 1,000;
+  trượt ngưỡng của đường B1). Prompt v2 một lượt: 0,952 (status 0,991, exact 0,950). Prompt B1 (D61): 1,000. Năm câu trượt của
+  v3 giống nhau ở cả ba lượt, và đều là câu chỉ gồm một dạng bị tách (widened mediastinum, rib fracture, pleural thickening,
+  nốt phổi, trung thất giãn rộng, dày màng phổi, gãy xương sườn) nên vào `terms` thay vì nhãn: tụt là hệ quả của luật,
+  không phải lỗi rải rác. Đường B1 (`/search`) vẫn dùng prompt v1.
+- **Phân bố điểm của vị trí đứng một mình** (noisy-OR của các dấu hiệu `TYPICALLY_AT` không yếu, 25.000 ảnh, ma trận
+  `..._ext1`), top 5 → top 3: thùy trên p50 0,16 → 0,02, p99 0,45 → 0,15; thùy dưới p50 0,15 → 0,14, p99 0,43 → 0,42; đỉnh phổi
+  p50 0,11 → 0,10, p99 0,61 → 0,60; không vùng nào có ảnh ≥ 0,95. **Góc sườn hoành vẫn bão hòa**: hai dấu hiệu (lung opacity,
+  tràn dịch) cho p50 0,95, p90 0,98, 47,8% ảnh ≥ 0,95, top 10 từ 0,992: thứ hạng trong nhóm đầu gần như do nhiễu số lẻ. Một
+  dấu hiệu quá phổ biến (lung opacity) làm bão hòa noisy-OR; chưa xử lý.
+- **Disease chưa có đường tới cột nào** (lõi, có lượt nhắc; `expand_concepts` trả `none`, sau khi thêm cạnh thủ công): 76 / 124.
+  Mười khái niệm nhiều lượt nhắc nhất (n_pool): C0036439 537, C0747077 488, C3494893 389, C0032320 338, C1167782 310,
+  C0020498 308, C1868833 242, C0006267 225, C0024117 161, C0740451 158. Chưa thêm cạnh nào; danh sách đầy đủ ở
+  `data/kg/graph/diseases_without_route.json` (cục bộ).
+- **N4** (`cxr kg-bench-scoring`, 1.000.000 × 37, top-10): nạp sẵn log σ của mọi cột lúc khởi động mất 151,5 ms, bộ nhớ 148 →
+  444 MB; truy vấn đầu tiên sau nạp: điển hình 34,5 ms, nặng (cả 37 cột) 62,7 ms (trước khi nạp sẵn: 73,8 và 146,6 ms).
+  Mục tiêu < 100 ms đạt cho mọi kiểu truy vấn đã thử.
+- **Smoke lượt e** (24 câu, cùng bộ, `cxr kg-query`): N1 chưa tính diễn giải p50 1,90 s, p95 **3,77 s**, max 3,82 s (đạt < 5 s);
+  parser p50 1,78 / p95 2,18 s (1/24 vượt 2,5 s), chọn khái niệm (9 lượt gọi LLM) p50 1,35 / p95 1,80 s, KG + chấm điểm p95 25 ms.
+  **N2** token đầu p50 1,19 s, p95 **1,70 s**, max 2,46 s, 4/23 trên 1,5 s: **chưa đạt "< 1,5 s" ở p95**; lượt d là 1,71 s,
+  tức rút prompt diễn giải (v2: 334 → 238 từ) và gọn JSON facts không đổi p95; mục tiêu giữ nguyên. Giảm nhẹ: sự
+  kiện `results` đi trước, người dùng không chờ diễn giải. Cache prompt đã bật ở client (`cache_control` trên system prompt) nhưng chưa đo cache_read: prompt ngắn có thể nằm
+  dưới ngưỡng tối thiểu để cache của model. Diễn giải: 22 `ok`, 1 `ungrounded` (câu 13, mọi câu nhắc một cụm "đám mờ" mà facts không có), 1 `no_results`.
+- Cache của chooser khóa theo toàn bộ input của model (câu hỏi, cụm, ứng viên, chú giải, model, sha prompt): ổn định trong một
+  process, không qua process (câu 11 chọn C0018801 ở lượt e, C0018802 ở lượt d).
+- **SapBERT lúc chạy** (`query.lookup.sapbert.enabled`, mặc định tắt; từ điển = 37.660 alias của KG, cache
+  `data/kg/sapbert_alias/`): bật thử, "mediastinum looks wider" → Widened mediastinum, cos 0,933 (cùng cos với
+  Enlarged Cardiomediastinum, 0,933), chooser chọn đúng.

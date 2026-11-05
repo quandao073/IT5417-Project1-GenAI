@@ -54,10 +54,11 @@ class KGResult:
 class KGSearch:
     def __init__(self, *, cfg: dict, matrix: ScoreMatrix, parser, store, quality: dict,
                  label_ids: dict[str, str], names: dict[str, str], chooser=None,
-                 explainer=None, versions: dict | None = None):
+                 explainer=None, versions: dict | None = None, semantic=None):
         self.cfg, self.matrix, self.parser, self.store = cfg, matrix, parser, store
         self.quality, self.label_ids, self.names = quality, label_ids, names
         self.chooser, self.explainer, self.versions = chooser, explainer, versions or {}
+        self.semantic = semantic        # sapbert.AliasIndex or None
         self._terms_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="kg-terms")
 
     # -- intents ---------------------------------------------------------------------------
@@ -88,7 +89,7 @@ class KGSearch:
 
     def _term(self, question: str, term, qcfg: dict) -> tuple[lookup.Lookup, Choice, Intent]:
         t0 = time.perf_counter()
-        found = lookup.lookup_concept(self.store, term.text, qcfg)
+        found = lookup.lookup_concept(self.store, term.text, qcfg, self.semantic)
         t1 = time.perf_counter()
         if self.chooser is not None:
             choice = self.chooser.choose(question, term.text, term.polarity, found)
@@ -108,6 +109,15 @@ class KGSearch:
                          "expand_ms": (t3 - t2) * 1000}
         return found, choice, intent
 
+    def _sides(self, question: str, query: SearchQuery) -> list[str]:
+        """The sides the question names: the parser's, else words that cannot mean anything else."""
+        found = list(query.sides)
+        words = f" {lookup.normalize(question)} "
+        for side, forms in self.cfg["query"]["question_sides"].items():
+            if side not in found and any(f" {lookup.normalize(f)} " in words for f in forms):
+                found.append(side)
+        return found
+
     # -- the search ------------------------------------------------------------------------
 
     def search(self, question: str, top_k: int = 10, views: tuple[str, ...] = ()) -> KGResult:
@@ -126,9 +136,13 @@ class KGSearch:
                           "language model disabled")
             warnings.append(Warn("llm_fallback", {"reason": reason[:100]}))
             degraded.append("parser: rule parser")
+        sides = self._sides(question, query)
+        if sides:
+            warnings.append(Warn("side_ignored"))
         trace: dict = {"parser": {"parser": parsed.parser, "fallback": parsed.fallback_used,
                                   "llm_ms": parsed.llm_ms, "cached": parsed.cached,
-                                  "terms": [t.model_dump() for t in query.terms]},
+                                  "terms": [t.model_dump() for t in query.terms],
+                                  "sides": sides},
                        "terms": []}
 
         kg_down: list[str] = [] if self.store is not None else ["no Neo4j connection"]
@@ -149,8 +163,6 @@ class KGSearch:
                            for term in query.terms]
                 for term, future in zip(query.terms, futures, strict=True):
                     found, choice, intent = future.result()
-                    if found.sides:
-                        warnings.append(Warn("side_ignored"))
                     if not found.core:          # "bên phải" alone: a side, not a concept
                         trace["terms"].append({"term": term.text, "skipped": "side only"})
                         continue
@@ -163,7 +175,8 @@ class KGSearch:
                         "term": term.text, "polarity": term.polarity, **found.to_dict(),
                         "timings_ms": {k: round(v, 1) for k, v in found.timings.items()},
                         "choice": {"cui": choice.cui, "via": choice.via, "reason": choice.reason,
-                                   "ms": round(choice.ms, 1), "error": choice.error},
+                                   "ms": round(choice.ms, 1), "error": choice.error,
+                                   "cached": choice.cached},
                         "intent": intent.to_dict()})
             except StoreError as exc:
                 kg_down.append(str(exc))
@@ -174,6 +187,13 @@ class KGSearch:
                 warnings += [Warn("terms_dropped", {"term": t.text}) for t in query.terms]
             warnings.append(Warn("kg_unavailable"))
         timings["terms_ms"] = (time.perf_counter() - t) * 1000
+
+        # a location beside findings is not scored: the findings decide, the location only warns
+        located = [i for i in intents if i.kind == "anatomy"]
+        if located and any(i.columns and i.kind != "anatomy" for i in intents):
+            intents = [i for i in intents if i.kind != "anatomy"]
+            warnings += [Warn("location_ignored", {"region": i.name}) for i in located]
+            trace["location_ignored"] = [i.name for i in located]
 
         # one intent per (concept, polarity); a repeated phrase must not count twice
         seen, unique = set(), []
