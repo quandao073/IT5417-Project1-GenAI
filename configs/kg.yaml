@@ -198,3 +198,9 @@ scores_ext:
     C0700124: ectatic, dilated, distended
     C3263723: injury, trauma
     C0024115: lung disease
+
+# Neo4j (docker compose --profile kg; WORKLOG D65). PREDICTED only for the top_n best images of each scorable concept.
+neo4j:
+  top_n: 100
+  batch: 2000
+  query_timeout_seconds: 5

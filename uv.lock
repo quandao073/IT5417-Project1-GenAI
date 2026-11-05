@@ -214,6 +214,7 @@ api = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "huggingface-hub" },
+    { name = "neo4j" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "open-clip-torch" },
@@ -242,6 +243,7 @@ embed = [
     { name = "transformers" },
 ]
 worker = [
+    { name = "neo4j" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "pillow" },
@@ -260,6 +262,8 @@ requires-dist = [
     { name = "huggingface-hub", marker = "extra == 'api'" },
     { name = "huggingface-hub", marker = "extra == 'embed'" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
+    { name = "neo4j", marker = "extra == 'api'", specifier = ">=5.26,<6" },
+    { name = "neo4j", marker = "extra == 'worker'", specifier = ">=5.26,<6" },
     { name = "numpy", marker = "extra == 'api'", specifier = ">=1.26" },
     { name = "numpy", marker = "extra == 'worker'", specifier = ">=1.26" },
     { name = "open-clip-torch", marker = "extra == 'api'", specifier = "==2.24.0" },
@@ -757,6 +761,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/a2/6e/371856a3fb9d31ca8dac321cda606860fa4548858c0cc45d9d1d4ca2628b/mypy_extensions-1.1.0.tar.gz", hash = "sha256:52e68efc3284861e772bbcd66823fde5ae21fd2fdb51c62a211403730b916558", size = 6343, upload-time = "2025-04-22T14:54:24.164Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/79/7b/2c79738432f5c924bef5071f933bcc9efd0473bac3b4aa584a6f7c1c8df8/mypy_extensions-1.1.0-py3-none-any.whl", hash = "sha256:1be4cccdb0f2482337c4743e60421de3a356cd97508abadd57d47403e94f5505", size = 4963, upload-time = "2025-04-22T14:54:22.983Z" },
+]
+
+[[package]]
+name = "neo4j"
+version = "5.28.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pytz" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5d/e2/62b2ced8591abf5aabb4bce6160dacb75e53992875ee6aec03fb5ea2dc0d/neo4j-5.28.8.tar.gz", hash = "sha256:b2531e5fb618bd1b0f5f3d62b5f9be480a66969396f82c41caaf2f3539f7e72c", size = 234107, upload-time = "2026-10-15T11:02:32.284Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/34/5b/c3a3fc2604cd578c27f8d36de7973093ebc7c148f749be9db067dd63a00a/neo4j-5.28.8-py3-none-any.whl", hash = "sha256:f8ecdad94be88f0f7a766a284a9a7023db9e7bd92d1b0a4fe6d6e191feb97f91", size = 314703, upload-time = "2026-10-15T11:02:29.605Z" },
 ]
 
 [[package]]
@@ -1275,6 +1291,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/6a/53/ed9d74092561d4b01a2ef1349d52cdbc135e526c245f366b089cfca6de49/python_dotenv-1.2.3.tar.gz", hash = "sha256:a20a594dabeaa385725aa239d5244871c143ecb356add8a20fcf23773a6c3a35", size = 58945, upload-time = "2026-08-16T16:54:54.067Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0d/17/c5c6b53ddc18f297992099b3d9ec16c855c0ccc83263a21fe4d1c625ec6c/python_dotenv-1.2.3-py3-none-any.whl", hash = "sha256:904552145e8bfed22162c09dab1c2b9b54fefa7b23ba780f4f26ca0316b0f0d9", size = 22780, upload-time = "2026-08-16T16:54:52.473Z" },
+]
+
+[[package]]
+name = "pytz"
+version = "2026.6"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f5/b0/168030b0bfcc334cf09fa3313afdb888d892c8a0027324683d1de0ec277e/pytz-2026.6.tar.gz", hash = "sha256:3b0fc2727707663d6e517936f444fd8a8b240f1fc32f4bf7ee03274245945284", size = 318520, upload-time = "2026-10-29T09:05:47.011Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b6/25/564f3fc5b70c1398d706c51f2b1470d0ea0b1b2f96fee67877b6f5bdf3b6/pytz-2026.6-py2.py3-none-any.whl", hash = "sha256:7fed3fee8fd6bd4a2b7b75a8d56021d0624127bf69bd5691f115db929ac570b3", size = 506321, upload-time = "2026-10-29T09:05:45.14Z" },
 ]
 
 [[package]]

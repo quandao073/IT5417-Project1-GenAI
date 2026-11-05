@@ -99,6 +99,12 @@ class Settings(BaseSettings):
     qdrant_url: str = "http://localhost:6333"
     qdrant_collection_prefix: str = "cxr_images"
 
+    # The knowledge graph (docker compose --profile kg); without it the KG search falls back to
+    # the 14 labels (docs/v2-kg-design.md, N8).
+    neo4j_uri: str = "bolt://localhost:7687"
+    neo4j_user: str = "neo4j"
+    neo4j_password: SecretStr = SecretStr("cxr-local-neo4j")   # compose.yaml default, loopback only
+
     image_root: Path = Path("data/raw/CheXpert-v1.0-small")
     canonical_dir: Path = Path("data/canonical")
     fts_db_path: Path = Path("data/indexes/report_search.sqlite")
