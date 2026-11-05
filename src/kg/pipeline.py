@@ -163,8 +163,9 @@ class KGSearch:
                            for term in query.terms]
                 for term, future in zip(query.terms, futures, strict=True):
                     found, choice, intent = future.result()
-                    if not found.core:          # "bên phải" alone: a side, not a concept
-                        trace["terms"].append({"term": term.text, "skipped": "side only"})
+                    if not found.core or found.modifier:   # a side or a modifier: no concept
+                        trace["terms"].append({"term": term.text, "skipped": (
+                            "modifier" if found.modifier else "side only")})
                         continue
                     intents.append(intent)
                     if choice.via == "deterministic" and len(found.candidates) > 1:
@@ -226,5 +227,6 @@ class KGSearch:
             return None
         rows = result.rows[:top or self.cfg["explain"]["top_results"]]
         probs = self.matrix.probabilities([r["row"] for r in rows], result.intents)
-        facts = build_facts(result.question, result.language, result.intents, rows, probs)
+        facts = build_facts(result.question, result.language, result.intents, rows, probs,
+                            self.explainer.index.names(result.intents))
         return self.explainer.explain(facts, result.intents)

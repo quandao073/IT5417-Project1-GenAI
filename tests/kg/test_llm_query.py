@@ -210,3 +210,36 @@ def test_the_first_token_time_belongs_to_its_own_call():
     intents, facts = page()
     got = explainer(GOOD).explain(facts, intents)
     assert got.first_token_ms == 12.0
+
+
+def test_a_word_inside_an_allowed_mention_is_not_checked_on_its_own():
+    # "phù phổi nặng" is an alias of C3; "phù phổi" alone would name it too, "nặng" nothing
+    nodes = tiny_kg.nodes().filter(pl.col("cui").is_in(["C3", "C4"]))
+    aliases = pl.DataFrame({"cui": ["C3", "C4"], "norm": ["tràn dịch nặng", "tràn dịch"]})
+    index = GroundingIndex.build(nodes, aliases, load_config("kg")["explain"])
+    assert index.check("Ảnh khớp tràn dịch nặng.", {"C3"}, set(), set()) is None
+    assert index.check("Ảnh khớp tràn dịch.", {"C3"}, set(), set()) == (
+        "concept not in the facts: tràn dịch")
+
+
+def test_the_facts_show_a_few_aliases_of_every_concept_of_the_path_vietnamese_first():
+    index = GroundingIndex.build(tiny_kg.nodes(), tiny_kg.aliases(), load_config("kg")["explain"])
+    intents, _ = page()
+    names = index.names(intents)
+    assert names["C1"] == ["tràn dịch màng phổi", "pleural effusion"]
+    facts = build_facts("q", "vi", intents, [{"rank": 1, "view": "PA"}],
+                        [{0: {"intent": 0.9, "columns": {"C1": 0.9}}}], names)
+    assert facts["intents"][0]["aliases"] == names["C1"]
+    assert facts["intents"][0]["uses"][0]["aliases"] == names["C1"]
+
+
+def test_the_choices_survive_a_restart_through_the_cache_file(tmp_path):
+    path = tmp_path / "cache" / "chooser.jsonl"
+    two = found("giảm thể tích phổi")
+    first = ConceptChooser(Chat({"choice": "C13", "reason": "both"}), Guard(3, 60), "choose", 1.0,
+                           cache_file=path)
+    assert first.choose("q", "giảm thể tích phổi", PRESENT, two).cui == "C13"
+    chat = Chat({"choice": "C12", "reason": "other"})
+    again = ConceptChooser(chat, Guard(3, 60), "choose", 1.0, cache_file=path)
+    got = again.choose("q", "giảm thể tích phổi", PRESENT, two)
+    assert (got.cui, got.cached, chat.calls) == ("C13", True, [])

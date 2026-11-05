@@ -121,3 +121,35 @@ def test_a_weak_finding_takes_no_slot_of_the_region_s_top_findings(store):
     # C4 (weak) has the strongest TYPICALLY_AT edge of the region: it must not push C1 out
     got = expand.expand_concepts(store, "C9", PRESENT, {**EXPAND_CFG, "anatomy_top": 1}, "space")
     assert got.kind == "anatomy" and [c.cui for c in got.columns] == ["C1"]
+
+
+def test_sapbert_runs_last_after_an_empty_fulltext_and_modifiers_are_skipped(store):
+    calls = []
+
+    class Index:
+        def search(self, norm, k):
+            calls.append(norm)
+            return [{"cui": "C3", "text": "edema", "score": 0.95}]
+
+    cfg = {**LOOKUP_CFG, "modifiers": ["small", "diffuse"],
+           "lookup": {**LOOKUP_CFG["lookup"], "sapbert": {"enabled": True, "top": 5,
+                                                          "min_cos": 0.8}}}
+    near = lookup.lookup_concept(store, "pleural", cfg, Index())      # fulltext finds it
+    assert {c.match for c in near.candidates} == {"fulltext"} and calls == []
+    for words in ("small", "small diffuse"):
+        got = lookup.lookup_concept(store, words, cfg, Index())
+        assert got.modifier and got.candidates == [] and calls == []
+    assert not lookup.lookup_concept(store, "small effusion", cfg, Index()).modifier
+
+
+def test_modifier_words_come_from_the_linker_and_the_vocabulary():
+    words = lookup.modifier_words(load_config("kg"), {"observation": {"diffuse": "skip",
+                                                                      "opacity": "C1"},
+                                                      "anatomy": {"zone": "skip"}})
+    assert {"diffuse", "zone", "small", "left"} <= set(words) and "opacity" not in words
+
+
+def test_a_region_alone_is_a_noisy_or_weighted_by_how_typical_each_finding_is(store):
+    got = expand.expand_concepts(store, "C9", PRESENT, EXPAND_CFG, "space")
+    assert got.combine == expand.WEIGHTED_OR
+    assert [(c.cui, c.weight) for c in got.columns] == [("C1", 0.25)]

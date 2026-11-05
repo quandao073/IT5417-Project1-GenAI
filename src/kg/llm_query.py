@@ -12,15 +12,18 @@ diagnostic wording is dropped; when nothing survives the caller shows the raw pa
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
+import logging
 import re
 import threading
 import time
 from collections import OrderedDict
 from dataclasses import asdict, dataclass, field, replace
+from pathlib import Path
 
-from src.kg.expand import ABSENT, NOISY_OR, WEIGHTED, Intent
+from src.kg.expand import ABSENT, NOISY_OR, WEIGHTED, WEIGHTED_OR, Intent
 from src.kg.guard import Guard
 from src.kg.lookup import Lookup, normalize
 from src.query.llm_parser import LLMError, LLMInvalidOutput
@@ -33,6 +36,7 @@ EXPLAIN_SCHEMA = {"type": "object", "properties": {
         "rank": {"type": "integer"}, "line": {"type": "string"}},
         "required": ["rank", "line"]}}},
     "required": ["summary", "images"]}
+logger = logging.getLogger("cxr.kg")
 _SENTENCE = re.compile(r"(?<=[.!?])\s+")
 _NUMBER = re.compile(r"\d+(?:[.,]\d+)?")
 
@@ -52,13 +56,37 @@ class Choice:
 
 
 class ConceptChooser:
+    """`cache_file`: the model's choices as JSONL ({key, cui, reason}), read at startup and
+    appended to, so a question gets the same concept across restarts (WORKLOG D68). A file that
+    cannot be written leaves the cache in memory only."""
+
     def __init__(self, client, guard: Guard, system_prompt: str, timeout_s: float,
-                 gloss: dict[str, str] | None = None):
+                 gloss: dict[str, str] | None = None, cache_file: Path | None = None):
         self.client, self.guard, self.timeout_s = client, guard, timeout_s
         self.system_prompt, self.gloss = system_prompt, gloss or {}
         self.prompt_sha256 = sha256(system_prompt)
         self._cache: OrderedDict[str, Choice] = OrderedDict()   # what the model chose, per input
         self._lock = threading.Lock()
+        self.cache_file = cache_file
+        if cache_file is not None and cache_file.is_file():
+            for line in cache_file.read_text(encoding="utf-8").splitlines():
+                with contextlib.suppress(ValueError, KeyError):
+                    row = json.loads(line)
+                    self._cache[row["key"]] = Choice(row["cui"], "llm", row.get("reason", ""))
+
+    def _remember(self, key: str, choice: Choice) -> None:
+        with self._lock:
+            self._cache[key] = choice
+            if self.cache_file is None:
+                return
+            try:
+                self.cache_file.parent.mkdir(parents=True, exist_ok=True)
+                with open(self.cache_file, "a", encoding="utf-8") as handle:
+                    handle.write(json.dumps({"key": key, "cui": choice.cui,
+                                             "reason": choice.reason}, ensure_ascii=False) + "\n")
+            except OSError as exc:
+                logger.warning("chooser cache not written (%s); memory only", exc)
+                self.cache_file = None
 
     def choose(self, question: str, term: str, polarity: str, lookup: Lookup) -> Choice:
         cands = lookup.candidates
@@ -96,10 +124,7 @@ class ConceptChooser:
                           f"the model chose {choice!r}, not a candidate")
         result = Choice(None if choice == "none" else choice, "llm",
                         str(answer.get("reason", "")), ms)
-        with self._lock:
-            self._cache[key] = result
-            while len(self._cache) > 1024:
-                self._cache.popitem(last=False)
+        self._remember(key, result)
         return result
 
 
@@ -110,19 +135,28 @@ def _percent(p: float) -> int:
 
 
 def build_facts(question: str, language: str, intents: list[Intent], rows: list[dict],
-                probabilities: list[dict]) -> dict:
+                probabilities: list[dict], names: dict[str, list[str]] | None = None) -> dict:
     """What the explanation may say. `rows` are the results (rank, view), `probabilities` the
-    ScoreMatrix.probabilities of those rows. Numbers are whole percents and ranks only."""
+    ScoreMatrix.probabilities of those rows. Numbers are whole percents and ranks only. `names`
+    (GroundingIndex.names) gives every concept of the path its EN and VI aliases, so the text can
+    name a concept in the question's language with words the grounding check accepts."""
+    names = names or {}
+
+    def called(cui: str) -> dict:
+        return {"aliases": names[cui]} if names.get(cui) else {}
+
     spec = []
     for i, it in enumerate(intents, start=1):
         if not it.columns:
             continue
-        spec.append({"id": i, "asked": it.term, "concept": it.name, "kind": it.kind,
-                     "combine": {NOISY_OR: "any_of", WEIGHTED: "weighted"}.get(it.combine,
+        spec.append({"id": i, "asked": it.term, "concept": it.name, **called(it.cui),
+                     "kind": it.kind,
+                     "combine": {NOISY_OR: "any_of", WEIGHTED: "weighted",
+                                 WEIGHTED_OR: "any_of_weighted"}.get(it.combine,
                                                                                "single"),
                      "excluded": it.polarity == ABSENT,
-                     "uses": [{"concept": c.name, "weight_percent": _percent(c.weight)}
-                              for c in it.columns]})
+                     "uses": [{"concept": c.name, **called(c.cui),
+                               "weight_percent": _percent(c.weight)} for c in it.columns]})
     results = []
     for row, prob in zip(rows, probabilities, strict=True):
         match = []
@@ -146,13 +180,21 @@ class GroundingIndex:
     """Aliases of the Finding and Disease concepts of the graph, to spot a mention of a concept
     that is not in the facts. Built once at startup from aliases.parquet and nodes.parquet."""
 
-    def __init__(self, aliases: dict[str, set[str]], by_cui: dict[str, set[str]], cfg: dict):
+    def __init__(self, aliases: dict[str, set[str]], by_cui: dict[str, set[str]], cfg: dict,
+                 shown: dict[str, list[str]] | None = None):
         self.aliases, self.by_cui, self.cfg = aliases, by_cui, cfg
+        self.shown = shown or {}         # cui -> the few aliases the facts show, VI first
         self.diagnostic = [d.casefold() for d in cfg["diagnostic"]]
+
+    def names(self, intents: list[Intent]) -> dict[str, list[str]]:
+        """The aliases the facts show for every concept of the intents' paths."""
+        cuis = {it.cui for it in intents} | {c.cui for it in intents for c in it.columns}
+        return {c: self.shown[c] for c in cuis if c in self.shown}
 
     @classmethod
     def build(cls, nodes, aliases, cfg: dict) -> GroundingIndex:
-        """`nodes`, `aliases`: the polars tables of data/kg/graph."""
+        """`nodes`, `aliases`: the polars tables of data/kg/graph (`aliases` with `lang` and
+        `source` gives `shown`: per language the hand-made forms first, then the shortest)."""
         keep = set(nodes.filter(nodes["in_core"], nodes["labels"].is_in(["Finding", "Disease"]))
                    ["cui"])
         by_cui: dict[str, set[str]] = {}
@@ -167,7 +209,18 @@ class GroundingIndex:
                                                  and len(norm) < cfg["min_single_word_chars"]):
                     continue
                 index.setdefault(norm, set()).add(cui)
-        return cls(index, by_cui, cfg)
+        shown: dict[str, list[str]] = {}
+        if "lang" in aliases.columns and "source" in aliases.columns:
+            k = cfg["aliases_shown"]
+            for (cui,), rows in aliases.group_by("cui"):
+                rows = rows.with_columns((rows["source"] == "mrconso").alias("umls"),
+                                         rows["norm"].str.len_chars().alias("len"))
+                pick = []
+                for lang in ("vi", "en"):
+                    pick += rows.filter(rows["lang"] == lang).sort("umls", "len", "norm")[
+                        "norm"].to_list()[:k]
+                shown[cui] = pick
+        return cls(index, by_cui, cfg, shown)
 
     def allowed(self, facts: dict, intents: list[Intent]) -> tuple[set[str], set[str]]:
         """(cuis, normalised phrases) the explanation may mention: the intents' concepts and
@@ -194,11 +247,17 @@ class GroundingIndex:
             if number.replace(",", ".").split(".")[0] not in numbers:
                 return f"number not in the facts: {number}"
         words = normalize(sentence).split()
+        covered: set[int] = set()        # words inside an allowed mention, longest first
         for n in range(4, 0, -1):
             for i in range(len(words) - n + 1):
+                span = range(i, i + n)
+                if covered.intersection(span):
+                    continue
                 gram = " ".join(words[i:i + n])
                 owners = self.aliases.get(gram)
-                if owners and not owners & cuis and gram not in phrases:
+                if owners and owners & cuis or gram in phrases:
+                    covered.update(span)
+                elif owners:
                     return f"concept not in the facts: {gram}"
         return None
 

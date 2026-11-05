@@ -8,6 +8,7 @@ answer must carry, and the path in the graph.
     otherwise, a scorable ancestor (IS_A)                  that, with a warning (narrower)
     otherwise a Disease     the scorable findings that SUGGESTS it, weights from p
     otherwise an Anatomy    the scorable findings usually seen there (TYPICALLY_AT), noisy-OR
+                            weighted by how often each is seen there (p of the edge)
     otherwise               nothing: "cannot be scored"
 
 A weak concept is never a target of the wider, disease and anatomy routes (D55); a narrower route
@@ -23,6 +24,7 @@ from src.kg.messages import Warn
 
 PRESENT, ABSENT = "PRESENT", "ABSENT"
 SINGLE, NOISY_OR, WEIGHTED = "single", "noisy_or", "weighted"
+WEIGHTED_OR = "weighted_noisy_or"   # 1 - prod(1 - w p): a finding counts as much as it is typical
 ANATOMY_FETCH = 50      # TYPICALLY_AT findings read for a region before the weak ones are dropped
 
 
@@ -131,8 +133,9 @@ def expand_concepts(store, cui: str, polarity: str, cfg: dict, term: str = "") -
         found = _strong(store, [r["cui"] for r in rows])[:cfg["anatomy_top"]]
         if found:
             region = {r["cui"]: r["region"] for r in rows}
-            intent.kind, intent.combine = "anatomy", NOISY_OR
-            intent.columns = [_column(k) for k in found]
+            p = {r["cui"]: r["p"] for r in rows}
+            intent.kind, intent.combine = "anatomy", WEIGHTED_OR
+            intent.columns = [_column(k, p[k["cui"]]) for k in found]
             intent.path = [f"{k['name']} —TYPICALLY_AT→ {region[k['cui']]}" for k in found]
             intent.warnings.append(Warn("anatomy_region", {"region": name}))
             return intent

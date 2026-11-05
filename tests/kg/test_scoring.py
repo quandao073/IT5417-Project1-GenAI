@@ -91,3 +91,15 @@ def test_preload_fills_every_column_and_changes_no_score():
     expected = fresh.score(intents)
     assert m.preload() >= 0 and len(m._lsp) == len(m._lsn) == len(COLS)
     assert (m.score(intents) == expected).all()
+
+
+def test_a_weighted_noisy_or_counts_each_column_by_its_weight():
+    m = matrix()
+    it = intent("PRESENT", scoring.WEIGHTED_OR, [("A", 0.5), ("B", 0.2)])
+    sig = 1 / (1 + np.exp(-Z))
+    want = 1 - (1 - 0.5 * sig[0]) * (1 - 0.2 * sig[1])
+    assert np.allclose(np.exp(m.score([it])), want, atol=1e-5)
+    assert np.allclose(m.score([intent("ABSENT", scoring.WEIGHTED_OR, [("A", 0.5), ("B", 0.2)])]),
+                       np.log(1 - want), atol=1e-5)
+    probs = m.probabilities(np.array([0, 3]), [it])
+    assert np.isclose(probs[0][0]["intent"], want[0]) and np.isclose(probs[1][0]["intent"], want[3])

@@ -127,7 +127,9 @@ thể tích phổi trái") đạt ở D67 (chú giải đi cùng ứng viên).
 
 Sau smoke có đợt sửa định tuyến và độ phủ KG (D67): nhãn cha không nuốt khái niệm con, vị trí chỉ cảnh báo khi đi cùng dấu hiệu, cạnh
 thủ công (Pleural Diseases, interstitial lung disease), `sides`, nạp sẵn ma trận. Việc còn lại trước V2-7: Disease chưa có đường
-tới cột (76/124, chờ phân xử), N2 chưa đạt, góc sườn hoành bão hòa, bật SapBERT cho ablation.
+tới cột (76/124, chờ phân xử), N2 chưa đạt, góc sườn hoành bão hòa, bật SapBERT cho ablation. Đợt hai (D68): SapBERT là bước
+cuối của lookup, vùng giải phẫu dùng noisy-OR có trọng số (hết bão hòa), alias trong facts, cache chooser trên đĩa; còn 67
+Disease chờ phân xử, 4 là ứng viên cột vòng hai; N2 p95 1,51 s.
 
 - **6a.** Service `neo4j` (Community, profile `kg`); nạp `Concept`, `Alias`, `SemanticType`, `Image`, cạnh tri thức và
   `PREDICTED` bằng `UNWIND` (chậm thì `neo4j-admin database import full`); user chỉ đọc; build manifest;
