@@ -29,4 +29,8 @@ def health(state: Annotated[AppState, Depends(get_state)]):
         report_studies=(int(state.report_meta["studies"]) if state.report_status == "ok"
                         else None),
         llm=state.llm_status, llm_model=state.settings.llm_model,
+        neo4j=("disabled" if state.kg is None else "ok" if state.kg.store else "unreachable"),
+        kg_build_id=state.kg.versions.get("kg_build_id") if state.kg else None,
+        matrix_version=state.kg.versions.get("matrix_version") if state.kg else None,
+        kg_notes=state.kg_notes,
     )

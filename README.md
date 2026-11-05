@@ -42,8 +42,8 @@ câu hỏi (EN/VI)
 ## Đang xây: V2 với Knowledge Graph
 
 V2 thêm một Knowledge Graph tri thức y khoa dựng từ UMLS và RadGraph, làm trung gian giữa câu hỏi và điểm ảnh của
-CXR-CLIP. Thiết kế ở `docs/v2-kg-design.md`, tiến độ ở `docs/v2-kg-plan.md`. Đã có các bước dựng đầu vào; linker,
-KG trên Neo4j và đường truy vấn qua KG chưa có:
+CXR-CLIP. Thiết kế ở `docs/v2-kg-design.md`, tiến độ ở `docs/v2-kg-plan.md`. Đã có các bước dựng đầu vào, KG trên
+Neo4j và đường truy vấn qua KG (`POST /api/v1/search/kg`); đánh giá chính thức chưa có:
 
 ```bash
 # Cần license UMLS của chính bạn. Giải nén Metathesaurus Level 0 Subset 2026AA vào data/umls/raw/
@@ -58,6 +58,20 @@ uv run cxr build-image-scores --encoder cxrclip_ft6_lr1e-04 \
 
 Ma trận điểm là cosine với câu mẫu của từng nhãn, hiệu chỉnh trên pool-val, ghi vào
 `data/indexes/image_scores/<build_id>/`. Shard pool-val và trọng số FT6 sinh trên nhánh `feat/label-aware-image-retrieval`.
+
+Nạp KG vào Neo4j và hỏi thử (cần `ANTHROPIC_API_KEY` trong `.env`; không có key thì chỉ còn rule parser, không diễn giải):
+
+```bash
+docker compose --profile kg up -d neo4j        # Neo4j Community, volume neo4j_data, chỉ mở trên 127.0.0.1
+uv run cxr kg-quality                          # data/kg/graph/quality.json: AUROC lenient từng cột, cờ weak / borderline
+uv run cxr kg-load-neo4j                       # nạp bảng KG và top-N PREDICTED mỗi khái niệm (kg.yaml: neo4j.top_n)
+uv run cxr validate-indexes --kg --kg-matrix data/indexes/image_scores/<build_id>_ext1
+uv run cxr kg-query "tràn dịch màng phổi, không có tim to"              # hoặc --file câu_hỏi.txt --out x.jsonl
+uv run cxr kg-bench-scoring                    # chấm điểm + top-k trên ma trận giả 1 triệu ảnh x 37 cột
+```
+
+API đọc ma trận `_ext1` và bảng KG của `data/kg/graph/` (compose mount sẵn). Mất Neo4j hay LLM thì `/search/kg` vẫn trả kết
+quả theo 14 nhãn kèm cảnh báo; `/health` báo `neo4j`, `kg_build_id`, `matrix_version`.
 
 Dữ liệu UMLS chỉ nằm trong `data/umls/` (gitignored), không bao giờ vào git hay Docker image. Nguồn UMLS dùng: tên tiếng
 Anh từ các nguồn mức 0 (`SRL = 0`), quan hệ từ MSH, NCI, FMA, HPO (`configs/kg.yaml`).

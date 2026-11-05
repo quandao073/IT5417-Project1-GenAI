@@ -43,6 +43,19 @@ class Constraint(BaseModel):
         return canonical_concept(value)
 
 
+class Term(BaseModel):
+    """A phrase of the question outside the 14 labels (or ambiguous among them) that the KG
+    path resolves to a concept; `PRESENT` looks for it, `ABSENT` excludes it."""
+
+    text: str = Field(min_length=1, max_length=120)
+    polarity: Literal["PRESENT", "ABSENT"]
+
+    @field_validator("text")
+    @classmethod
+    def _tidy(cls, value: str) -> str:
+        return " ".join(value.split())
+
+
 class SearchQuery(BaseModel):
     semantic_query: str = Field(
         "", max_length=300,
@@ -52,6 +65,9 @@ class SearchQuery(BaseModel):
         default_factory=list,
         description="negated concepts; the request's absence_policy decides how they apply")
     views: list[View] = Field(default_factory=list, description="empty = no view filter")
+    terms: list[Term] = Field(
+        default_factory=list,
+        description="phrases outside the 14 labels, only from the KG parser prompt")
     language: Language
 
     @field_validator("semantic_query")
@@ -72,6 +88,10 @@ class SearchQuery(BaseModel):
         self.include = list(first.values())
         self.exclude = list(dict.fromkeys(self.exclude))
         self.views = list(dict.fromkeys(self.views))
+        seen: dict[tuple[str, str], Term] = {}
+        for t in self.terms:
+            seen.setdefault((t.text.casefold(), t.polarity), t)
+        self.terms = list(seen.values())
         if both := sorted(first.keys() & set(self.exclude)):
             raise ValueError(f"concepts in both include and exclude: {both}")
         return self

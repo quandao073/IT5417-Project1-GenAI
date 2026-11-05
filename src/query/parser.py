@@ -44,13 +44,14 @@ def _error_text(exc: Exception) -> str:
 class QueryParser:
     def __init__(self, rule: RuleParser, *, template: str, llm_client=None,
                  system_prompt: str = "", max_retries: int = 1, cache_size: int = 1024,
-                 startup_warning: str | None = None):
+                 startup_warning: str | None = None, with_terms: bool = False):
         self.rule = rule
         self.template = template
         self.llm = llm_client
         self.system_prompt = system_prompt
         self.max_retries = max_retries
         self.startup_warning = startup_warning
+        self.with_terms = with_terms      # the KG prompt: `terms` in the schema and the query
         self.prompt_sha256 = hashlib.sha256(system_prompt.encode("utf-8")).hexdigest()
         self._cache: OrderedDict[str, ParseResult] = OrderedDict()
         self._cache_size = cache_size
@@ -103,7 +104,7 @@ class QueryParser:
         retry; invalid output retries `max_retries` times with the error fed back."""
         messages = [{"role": "system", "content": self.system_prompt},
                     {"role": "user", "content": text}]
-        schema = llm.output_schema()
+        schema = llm.output_schema(self.with_terms)
         started = time.perf_counter()
         attempts = 0
         while True:
@@ -122,7 +123,8 @@ class QueryParser:
                 out = llm.parse_output(content)
                 query = SearchQuery(semantic_query=out.findings[:SEMANTIC_MAX],
                                     include=out.include, exclude=out.exclude,
-                                    views=out.views, language=out.language)
+                                    views=out.views, language=out.language,
+                                    terms=out.terms if self.with_terms else [])
             except (llm.LLMInvalidOutput, ValidationError) as exc:
                 attempts += 1
                 error = _error_text(exc)

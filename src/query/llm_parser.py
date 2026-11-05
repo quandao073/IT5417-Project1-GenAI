@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from src.common.config import default_config_dir
 from src.data.labels import CHEXPERT_LABELS
-from src.query.schema import Constraint, Language, View, canonical_concept
+from src.query.schema import Constraint, Language, Term, View, canonical_concept
 
 ProbeStatus = Literal["ok", "missing_model", "unreachable"]
 _EXAMPLE = re.compile(r"^Request: (.+)$", re.MULTILINE)
@@ -43,6 +43,7 @@ class LLMOutput(BaseModel):
     include: list[Constraint] = Field(default_factory=list)
     exclude: list[str] = Field(default_factory=list)
     views: list[View] = Field(default_factory=list)
+    terms: list[Term] = Field(default_factory=list)
     language: Language
 
     @field_validator("exclude")
@@ -51,10 +52,11 @@ class LLMOutput(BaseModel):
         return [canonical_concept(name) for name in value]
 
 
-def output_schema() -> dict:
-    """Hand-built (not model_json_schema) so there are no $refs for the grammar builder."""
+def output_schema(with_terms: bool = False) -> dict:
+    """Hand-built (not model_json_schema) so there are no $refs for the grammar builder.
+    `with_terms` adds the `terms` array of the KG parser prompt (query_parser_v2)."""
     concept = {"type": "string", "enum": list(CHEXPERT_LABELS)}
-    return {
+    schema = {
         "type": "object",
         "properties": {
             "findings": {"type": "string"},
@@ -69,6 +71,14 @@ def output_schema() -> dict:
         },
         "required": ["findings", "include", "exclude", "views", "language"],
     }
+    if with_terms:
+        schema["properties"]["terms"] = {"type": "array", "items": {
+            "type": "object",
+            "properties": {"text": {"type": "string"},
+                           "polarity": {"type": "string", "enum": ["PRESENT", "ABSENT"]}},
+            "required": ["text", "polarity"]}}
+        schema["required"] = [*schema["required"], "terms"]
+    return schema
 
 
 def parse_output(content: str) -> LLMOutput:
@@ -85,16 +95,23 @@ def parse_output(content: str) -> LLMOutput:
         raise LLMInvalidOutput(f"{'.'.join(str(p) for p in first['loc'])}: {first['msg']}") from exc
 
 
-def render_prompt(template: str, concepts_cfg: dict) -> str:
-    lines = [f"- {concept}: {', '.join(forms['en'])} | {', '.join(forms['vi'])}"
-             for concept, forms in concepts_cfg["concepts"].items()]
+def render_prompt(template: str, concepts_cfg: dict, drop_forms: tuple[str, ...] = ()) -> str:
+    """The prompt with the concept list filled in; `drop_forms` are forms left out of the list
+    (kg.yaml query.ambiguous_forms: a form that names two concepts)."""
+    drop = {f.casefold() for f in drop_forms}
+
+    def forms(names: list[str]) -> str:
+        return ", ".join(n for n in names if n.casefold() not in drop)
+
+    lines = [f"- {concept}: {forms(f['en'])} | {forms(f['vi'])}"
+             for concept, f in concepts_cfg["concepts"].items()]
     return template.replace("{{CONCEPTS}}", "\n".join(lines))
 
 
-def load_prompt(relative_path: str, concepts_cfg: dict) -> str:
+def load_prompt(relative_path: str, concepts_cfg: dict, drop_forms: tuple[str, ...] = ()) -> str:
     """`relative_path` is relative to configs/ (models.yaml:llm.prompt_file)."""
     text = (default_config_dir() / relative_path).read_text(encoding="utf-8")
-    return render_prompt(text, concepts_cfg)
+    return render_prompt(text, concepts_cfg, drop_forms)
 
 
 def prompt_examples(prompt: str) -> list[str]:
@@ -248,17 +265,37 @@ class AnthropicClient:
     TOOL = "submit_query"
 
     def __init__(self, model: str, timeout_s: float, *, api_key: str,
-                 max_tokens: int = 2048, options: dict | None = None, client=None):
+                 max_tokens: int = 2048, options: dict | None = None, client=None,
+                 max_retries: int = 1, tool: tuple[str, str] | None = None,
+                 connect_timeout_s: float | None = None):
+        """`max_retries` is the SDK's own (0 on the KG query path, where a failure falls back at
+        once, N3); `tool` is (name, description) of the schema tool when it is not the parser's."""
         import anthropic
 
         options = dict(options or {})
+        self.tool_name, self.tool_description = tool or (
+            self.TOOL, "Submit the parsed search query.")
+        self.last_first_token_ms: float | None = None
         self.model, self.max_tokens = model, max_tokens
         self.effort = options.get("effort")
         self.tool_choice = options.get("tool_choice", "tool")
         self.usage = {"calls": 0, "input_tokens": 0, "output_tokens": 0,
                       "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
-        self._client = client or anthropic.Anthropic(api_key=api_key, timeout=timeout_s,
-                                                     max_retries=1)
+        timeout = (timeout_s if connect_timeout_s is None
+                   else anthropic.Timeout(timeout_s, connect=connect_timeout_s))
+        self._client = client or anthropic.Anthropic(api_key=api_key, timeout=timeout,
+                                                     max_retries=max_retries)
+
+    def _stream(self, request: dict, started: float):
+        first = None
+        with self._client.messages.stream(**request) as events:
+            for event in events:
+                delta = getattr(event, "delta", None)
+                if first is None and getattr(delta, "type", "") == "input_json_delta":
+                    first = (time.perf_counter() - started) * 1000
+            response = events.get_final_message()
+        self.last_first_token_ms = first
+        return response
 
     def probe(self) -> ProbeStatus:
         import anthropic
@@ -274,22 +311,27 @@ class AnthropicClient:
     def version(self) -> str | None:
         return None   # a hosted API has no server version to record
 
-    def chat(self, messages: list[dict], schema: dict) -> tuple[str, float]:
-        """One call; returns (the tool input as JSON, wall ms)."""
+    def chat(self, messages: list[dict], schema: dict, stream: bool = False
+             ) -> tuple[str, float]:
+        """One call; returns (the tool input as JSON, wall ms). With `stream` the reply is read
+        as it arrives and `last_first_token_ms` holds the time of its first input delta."""
         import anthropic
 
         system = [{"type": "text", "text": messages[0]["content"],
                    "cache_control": {"type": "ephemeral"}}]
-        tool = {"name": self.TOOL, "description": "Submit the parsed search query.",
+        tool = {"name": self.tool_name, "description": self.tool_description,
                 "input_schema": _strict(schema), "strict": True}
-        choice = ({"type": "tool", "name": self.TOOL} if self.tool_choice == "tool"
+        choice = ({"type": "tool", "name": self.tool_name} if self.tool_choice == "tool"
                   else {"type": "auto"})
         extra = {"output_config": {"effort": self.effort}} if self.effort else {}
         started = time.perf_counter()
+        request = {"model": self.model, "max_tokens": self.max_tokens, "system": system,
+                   "messages": messages[1:], "tools": [tool], "tool_choice": choice, **extra}
         try:
-            response = self._client.messages.create(
-                model=self.model, max_tokens=self.max_tokens, system=system,
-                messages=messages[1:], tools=[tool], tool_choice=choice, **extra)
+            if stream:
+                response = self._stream(request, started)
+            else:
+                response = self._client.messages.create(**request)
         except anthropic.APIError as exc:
             raise LLMError(f"{type(exc).__name__}: {exc}") from exc
         self.usage["calls"] += 1
@@ -299,7 +341,8 @@ class AnthropicClient:
             raise LLMError("the model declined (stop_reason refusal)")
         call = next((b for b in response.content if b.type == "tool_use"), None)
         if call is None:
-            raise LLMInvalidOutput(f"no {self.TOOL} call (stop_reason {response.stop_reason})")
+            raise LLMInvalidOutput(
+                f"no {self.tool_name} call (stop_reason {response.stop_reason})")
         return json.dumps(call.input), (time.perf_counter() - started) * 1000
 
 

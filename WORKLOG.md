@@ -17,7 +17,7 @@ thì xóa (git giữ lịch sử); không có nhật ký; mã D/T/P không đán
 
 ## Trạng thái hiện tại
 
-**Cập nhật:** 2026-11-03, trên nhánh `feat/v2-knowledge-graph` (tách từ `main` `1b50c19`).
+**Cập nhật:** 2026-11-05, trên nhánh `feat/knowledge-graph-query` (tách từ `main`).
 
 - **Hệ thống đang chạy:** câu hỏi EN/VI → parser (`claude-haiku-5-5`, rule dự phòng; D61) → câu mẫu `render(include, exclude)` →
   text encoder CXR-CLIP FT6 → cosine trên Qdrant, chỉ lọc view → top-k → trích câu report sau xếp hạng (D38–D40,
@@ -25,12 +25,11 @@ thì xóa (git giữ lịch sử); không có nhật ký; mã D/T/P không đán
 - **Scope:** KG theo thiết kế V2 `docs/v2-kg-design.md` (D41, D45–D50). Fine-tune tạm dừng (D42); checkpoint FT6
   (candidate `cxrclip_ft6_lr1e-04`) và `cxr build-image-scores` đã mang về nhánh này ở V2-5; code fine-tune vẫn chỉ ở
   `feat/label-aware-image-retrieval`.
-- **Đang làm:** V2-1 tới V2-5b xong. V2-3 (linker, D56): 95% đầu từ vựng pool nối CUI, cổng đạt theo chuẩn bạc
-  (precision 0,985, độ phủ 0,949). V2-4 xong (D57–D60): bảng KG ở `data/kg/graph/` (`cxr kg-build-graph`), cổng nối
-  về `scorable` nhận ở 0,899; 6 cạnh `SUGGESTS` mới Claude bên chat đã giữ. Parser đã chuyển sang Anthropic (D61), heldout PASS.
-  Ma trận điểm mở rộng 23 cột (D62, cờ borderline, quy tắc gộp D63); alias vi đã phân xử hết (473 alias LLM trong `aliases.parquet`). Yêu cầu phi chức năng N1–N12 ở `docs/v2-kg-design.md` (2026-11-03); phần đường truy vấn gộp vào V2-6, phần vận hành là V2-10 – V2-14. Tiếp theo: V2-6. Ghi chú: V2-4 ở `notes/v2-vocab.md`, `notes/v2-graph.md`; V2-6, V2-9 ở
-  `notes/v2-scores.md`; V2-6, V2-7 ở `notes/v2-eval.md`. TIP và ghi chú đo nằm ở `notes/` (gitignored, chỉ có trên
-  máy). Bảng trạng thái và các task sau: `docs/v2-kg-plan.md`.
+- **Đang làm:** V2-1 tới V2-6 xong. KG ở `data/kg/graph/` (`cxr kg-build-graph`, D56–D60), ma trận 37 cột (D62, D63),
+  parser Anthropic (D61), Neo4j nạp bằng `cxr kg-load-neo4j` (D65), đường truy vấn KG và `POST /api/v1/search/kg` (D66;
+  chạy thử bằng `cxr kg-query`; số đo N1–N4 và 24 câu smoke ở `docs/measured-facts.md`, `notes/v2-6-smoke.md`).
+  Yêu cầu phi chức năng N1–N12 ở `docs/v2-kg-design.md`; phần vận hành là V2-10 – V2-14. Tiếp theo: V2-7 (đánh giá).
+  TIP và ghi chú đo nằm ở `notes/` (gitignored, chỉ có trên máy). Bảng trạng thái và các task sau: `docs/v2-kg-plan.md`.
 - **Chặn:** web UI chờ `pnpm` (T5).
 
 Dữ liệu, chỉ mục, artifact đều gitignored; lệnh dựng lại ở README. README không nói:
@@ -47,9 +46,9 @@ Dữ liệu, chỉ mục, artifact đều gitignored; lệnh dựng lại ở RE
 Kiểm tra sau mỗi thay đổi:
 
 ```bash
-uv run pytest -q                 # 959 passed; model/integration/llm bị bỏ chọn mặc định
+uv run pytest -q                 # 1021 passed; model/integration/llm bị bỏ chọn mặc định
 uv run pytest -m model           # bắt buộc khi đổi configs/models.yaml hoặc src/embeddings/ (T37)
-uv run pytest -m integration     # cần `docker compose up -d qdrant`
+uv run pytest -m integration     # cần `docker compose up -d qdrant` và Docker (Neo4j tạm tự dựng)
 uv run pytest -m llm             # parse thật qua LLM, đọc .env
 uv run cxr validate-indexes      # 7 x PASS; `--encoder biomedclip` cũng vậy
 uv run ruff check src tests
@@ -85,7 +84,9 @@ nào lệch thì bảng này và `docs/scope-and-non-goals.md` đúng.
 | D39 | Một đường tìm kiếm; **thứ hạng chỉ từ ảnh, API không đọc nhãn**. Câu mẫu do code dựng (`templates.render`: "no X", No Finding là "normal chest", thứ tự CHEXPERT_LABELS, từ chối "A and no A"); lọc view là lọc metadata; câu report trích sau xếp hạng, chỉ để hiển thị. Không khái niệm → câu tự do của parser; chỉ phủ định → "no X" kèm warning; UNCERTAIN như PRESENT; trên 2 ràng buộc kèm warning | Hybrid thỏa ràng buộc nhờ lọc trên chính nhãn làm đáp án; một đường áp dụng được cho ảnh chưa có report |
 | D38 | Encoder mặc định CXR-CLIP SwinT bản fine-tune FT6 (`cxrclip_ft6_lr1e-04`, từ 2026-10-29; sha256 ghim trong `models.yaml`, CC BY-NC 4.0). Bản M zero-shot và BiomedCLIP vẫn là candidate, build vẫn đăng ký. Trọng số FT6 chỉ có trên máy (`runs/`, sinh bằng code fine-tune của nhánh V1.1) | CXR-CLIP hòa BiomedCLIP zero-shot trên dev và nhanh hơn 2,4 lần (luật hòa Phase 2); FT6 hơn zero-shot trên dev, 0,539 so với 0,482 (D54) |
 | D40 | Sổ đăng ký build: manifest riêng mỗi build ghi encoder; `config_hash` chỉ phủ `data.yaml` + candidate của encoder + `normalize`; mọi lệnh encode text nạp encoder qua `index.build_encoder` (từ chối revision khác build) | Hai encoder so được trên cùng pipeline mà không làm hỏng build của nhau |
-| D64 | "giảm thể tích phổi" là alias của cả Atelectasis (mất thể tích khu trú do xẹp phổi; dạng vi trong `concepts.yaml`) và low lung volumes C5563137 (thể tích phổi thấp toàn bộ); không có cơ chế loại trừ alias, LLM chọn theo ngữ cảnh. Alias KG viết tay ở `configs/kg/aliases_manual.yaml` (không đụng `concepts.yaml`): C5563137 "thể tích phổi thấp". Yêu cầu V2-6: LLM chọn CUI nhận cả câu hỏi gốc; smoke "giảm thể tích phổi trái" → Atelectasis, "giảm thể tích phổi hai bên" → low lung volumes. Đo 2026-11-03: rule parser và Haiku đều trả Atelectasis cho cả hai câu, tức lexicon bắt cụm trước khi tới `lookup_concept` | Người dùng 2026-11-03: hai nghĩa thật của cùng một cụm |
+| D65 | Neo4j: service `neo4j` (Community 5.26, profile `kg`) trong compose; Community không có role nên "user chỉ đọc" là giao dịch `READ` (server từ chối ghi, đã test) cộng Cypher chỉ từ template trong code; `db.transaction.timeout` 10 s. `cxr kg-load-neo4j` xóa rồi nạp bảng KG + `PREDICTED` chỉ top-N (N = 100) mỗi khái niệm scorable; `quality` (AUROC lenient, CI, `weak` < 0,65, `borderline`) từ `cxr kg-quality`; `KGBuild` node ghi `kg_build_id`, phiên bản ma trận. `validate-indexes --kg` thêm bốn check. Chấm điểm đọc ma trận trong RAM, không đọc Neo4j (N4) | Người dùng 2026-11-05; đo `docs/measured-facts.md` |
+| D66 | Đường truy vấn KG (`src/kg/{pipeline,llm_query,guard,runtime}.py`, `POST /api/v1/search/kg`): parser v2 (`terms`) → mỗi nhãn và mỗi term qua lookup + expand → ma trận trong RAM → MỘT lượt diễn giải cho cả trang; NDJSON, `results` đi trước `explanation`. Haiku cho parser, chọn khái niệm, diễn giải. Chọn khái niệm nhận cả câu hỏi và chỉ nhận CUI trong danh sách (ngoài danh sách, lỗi hay hết giờ → ứng viên đầu); một ứng viên exact thì không gọi LLM. Lookup không dùng SapBERT (từ điển của nó là tên UMLS, không có alias vi). Cụm không nhận ra bị bỏ kèm cảnh báo. Mỗi lượt gọi LLM cắt cứng 3 s (connect 0,8 s, SDK không retry), breaker 3 lỗi → 60 s, diễn giải 15 s. Diễn giải bị kiểm từng câu: khái niệm Finding/Disease hay con số ngoài facts, từ chẩn đoán EN/VI, markup rò rỉ thì bỏ câu; không còn câu nào thì trả đường đi. Mất Neo4j: nhãn chấm thẳng từ cột, term bị bỏ kèm cảnh báo. `ambiguous_forms` thêm "nốt phổi", "pulmonary nodule", "lung nodule" (có cột riêng tốt hơn Lung Lesion yếu). `/health` thêm neo4j, kg_build_id, matrix_version | Người dùng 2026-11-05: làm trọn V2-6, tự chốt phương án phát sinh; số đo ở `docs/measured-facts.md` |
+| D64 | "giảm thể tích phổi" là alias của cả Atelectasis (mất thể tích khu trú do xẹp phổi; dạng vi trong `concepts.yaml`) và low lung volumes C5563137 (thể tích phổi thấp toàn bộ); không có cơ chế loại trừ alias, LLM chọn theo ngữ cảnh. Alias KG viết tay ở `configs/kg/aliases_manual.yaml` (không đụng `concepts.yaml`): C5563137 "thể tích phổi thấp". Yêu cầu V2-6: LLM chọn CUI nhận cả câu hỏi gốc; smoke "giảm thể tích phổi trái" → Atelectasis, "giảm thể tích phổi hai bên" → low lung volumes. Rule parser trả Atelectasis cho cả hai câu (lexicon bắt cụm); prompt parser KG bỏ dạng này khỏi danh sách nên cụm vào `terms` (`kg.yaml: ambiguous_forms`). Smoke V2-6 (2026-11-05): "trái" → low lung volumes (khác kỳ vọng), "hai bên" → low lung volumes; Claude bên chat cần phân xử luật chọn | Người dùng 2026-11-03: hai nghĩa thật của cùng một cụm |
 | D63 | Quy tắc "rộng hơn" khi nhãn cha yếu (D55) mà có con `IS_A` có cột: dùng noisy-OR của cha và các con có cột chỉ khi khoảng bootstrap của chênh lệch so với cột cha nằm hẳn trên 0, không thì dùng cột cha. Đo trên pool-val: Fracture dùng noisy-OR cha + rib fracture + multiple fracture (0,618 so với 0,616, Δ [+0,001; +0,005]); Atelectasis giữ cột cha (0,638; gộp với linear atelectasis kém hơn). Cả hai vẫn dưới 0,65 nên vẫn kèm cảnh báo. Không áp cho nhãn không yếu. Cột mở rộng có cận dưới CI < 0,65 mang cờ `borderline` (pleural thickening, interstitial prominence, nodule), vẫn `scorable` | Người dùng 2026-11-03; `artifacts/metrics/scores_ext_combine.json` |
 | D62 | Ma trận điểm mở rộng ngoài 14 nhãn: khái niệm Finding/Disease lõi chưa `scorable` (tối đa 30 theo lượt nhắc, loại câu bình thường, từ chung chung, giải phẫu, thiết bị) được một cột nếu FT6 chấm được: caption theo quy tắc của 14 cột (3 chuỗi pool hay gặp nhất, embedding trung bình), hiệu chỉnh như 14 cột trên pool-val, nhãn bạc RadGraph (present / uncertain loại / absent hoặc không nhắc). Giữ khi ≥ 50 PRESENT và AUROC lenient ≥ 0,65 (D55); cột yếu loại hẳn, không giữ kèm cảnh báo. Kết quả: giữ 23/30, ma trận `..._ext1` (14 cột gốc giữ nguyên), 23 khái niệm thành `scorable`; độ nối D59 lên 0,945 | Người dùng 2026-11-02: phần thiếu của cổng V2-4 là dấu hiệu ngoài 14 cột; cột mới chưa có kiểm chứng nào khác nên chỉ giữ cột đạt cổng |
 | D61 | Parser: Anthropic `claude-haiku-5-5` qua SDK (thay D22 `gpt-5-mini`), output là tool strict theo cùng JSON schema 14 khái niệm, `tool_choice` ép buộc, `effort: low`, cache prompt system; không gửi temperature (model Claude hiện tại trả 400 với sampling khác mặc định). Provider và model lấy từ `models.yaml:llm`; OpenAI và Ollama giữ sau `LLM_PROVIDER`. Rule parser khi LLM lỗi hoặc thiếu key. Dev 40 câu: 1,000 / 1,000 / 1,000 (gpt-5-mini 0,992 / 0,996 / 1,000), ≈ 0,14 USD mỗi 1.000 câu, p50 1,9 s. Heldout chạy một lần: 0,981 / 0,994 / 0,945, PASS (`docs/measured-facts.md`). LLM judge của V2-7 phải khác model của pipeline (pipeline dùng Haiku/Sonnet → judge dùng Opus hoặc Fable) | Người dùng 2026-11-02: hết credit OpenAI, mọi LLM của pipeline là Anthropic; đo trên đúng bộ dev và metric của Phase 4c (`docs/measured-facts.md`) |
@@ -129,6 +130,7 @@ nào lệch thì bảng này và `docs/scope-and-non-goals.md` đúng.
 | T37 | Model test bị bỏ chọn mặc định, nên `pytest -q` xanh vẫn lọt lỗi adapter | Chạy `-m model` khi đổi `models.yaml` hoặc `src/embeddings/` |
 | T38 | Repo GitHub public; UMLS cấp license cá nhân, cấm phát tán tập con, phải báo cáo sử dụng hằng năm (tháng 1) | Mọi thứ trích từ UMLS nằm dưới `data/` (gitignored); repo chỉ chứa script và CUI |
 | T40 | Cosine câu–ảnh của FT6 lệch âm (median −0,13, max 0,08 cho một câu trên 25.000 ảnh; zero-shot median 0,10). Thứ hạng đúng, giá trị tuyệt đối thì không | Không đặt ngưỡng hay giả định dấu trên cosine thô; điểm cần ý nghĩa tuyệt đối thì dùng logit đã hiệu chỉnh của ma trận V2-5 |
+| T41 | Windows: `localhost` thử IPv6 trước, mỗi kết nối Neo4j mới chờ ~2 s; kết nối loopback bị từ chối cũng mất 2 s. SDK `anthropic` dùng `httpx2`, `httpx.Timeout` bị từ chối | `NEO4J_URI` mặc định `127.0.0.1`; `kg_llm.connect_timeout_seconds` 0,8 qua `anthropic.Timeout` |
 | T39 | MRREL không đồng nhất giữa các nguồn: phân cấp MSH là `PAR`/`CHD` với RELA **rỗng**, còn NCI, FMA, HPO dùng `isa`/`inverse_isa`; bộ phận trong FMA nằm ở `regional_part_of` và `constitutional_part_of`, RELA `part_of` chỉ có 23 dòng. REL/RELA mô tả quan hệ của CUI2 đối với CUI1 | Lọc `IS_A`, `PART_OF` theo cả REL lẫn RELA của từng nguồn; kiểm chiều trên một cặp đã biết trước khi tin (`docs/measured-facts.md`, *UMLS 2026AA*) |
 
 ---

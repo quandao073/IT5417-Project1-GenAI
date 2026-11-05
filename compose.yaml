@@ -33,7 +33,11 @@ services:
       - ./data/raw/CheXpert-v1.0-small:/app/data/raw/CheXpert-v1.0-small:ro
       - ./data/canonical:/app/data/canonical:ro
       - ./data/indexes:/app/data/indexes:ro
+      - ./data/kg/graph:/app/data/kg/graph:ro
       - hf_cache:/app/.hf_cache
+    environment:
+      # Only reachable with `--profile kg`; without it the KG search runs on the 14 labels.
+      NEO4J_URI: bolt://neo4j:7687
     depends_on:
       qdrant:
         condition: service_healthy
@@ -75,6 +79,33 @@ services:
     entrypoint: ["cxr"]
     command: ["--help"]
 
+  # --- profile: kg (the knowledge graph the query path reads; docs/v2-kg-design.md) ---
+  # Community has no users or roles, so "read only" is a READ-mode transaction (the server
+  # refuses a write in it) plus queries that only come from code templates; the loader is the
+  # only writer. `db.transaction.timeout` stops a runaway query. Bound to loopback only.
+  neo4j:
+    profiles: ["kg"]
+    image: neo4j:5.26-community
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: "neo4j/${NEO4J_PASSWORD:-cxr-local-neo4j}"
+      NEO4J_server_memory_heap_initial__size: "512m"
+      NEO4J_server_memory_heap_max__size: "1g"
+      NEO4J_server_memory_pagecache_size: "512m"
+      NEO4J_db_transaction_timeout: "10s"
+      NEO4J_server_bolt_listen__address: ":7687"
+    ports:
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p \"$${NEO4J_AUTH#neo4j/}\" 'RETURN 1' || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+
   # --- profile: local-llm (only when Ollama is not running natively on host) ---
   ollama:
     profiles: ["local-llm"]
@@ -90,3 +121,4 @@ volumes:
   qdrant_data:
   hf_cache:
   ollama_models:
+  neo4j_data:

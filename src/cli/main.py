@@ -33,6 +33,8 @@ from src.kg import (
     link_gate,
     linker,
     llm_select,
+    neo4j_load,
+    quality,
     sapbert,
     umls_filter,
     vocab,
@@ -383,9 +385,29 @@ def _cmd_validate_indexes(args: argparse.Namespace) -> int:
                   else Path(args.indexes_dir) / "report_search.sqlite")
     checks.append(report_index.validate_report_index(
         index_path, pl.read_parquet(Path(args.canonical_dir) / "reports.parquet")))
+    if args.kg:
+        checks += _kg_checks(args, manifest)
     for c in checks:
         print(f"{'PASS' if c.ok else 'FAIL'} {c.name:<12}: {c.detail}")
     return 0 if all(c.ok for c in checks) else 1
+
+
+def _kg_checks(args: argparse.Namespace, manifest: dict) -> list:
+    """The four KG checks of the design, read from the loaded Neo4j (src/kg/neo4j_load.py)."""
+    matrix = Path(args.kg_matrix)
+    meta = json.loads((matrix / "probe.json").read_text(encoding="utf-8"))
+    try:
+        with _neo4j_driver(Settings()) as driver, driver.session() as session:
+            build = neo4j_load.read_build(session)
+            if build is None:
+                return [validate.Check("kg_loaded", False, "no KGBuild node: run kg-load-neo4j")]
+            return neo4j_load.validate(
+                session, {"top_n": int(build["top_n"])},
+                [c for c in pl.read_parquet(matrix / "corpus_scores.parquet").columns
+                 if c not in ("study_id", "image_id")],
+                _label_ids(), meta["build_id"], manifest["build_id"])
+    except Exception as exc:  # noqa: BLE001 - Neo4j down is a FAIL line, not a traceback
+        return [validate.Check("kg_loaded", False, f"neo4j: {type(exc).__name__}: {exc}")]
 
 
 def _cmd_build_report_index(args: argparse.Namespace) -> int:
@@ -594,6 +616,145 @@ def _cmd_build_image_scores(args: argparse.Namespace) -> int:
     print(f"matrix : {out}  ({scores.height:,} studies x {len(CHEXPERT_LABELS)} labels, "
           f"build {build_id}, pool-val {int(val.sum()):,} images)")
     print(f"report : {report}")
+    return 0
+
+
+def _label_ids() -> dict[str, str]:
+    mapping = yaml.safe_load((default_config_dir() / "kg" / "chexpert_cuis.yaml")
+                             .read_text(encoding="utf-8"))["labels"]
+    return {label: entry["id"] for label, entry in mapping.items()}
+
+
+def _cmd_kg_quality(args: argparse.Namespace) -> int:
+    """`quality` of every scorable concept (src/kg/quality.py, D55): the 14 label columns against
+    the resolved CheXpert statuses of pool-val, the extended columns as already measured."""
+    ecfg = load_config("kg")["scores_ext"]
+    matrix = Path(args.matrix)
+    meta = json.loads((matrix / "probe.json").read_text(encoding="utf-8"))
+    args.pool_build_id = meta["pool_build_id"]
+    expect = {k: meta["encoder"][k] for k in ("model_id", "revision", "dim")}
+    error, pool = _load_pool(args, expect, pl.read_parquet(Path(args.canonical_dir)
+                                                           / "images.parquet"))
+    if error:
+        print(error, file=sys.stderr)
+        return 1
+    X, statuses, patients, _ = pool
+    split = load_config("models")["image_probe"]
+    val = patient_split(patients, val_fraction=split["val_fraction"], seed=split["seed"])
+    probe = np.load(matrix / "probe.npz")
+    logits = X[val].astype(np.float64) @ probe["W"].T.astype(np.float64) + probe["b"]
+    base = quality.base_columns(logits, statuses[val], list(CHEXPERT_LABELS),
+                                n_boot=ecfg["bootstrap"]["n"], seed=ecfg["bootstrap"]["seed"])
+    table = quality.table(base, _label_ids(), meta["columns"]["extended"], ecfg["quality"])
+    out = Path(args.out)
+    out.write_text(json.dumps(table, indent=1), encoding="utf-8")
+    weak = [c for c, v in table.items() if v["weak"]]
+    print(f"{len(table)} concepts, weak (< {ecfg['quality']}): {weak}; written: {out}")
+    for label, cui in _label_ids().items():
+        v = table[cui]
+        print(f"  {label:<28} {v['auroc_lenient']:.3f} [{v['ci95'][0]:.3f}, {v['ci95'][1]:.3f}]  "
+              f"present {v['n_present']}")
+    return 0
+
+
+def _neo4j_driver(settings: Settings):
+    from neo4j import GraphDatabase
+
+    return GraphDatabase.driver(settings.neo4j_uri, auth=(
+        settings.neo4j_user, settings.neo4j_password.get_secret_value()))
+
+
+def _cmd_kg_load_neo4j(args: argparse.Namespace) -> int:
+    """Load the KG tables and the top-N PREDICTED edges into Neo4j (src/kg/neo4j_load.py)."""
+    ncfg = load_config("kg")["neo4j"]
+    graph_dir, matrix = Path(args.graph_dir), Path(args.matrix)
+    top_n = args.top_n or ncfg["top_n"]
+    nodes = pl.read_parquet(graph_dir / "nodes.parquet")
+    quality_table = json.loads((graph_dir / "quality.json").read_text(encoding="utf-8"))
+    scores = pl.read_parquet(matrix / "corpus_scores.parquet")
+    images = pl.read_parquet(Path(args.canonical_dir) / "images.parquet")
+    kg_id, matrix_version = neo4j_load.build_ids(graph_dir, matrix)
+    scorable = nodes.filter(pl.col("scorable"))["cui"].to_list()
+    columns = {cui: quality_table[cui]["column"] for cui in scorable}
+    started = time.perf_counter()
+    with _neo4j_driver(Settings()) as driver, driver.session() as session:
+        manifest = neo4j_load.load_all(
+            session, nodes=nodes, quality=quality_table,
+            types=pl.read_parquet(graph_dir / "semantic_types.parquet"),
+            aliases=pl.read_parquet(graph_dir / "aliases.parquet"),
+            edges=pl.read_parquet(graph_dir / "edges.parquet"), scores=scores, images=images,
+            concept_columns=columns, top_n=top_n, batch=ncfg["batch"],
+            build={"kg_build_id": kg_id, "matrix_version": matrix_version})
+    manifest |= {"umls": load_config("kg")["umls"]["version"],
+                 "graph_manifest_sha256": hashlib.sha256(
+                     (graph_dir / "manifest.json").read_bytes()).hexdigest(),
+                 "loaded_seconds": round(time.perf_counter() - started, 1),
+                 "git_commit": _git_commit()}
+    (graph_dir / "neo4j_load.json").write_text(json.dumps(manifest, indent=1), encoding="utf-8")
+    print(f"kg_build_id {kg_id}; matrix {matrix_version}; top_n {top_n}")
+    print(f"nodes {manifest['nodes']}")
+    print(f"edges {manifest['edges']}")
+    print(f"loaded in {manifest['loaded_seconds']} s; {graph_dir / 'neo4j_load.json'}")
+    return 0
+
+
+def _cmd_kg_bench_scoring(args: argparse.Namespace) -> int:
+    """Time `score_images` + top-k on a random matrix of --rows images (src/kg/scoring.py, N4)."""
+    from src.kg import scoring
+
+    out = scoring.benchmark(args.rows, [f"c{i}" for i in range(args.columns)], k=args.k,
+                            repeats=args.repeats)
+    print(json.dumps(out, indent=1))
+    return 0
+
+
+def _cmd_kg_query(args: argparse.Namespace) -> int:
+    """Run questions through the KG search with the real tables, matrix, Neo4j and language model
+    (no API, no Qdrant): one JSON record per question with the trace, the explanation and the
+    time of every step. Questions: arguments, or --file with one per line (`#` starts a comment)."""
+    import time
+
+    from src.api.routes.kg import explanation_event
+    from src.kg import runtime
+
+    sys.stdout.reconfigure(encoding="utf-8")        # Vietnamese on a cp1252 console
+    settings = Settings()
+    matrix = Path(args.matrix)
+    meta = json.loads((matrix / "probe.json").read_text(encoding="utf-8"))
+    images = pl.read_parquet(Path(settings.canonical_dir) / "images.parquet",
+                             columns=["image_id", "projection"])
+    search, notes = runtime.build_kg_search(
+        settings.model_copy(update={"kg_matrix_dir": matrix}), {"build_id": meta["build_id"]},
+        images)
+    questions = list(args.questions)
+    if args.file:
+        questions += [ln.strip() for ln in Path(args.file).read_text(encoding="utf-8")
+                      .splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
+    print(json.dumps({"notes": notes, "versions": search.versions}, ensure_ascii=False),
+          file=sys.stderr)
+    out = open(args.out, "w", encoding="utf-8") if args.out else None  # noqa: SIM115
+    for question in questions:
+        result = search.search(question, top_k=args.top_k)
+        started = time.perf_counter()
+        explanation = None if args.no_explain else search.explain(result)
+        record = {
+            "question": question, "request_id": result.request_id, "language": result.language,
+            "parsed": {"include": [c.model_dump() for c in result.query.include],
+                       "exclude": result.query.exclude, "views": result.query.views,
+                       "terms": [t.model_dump() for t in result.query.terms]},
+            "intents": [i.to_dict() for i in result.intents], "warnings": result.warnings_text(),
+            "degraded": result.degraded, "trace": result.trace,
+            "results": [{k: r[k] for k in ("rank", "image_id", "view", "score")}
+                        for r in result.rows],
+            "timings_ms": result.timings,
+            "explanation": explanation_event(result, explanation),
+            "explain_wall_ms": round((time.perf_counter() - started) * 1000, 1)}
+        line = json.dumps(record, ensure_ascii=False)
+        if out:
+            out.write(line + "\n")
+        print(f"{result.timings['total_ms']:7.0f} ms  {question}")
+    if out:
+        out.close()
     return 0
 
 
@@ -1509,6 +1670,10 @@ def build_parser() -> argparse.ArgumentParser:
     val.add_argument("--qdrant-url", default=None)
     val.add_argument("--report-index", default=None,
                      help="default: <indexes-dir>/report_search.sqlite")
+    val.add_argument("--kg", action="store_true",
+                     help="also run the four KG checks (needs the kg profile of compose)")
+    val.add_argument("--kg-matrix", default="data/indexes/image_scores/"
+                     "20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1_ext1")
     val.set_defaults(func=_cmd_validate_indexes)
 
     rep = sub.add_parser("build-report-index", help="Phase 5: build the SQLite FTS5 report index")
@@ -1547,6 +1712,40 @@ def build_parser() -> argparse.ArgumentParser:
     bis.add_argument("--report", default=None,
                      help="default: artifacts/metrics/image_scores_<encoder>.json")
     bis.set_defaults(func=_cmd_build_image_scores)
+
+    kgq = sub.add_parser("kg-quality", help="`quality` (lenient AUROC) of every scorable concept")
+    kgq.add_argument("--matrix", default="data/indexes/image_scores/"
+                     "20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1_ext1")
+    kgq.add_argument("--pool-dir", default="data/probe_pool")
+    kgq.add_argument("--canonical-dir", default="data/canonical")
+    kgq.add_argument("--out", default="data/kg/graph/quality.json")
+    kgq.set_defaults(func=_cmd_kg_quality)
+
+    kgb = sub.add_parser("kg-bench-scoring",
+                         help="time score_images + top-k on a random matrix (target < 100 ms)")
+    kgb.add_argument("--rows", type=int, default=1_000_000)
+    kgb.add_argument("--columns", type=int, default=37)
+    kgb.add_argument("--k", type=int, default=10)
+    kgb.add_argument("--repeats", type=int, default=15)
+    kgb.set_defaults(func=_cmd_kg_bench_scoring)
+
+    kgq = sub.add_parser("kg-query", help="run questions through the KG search (real data)")
+    kgq.add_argument("questions", nargs="*")
+    kgq.add_argument("--file", default=None, help="one question per line")
+    kgq.add_argument("--matrix", default="data/indexes/image_scores/"
+                     "20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1_ext1")
+    kgq.add_argument("--top-k", type=int, default=10)
+    kgq.add_argument("--no-explain", action="store_true")
+    kgq.add_argument("--out", default=None, help="JSONL, one record per question")
+    kgq.set_defaults(func=_cmd_kg_query)
+
+    kgn = sub.add_parser("kg-load-neo4j", help="load the KG and the top-N PREDICTED edges")
+    kgn.add_argument("--graph-dir", default="data/kg/graph")
+    kgn.add_argument("--matrix", default="data/indexes/image_scores/"
+                     "20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1_ext1")
+    kgn.add_argument("--canonical-dir", default="data/canonical")
+    kgn.add_argument("--top-n", type=int, default=None, help="default: kg.yaml neo4j.top_n")
+    kgn.set_defaults(func=_cmd_kg_load_neo4j)
 
     bie = sub.add_parser("build-image-scores-ext",
                          help="extra score-matrix columns for core findings without one")
