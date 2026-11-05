@@ -20,6 +20,7 @@ from src.data.labels import CHEXPERT_LABELS
 Status = Literal["PRESENT", "UNCERTAIN"]
 View = Literal["AP", "PA"]
 Language = Literal["en", "vi"]
+Side = Literal["left", "right", "bilateral"]
 ParserName = Literal["llm", "rule"]
 
 _CANONICAL = {name.casefold(): name for name in CHEXPERT_LABELS}
@@ -68,6 +69,9 @@ class SearchQuery(BaseModel):
     terms: list[Term] = Field(
         default_factory=list,
         description="phrases outside the 14 labels, only from the KG parser prompt")
+    sides: list[Side] = Field(
+        default_factory=list,
+        description="sides the request names; kept even when nothing is ranked by them")
     language: Language
 
     @field_validator("semantic_query")
@@ -88,6 +92,7 @@ class SearchQuery(BaseModel):
         self.include = list(first.values())
         self.exclude = list(dict.fromkeys(self.exclude))
         self.views = list(dict.fromkeys(self.views))
+        self.sides = list(dict.fromkeys(self.sides))
         seen: dict[tuple[str, str], Term] = {}
         for t in self.terms:
             seen.setdefault((t.text.casefold(), t.polarity), t)

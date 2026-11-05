@@ -24,13 +24,14 @@ class Chat:
     number (seconds to hang, then an LLMError-free empty object)."""
 
     model = "scripted"
-    last_first_token_ms = 12.0
 
     def __init__(self, *replies):
         self.replies, self.calls = list(replies), []
 
-    def chat(self, messages, schema, stream=False):
+    def chat(self, messages, schema, stream=False, meta=None):
         self.calls.append(messages)
+        if meta is not None:
+            meta["first_token_ms"] = 12.0
         item = self.replies.pop(0) if len(self.replies) > 1 else self.replies[0]
         if isinstance(item, Exception):
             raise item

@@ -82,3 +82,12 @@ def test_the_benchmark_reports_cold_and_warm_times_for_both_mixes():
     assert out["rows"] == 2000 and out["columns"] == 12
     assert out["typical"]["columns_touched"] == 8 and out["heavy"]["columns_touched"] == 12
     assert all(out[m]["cold_ms"] > 0 and out[m]["warm_p50_ms"] > 0 for m in ("typical", "heavy"))
+
+
+def test_preload_fills_every_column_and_changes_no_score():
+    m, fresh = matrix(), matrix()
+    intents = [scoring._intent("a", "PRESENT", scoring.NOISY_OR, [(COLS[0], 1.0), (COLS[1], 1.0)]),
+               scoring._intent("b", "ABSENT", scoring.SINGLE, [(COLS[2], 1.0)])]
+    expected = fresh.score(intents)
+    assert m.preload() >= 0 and len(m._lsp) == len(m._lsn) == len(COLS)
+    assert (m.score(intents) == expected).all()

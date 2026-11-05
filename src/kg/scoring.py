@@ -73,6 +73,15 @@ class ScoreMatrix:
         for j, value in zip(missing, self._pool.map(one, missing), strict=True):
             store[j] = value
 
+    def preload(self) -> float:
+        """log sigma(z) and log sigma(-z) of every column, now: the first query then costs what
+        the next ones do (N4). Memory: two more matrices the size of `z`. Returns the ms spent."""
+        started = time.perf_counter()
+        every = list(range(len(self.columns)))
+        self._fill(self._lsp, every, 1)
+        self._fill(self._lsn, every, -1)
+        return (time.perf_counter() - started) * 1000
+
     def _sum(self, store: dict[int, np.ndarray], columns: list[Column],
              weights: bool = False) -> np.ndarray:
         js = [self._index[c.column] for c in columns]
@@ -175,4 +184,11 @@ def benchmark(rows: int, columns: list[str], k: int = 10, repeats: int = 15) -> 
         out[name] = {"cold_ms": round(cold, 1), "warm_p50_ms": round(warm[len(warm) // 2], 1),
                      "warm_p95_ms": round(warm[int(0.95 * (len(warm) - 1))], 1),
                      "columns_touched": len({c.column for i in intents for c in i.columns})}
+    # what the API does at startup: preload, so the first query of every kind is already warm
+    matrix = ScoreMatrix.random(rows, columns)
+    out["preload_ms"] = round(matrix.preload(), 1)
+    out["preloaded_mb"] = round((matrix.z.nbytes + sum(a.nbytes for a in matrix._lsp.values())
+                                 + sum(a.nbytes for a in matrix._lsn.values())) / 1e6, 1)
+    for name, intents in (("typical", typical), ("heavy", heavy)):
+        out[name]["first_after_preload_ms"] = round(run(intents), 1)
     return out

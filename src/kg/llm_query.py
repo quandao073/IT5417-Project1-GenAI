@@ -15,8 +15,10 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
 import time
-from dataclasses import asdict, dataclass, field
+from collections import OrderedDict
+from dataclasses import asdict, dataclass, field, replace
 
 from src.kg.expand import ABSENT, NOISY_OR, WEIGHTED, Intent
 from src.kg.guard import Guard
@@ -46,13 +48,17 @@ class Choice:
     reason: str = ""
     ms: float = 0.0
     error: str | None = None
+    cached: bool = False
 
 
 class ConceptChooser:
-    def __init__(self, client, guard: Guard, system_prompt: str, timeout_s: float):
+    def __init__(self, client, guard: Guard, system_prompt: str, timeout_s: float,
+                 gloss: dict[str, str] | None = None):
         self.client, self.guard, self.timeout_s = client, guard, timeout_s
-        self.system_prompt = system_prompt
+        self.system_prompt, self.gloss = system_prompt, gloss or {}
         self.prompt_sha256 = sha256(system_prompt)
+        self._cache: OrderedDict[str, Choice] = OrderedDict()   # what the model chose, per input
+        self._lock = threading.Lock()
 
     def choose(self, question: str, term: str, polarity: str, lookup: Lookup) -> Choice:
         cands = lookup.candidates
@@ -63,10 +69,20 @@ class ConceptChooser:
         started = time.perf_counter()
         payload = {"question": question, "term": term, "polarity": polarity, "candidates": [
             {"cui": c.cui, "name": c.name, "label": c.label, "parents": c.parents,
-             "matched_alias": c.alias, "match": c.match, "scored_directly": c.scorable}
+             "matched_alias": c.alias, "match": c.match, "scored_directly": c.scorable,
+             "weak": bool(c.weak), **({"when_to_use": self.gloss[c.cui]}
+                                      if c.cui in self.gloss else {})}
             for c in cands]}
+        body = json.dumps(payload, ensure_ascii=False)
+        # the key is everything the model sees, so the same question gets the same answer
+        key = sha256("\n".join([getattr(self.client, "model", ""), self.prompt_sha256, body]))
+        with self._lock:
+            hit = self._cache.get(key)
+            if hit is not None:
+                self._cache.move_to_end(key)
+                return replace(hit, ms=0.0, cached=True)
         messages = [{"role": "system", "content": self.system_prompt},
-                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]
+                    {"role": "user", "content": body}]
         try:
             content, _ = self.guard.call(lambda: self.client.chat(messages, CHOICE_SCHEMA),
                                          self.timeout_s)
@@ -75,12 +91,16 @@ class ConceptChooser:
         except (LLMError, LLMInvalidOutput, ValueError, KeyError) as exc:
             return Choice(cands[0].cui, "deterministic", "", _ms(started), str(exc)[:120])
         ms = _ms(started)
-        if choice == "none":
-            return Choice(None, "llm", str(answer.get("reason", "")), ms)
-        if choice not in {c.cui for c in cands}:           # outside the list: never accepted
-            return Choice(cands[0].cui, "deterministic", "", ms,
+        if choice != "none" and choice not in {c.cui for c in cands}:
+            return Choice(cands[0].cui, "deterministic", "", ms,      # outside the list: never
                           f"the model chose {choice!r}, not a candidate")
-        return Choice(choice, "llm", str(answer.get("reason", "")), ms)
+        result = Choice(None if choice == "none" else choice, "llm",
+                        str(answer.get("reason", "")), ms)
+        with self._lock:
+            self._cache[key] = result
+            while len(self._cache) > 1024:
+                self._cache.popitem(last=False)
+        return result
 
 
 # ---- the explanation -------------------------------------------------------------------------
@@ -207,15 +227,18 @@ class Explainer:
     def explain(self, facts: dict, intents: list[Intent]) -> Explanation:
         started = time.perf_counter()
         messages = [{"role": "system", "content": self.system_prompt},
-                    {"role": "user", "content": json.dumps(facts, ensure_ascii=False)}]
+                    {"role": "user", "content": json.dumps(facts, ensure_ascii=False,
+                                                         separators=(",", ":"))}]
+        meta: dict = {}
         try:
             content, _ = self.guard.call(
-                lambda: self.client.chat(messages, EXPLAIN_SCHEMA, stream=True), self.timeout_s)
+                lambda: self.client.chat(messages, EXPLAIN_SCHEMA, stream=True, meta=meta),
+                self.timeout_s)
             answer = json.loads(content)
             summary, images = str(answer["summary"]), list(answer["images"])
         except (LLMError, LLMInvalidOutput, ValueError, KeyError, TypeError) as exc:
             return Explanation("failed", total_ms=_ms(started), error=str(exc)[:160],
-                               first_token_ms=getattr(self.client, "last_first_token_ms", None))
+                               first_token_ms=meta.get("first_token_ms"))
         cuis, phrases = self.index.allowed(facts, intents)
         numbers = facts_numbers(facts)
         dropped, kept = [], []
@@ -235,7 +258,7 @@ class Explainer:
              else lines.__setitem__(rank, line))
         status = ("ungrounded" if not kept and not lines else "partial" if dropped else "ok")
         return Explanation(status, " ".join(kept), lines, dropped,
-                           getattr(self.client, "last_first_token_ms", None), _ms(started))
+                           meta.get("first_token_ms"), _ms(started))
 
 
 def _ms(started: float) -> float:

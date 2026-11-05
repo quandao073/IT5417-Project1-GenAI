@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from src.common.config import default_config_dir
 from src.data.labels import CHEXPERT_LABELS
-from src.query.schema import Constraint, Language, Term, View, canonical_concept
+from src.query.schema import Constraint, Language, Side, Term, View, canonical_concept
 
 ProbeStatus = Literal["ok", "missing_model", "unreachable"]
 _EXAMPLE = re.compile(r"^Request: (.+)$", re.MULTILINE)
@@ -44,6 +44,7 @@ class LLMOutput(BaseModel):
     exclude: list[str] = Field(default_factory=list)
     views: list[View] = Field(default_factory=list)
     terms: list[Term] = Field(default_factory=list)
+    sides: list[Side] = Field(default_factory=list)
     language: Language
 
     @field_validator("exclude")
@@ -54,7 +55,7 @@ class LLMOutput(BaseModel):
 
 def output_schema(with_terms: bool = False) -> dict:
     """Hand-built (not model_json_schema) so there are no $refs for the grammar builder.
-    `with_terms` adds the `terms` array of the KG parser prompt (query_parser_v2)."""
+    `with_terms` adds the `terms` and `sides` arrays of the KG parser prompt (query_parser_v3)."""
     concept = {"type": "string", "enum": list(CHEXPERT_LABELS)}
     schema = {
         "type": "object",
@@ -77,7 +78,9 @@ def output_schema(with_terms: bool = False) -> dict:
             "properties": {"text": {"type": "string"},
                            "polarity": {"type": "string", "enum": ["PRESENT", "ABSENT"]}},
             "required": ["text", "polarity"]}}
-        schema["required"] = [*schema["required"], "terms"]
+        schema["properties"]["sides"] = {"type": "array", "items": {
+            "type": "string", "enum": ["left", "right", "bilateral"]}}
+        schema["required"] = [*schema["required"], "terms", "sides"]
     return schema
 
 
@@ -275,7 +278,6 @@ class AnthropicClient:
         options = dict(options or {})
         self.tool_name, self.tool_description = tool or (
             self.TOOL, "Submit the parsed search query.")
-        self.last_first_token_ms: float | None = None
         self.model, self.max_tokens = model, max_tokens
         self.effort = options.get("effort")
         self.tool_choice = options.get("tool_choice", "tool")
@@ -286,7 +288,7 @@ class AnthropicClient:
         self._client = client or anthropic.Anthropic(api_key=api_key, timeout=timeout,
                                                      max_retries=max_retries)
 
-    def _stream(self, request: dict, started: float):
+    def _stream(self, request: dict, started: float, meta: dict):
         first = None
         with self._client.messages.stream(**request) as events:
             for event in events:
@@ -294,7 +296,7 @@ class AnthropicClient:
                 if first is None and getattr(delta, "type", "") == "input_json_delta":
                     first = (time.perf_counter() - started) * 1000
             response = events.get_final_message()
-        self.last_first_token_ms = first
+        meta["first_token_ms"] = first
         return response
 
     def probe(self) -> ProbeStatus:
@@ -311,10 +313,11 @@ class AnthropicClient:
     def version(self) -> str | None:
         return None   # a hosted API has no server version to record
 
-    def chat(self, messages: list[dict], schema: dict, stream: bool = False
-             ) -> tuple[str, float]:
+    def chat(self, messages: list[dict], schema: dict, stream: bool = False,
+             meta: dict | None = None) -> tuple[str, float]:
         """One call; returns (the tool input as JSON, wall ms). With `stream` the reply is read
-        as it arrives and `last_first_token_ms` holds the time of its first input delta."""
+        as it arrives and `meta["first_token_ms"]` gets the time of its first input delta (the
+        caller's own dict, so concurrent requests never share it)."""
         import anthropic
 
         system = [{"type": "text", "text": messages[0]["content"],
@@ -329,7 +332,7 @@ class AnthropicClient:
                    "messages": messages[1:], "tools": [tool], "tool_choice": choice, **extra}
         try:
             if stream:
-                response = self._stream(request, started)
+                response = self._stream(request, started, {} if meta is None else meta)
             else:
                 response = self._client.messages.create(**request)
         except anthropic.APIError as exc:

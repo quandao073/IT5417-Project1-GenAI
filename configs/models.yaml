@@ -123,7 +123,7 @@ llm:
   # key and of parser_eval.json, so a prompt edit never reuses a stale parse.
   prompt_file: prompts/query_parser_v1.txt
   # The KG search's parser: the same task plus `terms` for phrases outside the 14 labels (WORKLOG D66).
-  kg_prompt_file: prompts/query_parser_v2.txt
+  kg_prompt_file: prompts/query_parser_v3.txt
   num_predict: 300
   seed: 20260101
   # Ollama unloads after 5 min by default; a pause in a demo must not pay the reload.
@@ -160,7 +160,7 @@ kg_llm:
   # A refused or unroutable connection must fail in under a second (N3); Windows takes 2 s to refuse a loopback connection.
   connect_timeout_seconds: 0.8
   parser: {model: claude-haiku-5-5, timeout_seconds: 3}
-  select: {model: claude-haiku-5-5, timeout_seconds: 3, prompt_file: prompts/kg_choose_concept_v1.txt}
+  select: {model: claude-haiku-5-5, timeout_seconds: 3, prompt_file: prompts/kg_choose_concept_v2.txt}
   explain: {model: claude-haiku-5-5, timeout_seconds: 15, max_tokens: 1500,
-            prompt_file: prompts/kg_explain_v1.txt}
+            prompt_file: prompts/kg_explain_v2.txt}
   breaker: {failures: 3, cooldown_seconds: 60}

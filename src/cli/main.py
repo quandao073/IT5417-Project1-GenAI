@@ -518,6 +518,27 @@ def _build_parser_or_exit(need_llm: bool):
     return parser, status
 
 
+def _kg_parser(prompt_file: str):
+    """The KG parser (terms and sides, ambiguous forms left out of the concept list) with the
+    given prompt file, for `eval-parser --kg-prompt`."""
+    from src.query import llm_parser as llm
+    from src.query.parser import QueryParser
+    from src.query.rule_parser import RuleParser
+
+    models, concepts = load_config("models"), load_config("concepts")
+    key = Settings().anthropic_api_key
+    if key is None:
+        raise SystemExit("--kg-prompt needs ANTHROPIC_API_KEY")
+    model = models["kg_llm"]["parser"]["model"]
+    client = llm.AnthropicClient(model, 20, api_key=key.get_secret_value(),
+                                 options=llm.request_options(models["llm"], model))
+    system = llm.load_prompt(prompt_file, concepts,
+                             tuple(load_config("kg")["query"]["ambiguous_forms"]))
+    template = models["image_encoder"]["text_prompt_template"]
+    return QueryParser(RuleParser(concepts), template=template, llm_client=client,
+                       system_prompt=system, with_terms=True), "ok"
+
+
 def _load_pool(args: argparse.Namespace, expect: dict, corpus_images: pl.DataFrame):
     """The pool's vectors, statuses and patient ids in shard order, or an error message.
 
@@ -897,7 +918,13 @@ def _cmd_eval_parser(args: argparse.Namespace) -> int:
         print(f"no rows for split {args.split!r}", file=sys.stderr)
         return 1
     need_llm = any(m in ("llm", "auto") for m in args.parsers)
-    parser, status = _build_parser_or_exit(need_llm)
+    if args.kg_prompt:
+        if args.split != "dev":
+            print("--kg-prompt is for the dev split only", file=sys.stderr)
+            return 1
+        parser, status = _kg_parser(args.kg_prompt)
+    else:
+        parser, status = _build_parser_or_exit(need_llm)
     if need_llm and status == "ok":
         # The first call after a server start can exceed the timeout (WORKLOG T16);
         # pay it here so it is not scored against the first benchmark row.
@@ -1392,7 +1419,8 @@ def _cmd_kg_build_graph(args: argparse.Namespace) -> int:
     disease = set(nodes.filter(pl.col("labels").str.contains("Disease"))["cui"])
     suggests = suggests.filter(pl.col("dst").is_in(list(disease)))
     stypes, st_edges = graph.semantic_types(umls)
-    edges = pl.concat([graph.umls_edges(nodes, umls, lcfg), cx, suggests, located, st_edges])
+    edges = pl.concat([graph.umls_edges(nodes, umls, lcfg), cx, suggests, located, st_edges,
+                       graph.manual_edges(gcfg)])
     known = set(nodes["cui"]) | set(stypes["tui"])
     dropped = edges.filter(~pl.col("src").is_in(list(known)) | ~pl.col("dst").is_in(list(known)))
     edges = edges.join(dropped.select("src", "rel", "dst"), on=["src", "rel", "dst"], how="anti")
@@ -1774,6 +1802,8 @@ def build_parser() -> argparse.ArgumentParser:
     ev.add_argument("--parsers", nargs="+", choices=["rule", "llm", "auto"],
                     default=["rule", "llm", "auto"])
     ev.add_argument("--out", default="artifacts/metrics/parser_eval.json")
+    ev.add_argument("--kg-prompt", default=None, metavar="PROMPT_FILE",
+                    help="score the KG parser prompt (path under configs/), dev split only")
     ev.add_argument("--label-filter", action="store_true",
                     help="also count matching studies per gold parse under every policy pair")
     ev.add_argument("--canonical-dir", default="data/canonical")

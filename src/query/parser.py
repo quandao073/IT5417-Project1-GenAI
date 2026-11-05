@@ -124,7 +124,8 @@ class QueryParser:
                 query = SearchQuery(semantic_query=out.findings[:SEMANTIC_MAX],
                                     include=out.include, exclude=out.exclude,
                                     views=out.views, language=out.language,
-                                    terms=out.terms if self.with_terms else [])
+                                    terms=out.terms if self.with_terms else [],
+                                    sides=out.sides if self.with_terms else [])
             except (llm.LLMInvalidOutput, ValidationError) as exc:
                 attempts += 1
                 error = _error_text(exc)

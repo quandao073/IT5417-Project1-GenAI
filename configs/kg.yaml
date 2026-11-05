@@ -139,6 +139,11 @@ graph:
   devices_parent: C0025080                    # thiết bị y tế nói chung: cha của thiết bị lõi ngoài cụm từ CheXpert
   prj_labels: {"PRJ:no_finding": Finding, "PRJ:enlarged_cardiomediastinum": Finding,
                "PRJ:pleural_other": Finding, "PRJ:support_devices": Device}
+  manual_edges:           # edges added by hand, source `manual` (WORKLOG D67); codes only
+    is_a:                 # child, parent
+      - [C0264545, C0032226]    # pleural thickening below pleural diseases in general
+    suggests:             # disease: findings that suggest it, equal weights, no pool count
+      C0206062: [C1849561, C5539772, C4476748]   # interstitial lung disease <- interstitial markings, interstitial thickening, reticular pattern
   chexpert_hierarchy:     # child label -> parent label (design, schema decision 4)
     Edema: Lung Opacity
     Consolidation: Lung Opacity
@@ -201,20 +206,37 @@ scores_ext:
 
 # Query path (docs/v2-kg-design.md, "Truy vấn online"; WORKLOG D66).
 query:
-  lookup: {max_candidates: 5, fulltext_limit: 12, min_dice: 0.5}
+  lookup:
+    max_candidates: 5
+    fulltext_limit: 12
+    min_dice: 0.5
+    # The SapBERT stage (WORKLOG D66), off by default: its dictionary is the graph's aliases (cached under
+    # data/kg/sapbert_alias/), used when no alias is the phrase, before the fulltext stage. For the V2-7 ablation.
+    sapbert: {enabled: false, top: 5, min_cos: 0.8}
   sides: [bên trái, bên phải, hai bên, trái, phải, left, right, bilateral, bilaterally]
+  # Side words that cannot mean anything else, to warn that the side is not ranked by when the parser recorded none
+  # (the bare Vietnamese "trái" and "phải" also mean "fruit" and "must", so they are not here).
+  question_sides:
+    left: [bên trái, phổi trái, left]
+    right: [bên phải, phổi phải, right]
+    bilateral: [hai bên, hai phổi, cả hai phổi, bilateral, bilaterally, both lungs]
   expand:
     down_depth: 4          # IS_A steps down to scorable concepts (wider)
     up_depth: 6            # IS_A steps up to the nearest scorable ancestor (narrower)
     suggests_depth: 2      # IS_A steps below a disease whose SUGGESTS edges count
     part_depth: 5          # PART_OF steps below an anatomy region
-    anatomy_top: 5         # findings kept for a region, by p
+    anatomy_top: 3         # findings kept for a region, by p (a region asked for alone, WORKLOG D67)
     min_n: 20              # same cut as graph.min_n
     weak_or_children: [C0016658]   # weak labels that D63 scores noisy-OR with their scorable children (Fracture)
   # Forms of concepts.yaml that mean two things: left out of the KG parser's concept list so that the question's
-  # words reach lookup_concept and the language model chooses with the whole question (WORKLOG D64). The nodule forms
-  # name a concept that has its own, better scored column than the weak Lung Lesion label.
-  ambiguous_forms: [giảm thể tích phổi, nốt phổi, pulmonary nodule, lung nodule]
+  # words reach lookup_concept and the language model chooses with the whole question (WORKLOG D64), and the forms
+  # that also name a scorable concept below the label, which has its own, better scored column (WORKLOG D67; the
+  # list is `uv run python scripts/kg_label_shadows.py`).
+  ambiguous_forms: [giảm thể tích phổi,
+                    mediastinal widening, widened mediastinum, trung thất giãn rộng,
+                    pulmonary nodule, lung nodule, nốt phổi,
+                    pleural thickening, dày màng phổi,
+                    rib fracture, gãy xương sườn]
 
 # Grounding of the explanation: a sentence is dropped when it names a finding or disease of the graph that the facts do
 # not contain, quotes a number the facts do not contain, or uses diagnostic wording.

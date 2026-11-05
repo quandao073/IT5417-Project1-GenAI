@@ -82,7 +82,8 @@ class Neo4jStore:
         return self._read(
             f"MATCH (d:Concept {{cui: $cui}})<-[:IS_A*0..{int(depth)}]-(t:Concept)"
             "<-[s:SUGGESTS]-(f:Concept {scorable: true}) "
-            "WHERE s.n >= $min_n AND coalesce(s.review, 'keep') <> 'drop' "
+            "WHERE (s.source = 'manual' OR s.n >= $min_n) "
+            "AND coalesce(s.review, 'keep') <> 'drop' "
             "WITH f, s, t ORDER BY s.p DESC "
             "RETURN f.cui AS cui, collect(s.p)[0] AS p, collect(s.n)[0] AS n, "
             "collect(t.name)[0] AS target ORDER BY p DESC, cui", cui=cui, min_n=int(min_n))

@@ -67,6 +67,7 @@ def build_kg_search(settings: Settings, manifest: dict, images: pl.DataFrame, *,
         raise RuntimeError(f"score matrix is of build {meta['build_id']}, the API serves "
                            f"{manifest['build_id']}")
     matrix = ScoreMatrix.load(matrix_dir, images)
+    matrix.preload()                      # the first query costs what the next ones do (N4)
     nodes = pl.read_parquet(graph_dir / "nodes.parquet", columns=["cui", "name", "labels",
                                                                   "in_core"])
     label_ids = {label: entry["id"] for label, entry in _label_mapping().items()}
@@ -112,7 +113,7 @@ def build_kg_search(settings: Settings, manifest: dict, images: pl.DataFrame, *,
         choose_text = _text(kl["select"]["prompt_file"])
         chooser = ConceptChooser(client("select", ("choose_concept", "Choose the concept that "
                                                    "matches the phrase.")), guard, choose_text,
-                                 kl["select"]["timeout_seconds"])
+                                 kl["select"]["timeout_seconds"], gloss=_gloss())
         index = GroundingIndex.build(nodes, pl.read_parquet(graph_dir / "aliases.parquet",
                                                             columns=["cui", "norm"]),
                                      cfg["explain"])
@@ -125,9 +126,13 @@ def build_kg_search(settings: Settings, manifest: dict, images: pl.DataFrame, *,
                      "select_prompt_sha256": chooser.prompt_sha256,
                      "explain_model": kl["explain"]["model"],
                      "explain_prompt_sha256": explainer.prompt_sha256}
+    use_sapbert = cfg["query"]["lookup"]["sapbert"]["enabled"]
+    semantic = _alias_index(cfg, graph_dir) if use_sapbert else None
+    if semantic is not None:
+        versions["lookup_sapbert"] = cfg["linker"]["sapbert"]["revision"]
     search = KGSearch(cfg=cfg, matrix=matrix, parser=parser, store=store, quality=quality,
                       label_ids=label_ids, names=dict(nodes.select("cui", "name").iter_rows()),
-                      chooser=chooser, explainer=explainer, versions=versions)
+                      chooser=chooser, explainer=explainer, versions=versions, semantic=semantic)
     if warm_up and parser.llm is not None:
         # a TLS handshake and the prompt cache are paid off the request path
         threading.Thread(target=parser.parse, args=("cardiomegaly",), daemon=True).start()
@@ -139,6 +144,23 @@ def _label_mapping() -> dict:
 
     return yaml.safe_load((default_config_dir() / "kg" / "chexpert_cuis.yaml")
                           .read_text(encoding="utf-8"))["labels"]
+
+
+def _alias_index(cfg: dict, graph_dir: Path):
+    from src.kg import sapbert
+
+    aliases = pl.read_parquet(graph_dir / "aliases.parquet", columns=["cui", "text", "norm"])
+    return sapbert.AliasIndex(sapbert.SapBert(cfg["linker"]["sapbert"]), aliases["cui"],
+                              aliases["text"], aliases["norm"],
+                              graph_dir.parent / "sapbert_alias")
+
+
+def _gloss() -> dict[str, str]:
+    import yaml
+
+    manual = yaml.safe_load((default_config_dir() / "kg" / "aliases_manual.yaml")
+                            .read_text(encoding="utf-8"))
+    return {cui: " ".join(text.split()) for cui, text in manual.get("gloss", {}).items()}
 
 
 def _matrix_hash(matrix_dir: Path) -> str:

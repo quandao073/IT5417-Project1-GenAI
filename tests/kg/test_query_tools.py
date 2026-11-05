@@ -89,3 +89,29 @@ def test_a_concept_with_no_route_and_an_unknown_one_are_not_scored(store):
     assert (none.kind, none.columns, codes(none)) == ("none", [], ["no_path"])
     ghost = expand.expand_concepts(store, "C999", PRESENT, EXPAND_CFG, "?")
     assert ghost.kind == "none" and codes(ghost) == ["unrecognized"]
+
+
+def test_a_strong_concept_comes_before_the_weak_label_that_covers_it(store):
+    got = lookup.lookup_concept(store, "broken bone", LOOKUP_CFG)
+    assert [c.cui for c in got.candidates] == ["C11", "C10"]        # C10 is weak, C11 is not
+
+
+def test_the_sapbert_stage_runs_only_when_no_alias_is_the_phrase(store):
+    class Index:
+        def search(self, norm, k):
+            return [{"cui": "C3", "text": "edema", "score": 0.91},
+                    {"cui": "C2", "text": "cardiomegaly", "score": 0.5}]
+
+    cfg = {**LOOKUP_CFG, "lookup": {**LOOKUP_CFG["lookup"],
+                                    "sapbert": {"enabled": True, "top": 5, "min_cos": 0.8}}}
+    near = lookup.lookup_concept(store, "fluid in the lungs", cfg, Index())
+    assert [(c.cui, c.match, c.score) for c in near.candidates] == [("C3", "sapbert", 0.91)]
+    exact = lookup.lookup_concept(store, "edema", cfg, Index())
+    assert [(c.cui, c.match) for c in exact.candidates] == [("C3", "exact")]
+    assert lookup.lookup_concept(store, "xyz qwerty", cfg).candidates == []   # no index, no stage
+
+
+def test_a_hand_written_suggests_edge_counts_without_a_pool_count(store):
+    got = expand.expand_concepts(store, "C14", PRESENT, EXPAND_CFG, "interstitial disease")
+    assert got.kind == "disease" and got.combine == WEIGHTED
+    assert [(c.cui, round(c.weight, 2)) for c in got.columns] == [("C11", 0.5), ("C3", 0.5)]

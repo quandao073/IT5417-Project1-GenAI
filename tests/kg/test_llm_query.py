@@ -183,3 +183,30 @@ def test_a_generic_phrase_of_two_words_is_not_a_mention_of_a_concept():
     cfg = {**load_config("kg")["explain"], "generic_words": ["bất thường"]}
     got = GroundingIndex.build(nodes, aliases, cfg)
     assert "bất thường" not in got.aliases and "phù phổi nặng" in got.aliases
+
+
+def test_the_choice_sees_the_note_of_a_shared_concept_and_is_remembered():
+    chat = Chat({"choice": "C13", "reason": "both"})
+    c = ConceptChooser(chat, Guard(3, 60), "choose", 1.0, gloss={"C13": "both lungs only"})
+    two = found("giảm thể tích phổi")
+    first = c.choose("giảm thể tích phổi hai bên", "giảm thể tích phổi", PRESENT, two)
+    sent = chat.calls[0][1]["content"]
+    assert "both lungs only" in sent and '"weak": false' in sent
+    again = c.choose("giảm thể tích phổi hai bên", "giảm thể tích phổi", PRESENT, two)
+    assert (again.cui, again.cached, len(chat.calls)) == (first.cui, True, 1)
+    other = c.choose("giảm thể tích phổi trái", "giảm thể tích phổi", PRESENT, two)
+    assert not other.cached and len(chat.calls) == 2       # another question, another call
+
+
+def test_a_failed_choice_is_not_remembered():
+    chat = Chat(LLMError("HTTP 500"), {"choice": "C13", "reason": "x"})
+    c = chooser(chat)
+    two = found("giảm thể tích phổi")
+    assert c.choose("q", "giảm thể tích phổi", PRESENT, two).via == "deterministic"
+    assert c.choose("q", "giảm thể tích phổi", PRESENT, two).cui == "C13"
+
+
+def test_the_first_token_time_belongs_to_its_own_call():
+    intents, facts = page()
+    got = explainer(GOOD).explain(facts, intents)
+    assert got.first_token_ms == 12.0
