@@ -8,7 +8,8 @@ answer must carry, and the path in the graph.
     otherwise, a scorable ancestor (IS_A)                  that, with a warning (narrower)
     otherwise a Disease     the scorable findings that SUGGESTS it, weights from p
     otherwise an Anatomy    the scorable findings usually seen there (TYPICALLY_AT), noisy-OR
-                            weighted by how often each is seen there (p of the edge)
+                            weighted by how often each is seen there (p of the edge, divided by
+                            the largest p of the region, so the most typical finding counts fully)
     otherwise               nothing: "cannot be scored"
 
 A weak concept is never a target of the wider, disease and anatomy routes (D55); a narrower route
@@ -134,8 +135,9 @@ def expand_concepts(store, cui: str, polarity: str, cfg: dict, term: str = "") -
         if found:
             region = {r["cui"]: r["region"] for r in rows}
             p = {r["cui"]: r["p"] for r in rows}
+            top = max(p[k["cui"]] for k in found)
             intent.kind, intent.combine = "anatomy", WEIGHTED_OR
-            intent.columns = [_column(k, p[k["cui"]]) for k in found]
+            intent.columns = [_column(k, p[k["cui"]] / top) for k in found]
             intent.path = [f"{k['name']} —TYPICALLY_AT→ {region[k['cui']]}" for k in found]
             intent.warnings.append(Warn("anatomy_region", {"region": name}))
             return intent

@@ -157,6 +157,7 @@ class KGSearch:
         timings["labels_ms"] = (time.perf_counter() - t) * 1000
 
         t = time.perf_counter()
+        modifiers: list[str] = []             # terms that only qualify: one warning lists them
         if query.terms and not kg_down:
             try:
                 futures = [self._terms_pool.submit(self._term, question, term, qcfg)
@@ -166,6 +167,8 @@ class KGSearch:
                     if not found.core or found.modifier:   # a side or a modifier: no concept
                         trace["terms"].append({"term": term.text, "skipped": (
                             "modifier" if found.modifier else "side only")})
+                        if found.modifier:
+                            modifiers.append(term.text)
                         continue
                     intents.append(intent)
                     if choice.via == "deterministic" and len(found.candidates) > 1:
@@ -182,6 +185,8 @@ class KGSearch:
             except StoreError as exc:
                 kg_down.append(str(exc))
                 intents = [i for i in intents if i.term in set(query.constrained_concepts())]
+        if modifiers:
+            warnings.append(Warn("not_considered", {"words": ", ".join(modifiers)}))
         if kg_down:
             degraded.append(f"knowledge graph unavailable: {kg_down[0]}")
             if query.terms:

@@ -143,3 +143,14 @@ def test_the_side_warning_comes_from_the_parser_or_from_unambiguous_words():
     assert "side_ignored" not in codes(plain.search("phim không phải tim to"))   # "phải" alone
     rule = make_search().search("pleural effusion on the left")           # the 14-label route
     assert "side_ignored" in codes(rule) and rule.rows
+
+
+def test_modifier_terms_are_listed_in_one_not_considered_warning():
+    reply = parse_reply(include=["Cardiomegaly"], terms=[("small", "PRESENT"),
+                                                         ("loculated", "PRESENT")])
+    search = make_search(parser_chat=Chat(reply))
+    search.cfg["query"]["modifiers"] = ["small", "loculated"]
+    got = search.search("small loculated cardiomegaly")
+    assert [i.term for i in got.intents] == ["Cardiomegaly"]
+    assert codes(got).count("not_considered") == 1 and "unrecognized" not in codes(got)
+    assert "Không xét: small, loculated." in got.warnings_text()           # a "vi" question

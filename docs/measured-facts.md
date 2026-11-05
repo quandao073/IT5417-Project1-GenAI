@@ -848,3 +848,18 @@ nhắc. Hiệu chỉnh như 14 cột (`image_scores.calibrate`); AUROC lenient (
   bị bỏ.
 - SapBERT lúc chạy, bước cuối: mã hóa một cụm 70 ms (300 ms lần đầu); câu 22 tìm được C0746459 (cos 0,933), "loculated" và
   "sỏi thận" không có alias nào ≥ 0,8.
+
+## Vùng giải phẫu chuẩn hóa theo max, từ bổ nghĩa có cảnh báo (đo 2026-11-05, D69)
+
+- **66 tập cột của vùng đứng một mình**, trọng số p / max p trong tập (cùng cách đo với D68, kết quả
+  `data/kg/graph/anatomy_distribution_norm.json`): % ảnh ≥ 0,95 cao nhất **0,044%** (9 tập có ít nhất một ảnh ≥ 0,95, không
+  tập nào quá 5%), nên giữ bản chuẩn hóa. p99 theo tập: < 0,1 ở 9, 0,1–0,5 ở 35, 0,5–0,9 ở 10, ≥ 0,9 ở 12. Vài vùng (p50 / p99 /
+  % ≥ 0,95): góc sườn hoành C0230151 0,836 / 0,929 / 0,04; vùng đáy phổi C0225704 0,805 / 0,921 / 0,04; đỉnh phổi C0225703
+  0,085 / 0,588 / 0; thùy trên C0225756 0,014 / 0,130 / 0; thùy dưới C0225758 0,136 / 0,391 / 0; màng phổi C0032225 0,642 / 0,818 / 0;
+  tim C0018787 0,243 / 0,789 / 0. Các vùng mà lung opacity là dấu hiệu điển hình nhất có p50 cao (≈ 0,8): điểm dồn sát nhau
+  ở đầu bảng, nhưng chưa tới ngưỡng bão hòa đã đặt.
+- **Từ bổ nghĩa**: danh sách hiện có = 39 từ `skip` của `linker_overrides.yaml` + 51 từ `vocab.drop_modifiers` (88 từ khác nhau sau
+  chuẩn hóa). So với 25 từ được đưa ra, thiếu 7 và đã thêm vào `query.extra_modifiers`: loculated, layering, dependent, patchy,
+  residual, chronic, acute.
+- **Smoke lượt g** (24 câu): N1 p50 1,82 s, p95 3,17 s, max 3,86 s; parser p95 2,78 s (2 câu vượt 2,5 s, 1 hết 3 s); N2 token đầu
+  p95 1,59 s (2/22 trên 1,5 s, chưa đạt).

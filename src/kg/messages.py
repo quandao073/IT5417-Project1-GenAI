@@ -29,6 +29,9 @@ TEXT = {
     "negation_skipped": {
         "en": "Not excluded: \"no {name}\" is narrower than anything the image model scores.",
         "vi": "Không loại trừ: \"không {name}\" hẹp hơn mọi khái niệm model ảnh chấm."},
+    "not_considered": {
+        "en": "Not considered: {words}.",
+        "vi": "Không xét: {words}."},
     "location_ignored": {
         "en": "The location \"{region}\" is not used for ranking; the findings are scored.",
         "vi": "Vị trí \"{region}\" không dùng để xếp hạng: câu hỏi được chấm theo dấu hiệu."},

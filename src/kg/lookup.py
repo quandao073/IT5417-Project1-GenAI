@@ -8,8 +8,9 @@ weak label that covers it.
 The side of the question ("trái", "left") is not part of a concept (schema decision 3): it is cut
 before the lookup and reported, so "giảm thể tích phổi trái" finds the aliases of
 "giảm thể tích phổi". A fulltext hit counts only when its alias shares enough words with the
-phrase (Dice coefficient). A phrase made only of modifier words (the linker's qualitative words
-and the vocabulary's dropped modifiers) names no concept: it is skipped without a warning. When
+phrase (Dice coefficient). A phrase made only of modifier words (the linker's qualitative words,
+the vocabulary's dropped modifiers and the query's own) names no concept: it is not looked up, and
+the caller lists it in one "not considered" warning. When
 nothing is found the phrase is unrecognised and the caller drops it with a warning.
 """
 
@@ -41,11 +42,13 @@ def strip_sides(norm: str, sides: list[str]) -> tuple[str, list[str]]:
 
 def modifier_words(kg_cfg: dict, overrides: dict) -> list[str]:
     """Words that only qualify a concept: the linker's `skip` strings (configs/kg/
-    linker_overrides.yaml, observation and anatomy) and the vocabulary's dropped modifiers
-    (kg.yaml vocab.drop_modifiers), normalised."""
+    linker_overrides.yaml, observation and anatomy), the vocabulary's dropped modifiers
+    (kg.yaml vocab.drop_modifiers) and the query's own (kg.yaml query.extra_modifiers), normalised.
+    The first two lists are frozen with the linker and the vocabulary; additions go to the third."""
     words = {s for kind in ("observation", "anatomy")
              for s, v in (overrides.get(kind) or {}).items() if v == "skip"}
     words |= {w for group in kg_cfg["vocab"]["drop_modifiers"].values() for w in group}
+    words |= set(kg_cfg["query"].get("extra_modifiers", []))
     return sorted({normalize(w) for w in words})
 
 
@@ -74,7 +77,7 @@ class Lookup:
     core: str
     sides: list[str] = field(default_factory=list)
     candidates: list[Candidate] = field(default_factory=list)
-    modifier: bool = False                             # only modifier words: skipped silently
+    modifier: bool = False                             # only modifier words: not looked up
     timings: dict = field(default_factory=dict)       # ms of each step, set by the pipeline
 
     def to_dict(self) -> dict:
