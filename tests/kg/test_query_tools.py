@@ -150,6 +150,7 @@ def test_modifier_words_come_from_the_linker_and_the_vocabulary():
 
 
 def test_a_region_alone_is_a_noisy_or_weighted_by_how_typical_each_finding_is(store):
-    got = expand.expand_concepts(store, "C9", PRESENT, EXPAND_CFG, "space")
+    got = expand.expand_concepts(store, "C9", PRESENT, {**EXPAND_CFG, "min_n": 5}, "space")
     assert got.combine == expand.WEIGHTED_OR
-    assert [(c.cui, c.weight) for c in got.columns] == [("C1", 0.25)]
+    # p 0.25 and 0.05, divided by the largest: the most typical finding counts fully
+    assert [(c.cui, round(c.weight, 3)) for c in got.columns] == [("C1", 1.0), ("C2", 0.2)]

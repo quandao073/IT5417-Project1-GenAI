@@ -224,6 +224,9 @@ query:
     # dictionary is the graph's aliases (cached under data/kg/sapbert_alias/). `enabled: false` is the V2-7 ablation.
     sapbert: {enabled: true, top: 5, min_cos: 0.8}
   sides: [bên trái, bên phải, hai bên, trái, phải, left, right, bilateral, bilaterally]
+  # Modifier words of the query path on top of the linker's `skip` words and vocab.drop_modifiers (both frozen with
+  # their stage): a term made only of modifiers is not looked up and is listed in a "not considered" warning (WORKLOG D69).
+  extra_modifiers: [loculated, layering, dependent, patchy, residual, chronic, acute]
   # Side words that cannot mean anything else, to warn that the side is not ranked by when the parser recorded none
   # (the bare Vietnamese "trái" and "phải" also mean "fruit" and "must", so they are not here).
   question_sides:
