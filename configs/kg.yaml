@@ -170,7 +170,7 @@ graph:
       C0340766: [C0034063, C0018800]   # raised venous pressure (read as the lung veins) <- edema, cardiomegaly
       C0340643: [C0746459]             # a tear in the wall of the main artery <- widened mediastinum
       C0034072: [C0018800]             # right-heart failure from lung disease <- cardiomegaly
-      C0018021: [C0746459]             # an enlarged thyroid <- widened mediastinum
+      C0018021: [C0746459]             # a thyroid grown down behind the breastbone <- widened mediastinum
   # Core diseases that no column can score (no sign of theirs has one): candidates for the next round of extra
   # columns, reported apart by scripts/kg_disease_routes.py (WORKLOG D68). Codes only.
   round_two_columns:
