@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import polars as pl
+import pytest
 
 from src.common.config import load_config
-from src.kg import graph, graph_llm
+from src.kg import graph, graph_llm, llm_select
 
 LCFG = load_config("kg")["linker"]
 GCFG = {**load_config("kg")["graph"], "anatomy_depth": 1, "finding_down": 1, "finding_up": 2,
@@ -139,6 +140,22 @@ def test_alias_flags_and_suggest_items():
                           "n": [5, 9], "n_src": [50, 90], "p": [0.1, 0.1]})
     items = graph_llm.suggest_items(edges, {"A": ("a", ""), "D": ("d", "")}, top=1)
     assert [i["string"] for i in items] == ["B>D"] and items[0]["input"]["source"]["name"] == "B"
+
+
+def test_route_items_keep_the_mentioned_diseases_and_the_proposal_names_listed_columns():
+    pending = [{"cui": "D1", "n_pool": 80}, {"cui": "D2", "n_pool": 10}]
+    items = graph_llm.route_items(pending, {"D1": ("d1", "T047")}, ["A", "B"], min_n=50)
+    assert [i["string"] for i in items] == ["D1"]
+    assert [c["cui"] for c in items[0]["input"]["columns"]] == ["A", "B"]
+    ok = graph_llm.parse_route('{"decision": "suggests", "columns": ["B", "A", "B"], '
+                               '"reason": "r"}', items[0])
+    assert ok["columns"] == ["B", "A"]
+    for bad in ('{"decision": "is_a", "columns": ["A", "B"], "reason": "r"}',
+                '{"decision": "suggests", "columns": ["Z"], "reason": "r"}',
+                '{"decision": "suggests", "columns": [], "reason": "r"}',
+                '{"decision": "none", "columns": ["A"], "reason": "r"}'):
+        with pytest.raises(llm_select.LLMSelectError):
+            graph_llm.parse_route(bad, items[0])
 
 
 def test_aliases_keep_only_reviewed_vietnamese_forms(tmp_path):

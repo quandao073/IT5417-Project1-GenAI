@@ -863,3 +863,20 @@ nhắc. Hiệu chỉnh như 14 cột (`image_scores.calibrate`); AUROC lenient (
   residual, chronic, acute.
 - **Smoke lượt g** (24 câu): N1 p50 1,82 s, p95 3,17 s, max 3,86 s; parser p95 2,78 s (2 câu vượt 2,5 s, 1 hết 3 s); N2 token đầu
   p95 1,59 s (2/22 trên 1,5 s, chưa đạt).
+
+## Lookup gộp ba bước, rà đường cho Disease (đo 2026-11-08, D68 sửa)
+
+- **Smoke lượt h** (24 câu, `cxr kg-query`, lookup luôn chạy exact + fulltext + SapBERT, gộp, tối đa 5; SapBERT mã hóa một lượt
+  lúc dựng runtime; chạy hai lần, số dưới là lần hai, cache chooser của lần một còn trên đĩa). **Bước KG** (nhãn + lookup và
+  expand của mọi term + chấm điểm, không tính chooser, mỗi request): p50 77 ms, p95 **196 ms**, max 233 ms (lần một, khi chưa làm
+  nóng SapBERT: p95 354 ms, max 601 ms ở câu đầu, mã hóa lạnh 593 ms). Lookup mỗi term p50 73, p95 105, max 107 ms (20 term).
+  N1 p50 1,37 s, p95 2,88 s, max 3,15 s; parser p50 1,30 / p95 1,54 s (0 câu vượt 2,5 s, 0 fallback); N2 token đầu p50 0,83 s, p95
+  **1,17 s**, max 1,46 s, 0/24 trên 1,5 s (lượt g: p95 1,59 s; chênh này là nhiễu độ trễ Haiku, code diễn giải không đổi). 24/24
+  diễn giải `ok`.
+- So với lượt g, câu đổi: 22 "mediastinum looks wider than normal" → Widened mediastinum (SapBERT xếp trên hit fulltext
+  Mediastinum, độ phủ 1/3); 1 có kết quả (lượt g parser hết giờ); 6, 11, 20 đổi term do parser (nhiễu giữa lượt): 20 thêm term
+  "lobar pneumonia" → C0032300, không có đường, cảnh báo. Câu 1 "khí phế thũng" không có alias exact, chỉ có hit SapBERT.
+- **Route-review** (`cxr kg-graph-llm --task route-review --all`, `claude-opus-5-5`, prompt `kg_route_review_v1.txt` sha256
+  `4d1d527e…`): 29 / 67 Disease chờ phân xử có ≥ 50 lượt nhắc; Opus đề xuất `is_a` 10, `suggests` 16, `none` 3; 0 lỗi, 0 từ
+  chối; 69.712 token vào, 5.610 token ra. Ra `data/kg/graph/route_review.csv` (cục bộ), cột `decision` trống cho 26 dòng có đường,
+  `none` cho 3 dòng. Chưa thêm cạnh nào.

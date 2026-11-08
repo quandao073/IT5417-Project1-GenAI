@@ -92,7 +92,7 @@ class ConceptChooser:
         cands = lookup.candidates
         if not cands:
             return Choice(None, "none", "no candidate")
-        if len(cands) == 1 and cands[0].match == "exact":
+        if lookup.single_exact:
             return Choice(cands[0].cui, "single", "one exact candidate")
         started = time.perf_counter()
         payload = {"question": question, "term": term, "polarity": polarity, "candidates": [

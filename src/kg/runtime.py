@@ -133,6 +133,7 @@ def build_kg_search(settings: Settings, manifest: dict, images: pl.DataFrame, *,
     if cfg["query"]["lookup"]["sapbert"]["enabled"]:
         try:
             semantic = _alias_index(cfg, graph_dir)
+            semantic.search("cardiomegaly", 1)   # the slow first encode, paid before any request
         except Exception as exc:  # noqa: BLE001 - no model, no network: lookup without the stage
             notes.append(f"sapbert: {type(exc).__name__}: {exc}"[:200])
     if semantic is not None:

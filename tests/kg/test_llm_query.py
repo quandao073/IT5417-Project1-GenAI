@@ -90,6 +90,11 @@ def test_one_exact_candidate_needs_no_model_and_no_candidate_means_none():
     got = chooser(chat).choose("q", "tràn dịch màng phổi", PRESENT, found("tràn dịch màng phổi"))
     assert (got.cui, got.via, chat.calls) == ("C1", "single", [])
     assert chooser(chat).choose("q", "xyz", PRESENT, found("xyz qwerty")).via == "none"
+    # fulltext hits merged after the exact one do not make it a choice
+    merged = found("pleural effusion")
+    assert len(merged.candidates) > 1
+    got = chooser(chat).choose("q", "pleural effusion", PRESENT, merged)
+    assert (got.cui, got.via, chat.calls) == ("C1", "single", [])
 
 
 def test_the_model_sees_the_whole_question_and_picks_one_of_the_candidates():

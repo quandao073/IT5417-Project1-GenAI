@@ -26,6 +26,12 @@ ghi vào `docs/measured-facts.md`, quyết định vào `WORKLOG.md`. Ngưỡng 
 | V2-13 | Runbook và chạy thử `docker compose` trên máy sạch (N12, T15) | V2-6 | ⏳ |
 | V2-14 | Quy trình kiểm lại hiệu chỉnh cho ảnh từ nguồn khác (N7) | V2-6 | ⏳ |
 
+Ngoài V2 (chưa xếp lịch):
+
+| Task | Việc | Phụ thuộc | Trạng thái |
+|---|---|---|---|
+| X-1 | Cột vòng hai: scoliosis, dextroscoliosis, pneumoperitoneum, hyperinflation (`graph.round_two_columns`, 4 Disease lõi không chấm được) — cần thêm dữ liệu hiệu chỉnh | dữ liệu hiệu chỉnh mới | ⏳ |
+
 **TIẾP THEO:** V2-7. B2 chạy end-to-end (`cxr kg-query`, `POST /api/v1/search/kg`; D66); ma trận 37 cột (D62); parser dùng `claude-haiku-5-5` (D61). TIP nằm ở `notes/tip-*.md` (gitignored).
 
 ## Dữ liệu
@@ -178,5 +184,5 @@ Agent tự gọi tool (ablation, tối đa 5 lượt). UI hiển thị đường
 
 ## Nhánh
 
-Mọi task V2 làm tuần tự trên `feat/v2-knowledge-graph` (tách từ `main` `1b50c19`), không dùng worktree. Commit khi
-người dùng bảo.
+Theo CLAUDE.md §6: mỗi task một nhánh tách từ `main`, đặt tên theo công việc, PR nhỏ, merge commit. Commit khi người
+dùng bảo.

@@ -35,7 +35,8 @@ def test_lookup_finds_an_alias_exactly_and_cuts_the_side(store):
 
 def test_lookup_reads_a_plural_as_its_singular_and_falls_back_to_shared_words(store):
     plural = lookup.lookup_concept(store, "pleural effusions", LOOKUP_CFG)
-    assert [(c.cui, c.match) for c in plural.candidates] == [("C1", "exact")]
+    assert (plural.candidates[0].cui, plural.candidates[0].match) == ("C1", "exact")
+    assert plural.single_exact and {c.match for c in plural.candidates[1:]} == {"fulltext"}
     near = lookup.lookup_concept(store, "pleural", LOOKUP_CFG)       # one word, in three aliases
     assert {c.cui for c in near.candidates} == {"C1", "C7", "C9"} and all(
         c.match == "fulltext" and c.score >= 0.5 for c in near.candidates)
@@ -96,7 +97,7 @@ def test_a_strong_concept_comes_before_the_weak_label_that_covers_it(store):
     assert [c.cui for c in got.candidates] == ["C11", "C10"]        # C10 is weak, C11 is not
 
 
-def test_the_sapbert_stage_runs_only_when_no_alias_is_the_phrase(store):
+def test_the_sapbert_stage_adds_its_hits_and_an_exact_one_stays_first(store):
     class Index:
         def search(self, norm, k):
             return [{"cui": "C3", "text": "edema", "score": 0.91},
@@ -106,8 +107,10 @@ def test_the_sapbert_stage_runs_only_when_no_alias_is_the_phrase(store):
                                     "sapbert": {"enabled": True, "top": 5, "min_cos": 0.8}}}
     near = lookup.lookup_concept(store, "fluid in the lungs", cfg, Index())
     assert [(c.cui, c.match, c.score) for c in near.candidates] == [("C3", "sapbert", 0.91)]
-    exact = lookup.lookup_concept(store, "edema", cfg, Index())
+    exact = lookup.lookup_concept(store, "edema", cfg, Index())     # SapBERT's C3 merges into it
     assert [(c.cui, c.match) for c in exact.candidates] == [("C3", "exact")]
+    other = lookup.lookup_concept(store, "cardiomegaly", cfg, Index())
+    assert [(c.cui, c.match) for c in other.candidates] == [("C2", "exact"), ("C3", "sapbert")]
     assert lookup.lookup_concept(store, "xyz qwerty", cfg).candidates == []   # no index, no stage
 
 
@@ -123,22 +126,28 @@ def test_a_weak_finding_takes_no_slot_of_the_region_s_top_findings(store):
     assert got.kind == "anatomy" and [c.cui for c in got.columns] == ["C1"]
 
 
-def test_sapbert_runs_last_after_an_empty_fulltext_and_modifiers_are_skipped(store):
+def test_a_fulltext_hit_covering_little_of_the_phrase_ranks_after_sapbert(store):
     calls = []
 
     class Index:
         def search(self, norm, k):
             calls.append(norm)
-            return [{"cui": "C3", "text": "edema", "score": 0.95}]
+            return [{"cui": "C2", "text": "cardiomegaly", "score": 0.85}]
 
     cfg = {**LOOKUP_CFG, "modifiers": ["small", "diffuse"],
            "lookup": {**LOOKUP_CFG["lookup"], "sapbert": {"enabled": True, "top": 5,
                                                           "min_cos": 0.8}}}
-    near = lookup.lookup_concept(store, "pleural", cfg, Index())      # fulltext finds it
-    assert {c.match for c in near.candidates} == {"fulltext"} and calls == []
+    # "edema": Dice 0.5 but one word of three; SapBERT's 0.85 comes first all the same
+    low = lookup.lookup_concept(store, "edema looks worse", cfg, Index())
+    assert [(c.cui, c.match, c.coverage) for c in low.candidates] == [
+        ("C2", "sapbert", None), ("C3", "fulltext", 0.333)]
+    # a fulltext hit covering the whole phrase is ranked with SapBERT by score: Dice 0.667 < 0.85
+    near = lookup.lookup_concept(store, "pleural", cfg, Index())
+    assert near.candidates[0].match == "sapbert" and len(calls) == 2
+    assert all(c.coverage == 1.0 for c in near.candidates if c.match == "fulltext")
     for words in ("small", "small diffuse"):
         got = lookup.lookup_concept(store, words, cfg, Index())
-        assert got.modifier and got.candidates == [] and calls == []
+        assert got.modifier and got.candidates == [] and len(calls) == 2
     assert not lookup.lookup_concept(store, "small effusion", cfg, Index()).modifier
 
 

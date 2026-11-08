@@ -1510,8 +1510,9 @@ def _reach_report(core: pl.DataFrame, links: pl.DataFrame) -> dict:
 
 
 def _cmd_kg_graph_llm(args: argparse.Namespace) -> int:
-    """V2-4 (D58): Opus reviews the strongest SUGGESTS edges, or proposes Vietnamese aliases;
-    answers are cached and written to a review CSV for Claude in the chat app to adjudicate."""
+    """V2-4 (D58): Opus reviews the strongest SUGGESTS edges, or proposes Vietnamese aliases, or
+    (D68) proposes a route to the columns for each core disease that has none; answers are cached
+    and written to a review CSV for Claude in the chat app to adjudicate. No edge is added here."""
     gcfg = load_config("kg")["graph"]
     mcfg, out, umls = gcfg["llm"], Path(args.out), Path(args.umls_dir)
     key = llm_select.api_key("ANTHROPIC_API_KEY")
@@ -1526,6 +1527,14 @@ def _cmd_kg_graph_llm(args: argparse.Namespace) -> int:
         top = (edges.filter(pl.col("rel") == graph.SUGGESTS)
                .sort(["n", "p"], descending=True).head(mcfg["suggests_top"]))
         cuis = set(top["src"]) | set(top["dst"])
+    elif args.task == "route-review":
+        routes = out / "diseases_without_route.json"
+        if not routes.is_file():
+            print(f"STOP: {routes} is missing; run scripts/kg_disease_routes.py", file=sys.stderr)
+            return 1
+        pending = json.loads(routes.read_text(encoding="utf-8"))["pending"]
+        columns = sorted(nodes.filter(pl.col("scorable"))["cui"])
+        cuis = set(columns) | {r["cui"] for r in pending if r["n_pool"] >= mcfg["route_min_n"]}
     elif args.cuis:
         cuis = set(args.cuis)      # e.g. the concepts that just got a column (D62)
     else:
@@ -1542,6 +1551,10 @@ def _cmd_kg_graph_llm(args: argparse.Namespace) -> int:
         items = graph_llm.suggest_items(edges, info, mcfg["suggests_top"])
         prompt_file, schema = mcfg["suggests_prompt"], graph_llm.SUGGEST_SCHEMA
         parse, refused = graph_llm.parse_review, graph_llm.REFUSED_REVIEW
+    elif args.task == "route-review":
+        items = graph_llm.route_items(pending, info, columns, mcfg["route_min_n"])
+        prompt_file, schema = mcfg["route_prompt"], graph_llm.ROUTE_SCHEMA
+        parse, refused = graph_llm.parse_route, graph_llm.REFUSED_ROUTE
     else:
         english = {}
         for cui, text in (pl.scan_parquet(umls / "mrconso.parquet")
@@ -1578,8 +1591,31 @@ def _cmd_kg_graph_llm(args: argparse.Namespace) -> int:
             r["decision"], r["note"] = done.get((r["src"], r["dst"]), (
                 r["opus_decision"], "opus proposal applied; chat review pending"))
         pl.DataFrame(rows).write_csv(path)
+    elif args.task == "route-review":
+        path = out / "route_review.csv"
+        done = ({r["cui"]: (r["decision"], r["note"]) for r in
+                 pl.read_csv(path, infer_schema_length=0).fill_null("").iter_rows(named=True)}
+                if path.exists() else {})
+        rows = []
+        for it in items:
+            answer = answers.get(("route", it["string"]))
+            if answer is None:
+                continue
+            # a proposed route waits for the chat's decision; "no sign among the columns" is none
+            proposed = ("none", "") if answer["decision"] == "none" else ("", "")
+            decision, note = done.get(it["string"], proposed)
+            rows.append({"cui": it["string"], "name": it["input"]["disease"]["name"],
+                         "n_pool": it["input"]["n_pool_reports"],
+                         "opus_decision": answer["decision"],
+                         "opus_columns": ";".join(answer["columns"]),
+                         "opus_column_names": ";".join(info.get(c, (c, ""))[0]
+                                                       for c in answer["columns"]),
+                         "opus_reason": answer["reason"], "decision": decision, "note": note})
+        pl.DataFrame(rows).write_csv(path)
+        print(f"route_review.csv: {len(rows)} rows, "
+              f"{sum(r['opus_decision'] != 'none' for r in rows)} with a proposed route")
     else:
-        blocked = [*concepts["blocked_phrases"]["vi"], *gcfg["alias_common_phrases"]]
+        blocked =[*concepts["blocked_phrases"]["vi"], *gcfg["alias_common_phrases"]]
         label_of = dict(nodes.filter(pl.col("chexpert_label").is_not_null())
                         .select("cui", "chexpert_label").iter_rows())
         # rows already in the file keep their adjudication; only concepts not yet in it are added
@@ -1889,8 +1925,9 @@ def build_parser() -> argparse.ArgumentParser:
     kgg.set_defaults(func=_cmd_kg_build_graph)
 
     kgr = sub.add_parser("kg-graph-llm",
-                         help="V2-4: Opus reviews SUGGESTS edges or proposes Vietnamese aliases")
-    kgr.add_argument("--task", choices=["suggests", "alias"], required=True)
+                         help="V2-4: Opus reviews SUGGESTS edges, proposes Vietnamese aliases, "
+                              "or proposes routes for diseases that reach no column")
+    kgr.add_argument("--task", choices=["suggests", "alias", "route-review"], required=True)
     budget = kgr.add_mutually_exclusive_group(required=True)
     budget.add_argument("--limit", type=int, help="at most this many uncached items")
     budget.add_argument("--all", action="store_true", help="every uncached item")

@@ -180,6 +180,10 @@ graph:
     alias_prompt: prompts/kg_alias_vi_v1.txt
     alias_top: 200        # concepts by n_pool, besides the 14 labels
     alias_max: 3
+    # Core diseases without a route to a column (scripts/kg_disease_routes.py), at least this many pool mentions:
+    # Opus proposes IS_A to a column, SUGGESTS from columns, or none; Claude in the chat adjudicates (WORKLOG D68).
+    route_prompt: prompts/kg_route_review_v1.txt
+    route_min_n: 50
     budget_usd: 5.0
   # Vietnamese forms an alias must not hide inside (T20), on top of concepts.yaml blocked_phrases.vi.
   alias_common_phrases: [phù hợp, bình thường, không có, có thể, tương tự, so với, kích thước, vị trí, hình ảnh]
@@ -220,7 +224,9 @@ query:
     max_candidates: 5
     fulltext_limit: 12
     min_dice: 0.5
-    # The SapBERT stage (WORKLOG D66, D68): the last one, run only when exact and fulltext found nothing; its
+    # A fulltext hit whose alias has under this share of the phrase's words ranks after every SapBERT hit (D68).
+    min_coverage: 0.5
+    # The SapBERT stage (WORKLOG D66, D68): runs on every phrase beside exact and fulltext, hits merged; its
     # dictionary is the graph's aliases (cached under data/kg/sapbert_alias/). `enabled: false` is the V2-7 ablation.
     sapbert: {enabled: true, top: 5, min_cos: 0.8}
   sides: [bên trái, bên phải, hai bên, trái, phải, left, right, bilateral, bilaterally]
