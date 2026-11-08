@@ -889,8 +889,8 @@ nhắc. Hiệu chỉnh như 14 cột (`image_scores.calibrate`); AUROC lenient (
   / 125 (theo lượt nhắc 0,951 → 0,968), Finding 55 → 59 / 229. `scripts/kg_disease_routes.py` trên Neo4j đã nạp lại: route của 124
   Disease lõi có lượt nhắc là direct 7, narrower 44, disease 23, wider 2, none 48 (trước: 7, 33, 11, 2, 71). Trong 48: 4 cột vòng
   hai, 7 có ≥ 50 lượt nhắc mà phân xử `none`, 37 dưới 50 lượt nhắc. Một bệnh dưới 50 lượt nhắc (C0029410) có đường gián tiếp.
-- **Smoke lượt i** (24 câu `docs/v2-6-smoke.txt`, `kg_build_id` kg_e74397496bbe; lần dựng lại sau đó chỉ đổi chú thích config, cạnh
-  giữ nguyên, id thành kg_f3173d6a7102): không câu nào đổi kết quả vì cạnh mới; vì 24 câu không hỏi tới bệnh nào vừa có đường. Câu
+- **Smoke lượt i** (24 câu `docs/v2-6-smoke.txt`, `kg_build_id` kg_e74397496bbe; hai lần dựng lại sau đó chỉ đổi chú thích config, cạnh
+  giữ nguyên, id thành kg_c757b723e68c): không câu nào đổi kết quả vì cạnh mới; vì 24 câu không hỏi tới bệnh nào vừa có đường. Câu
   6, 11, 22 đổi term do parser, kết quả như lượt h. Bước KG p50 76, p95 **152**, max 203 ms. N1 p50 1,45 s, p95 2,94 s, max 3,40 s;
   parser p95 1,85 s, 0 fallback; N2 token đầu p50 0,79 s, p95 **1,47 s**, max 1,73 s, 1/24 trên 1,5 s. 24/24 diễn giải `ok`.
   Bảng đầy đủ: `docs/v2-6-smoke.md`.
