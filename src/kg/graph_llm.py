@@ -54,12 +54,15 @@ parse_review, parse_aliases = _parser(SuggestReview), _parser(AliasProposal)
 
 def parse_route(content: str, item: dict) -> dict:
     """A route proposal names only columns of the item's list: at least one for is_a and
-    suggests (one for is_a), none for none."""
+    suggests (one for is_a), none for none; a weak column (D55) is never a SUGGESTS source."""
     answer = _parser(RouteProposal)(content, item)
     allowed = {c["cui"] for c in item["input"]["columns"]}
     columns = list(dict.fromkeys(answer["columns"]))
     if set(columns) - allowed:
         raise llm_select.LLMSelectError(f"columns outside the list: {set(columns) - allowed}")
+    weak = set(columns) & set(item["input"]["weak_columns"])
+    if answer["decision"] == "suggests" and weak:
+        raise llm_select.LLMSelectError(f"weak columns as SUGGESTS sources: {weak}")
     wanted = {"is_a": (1, 1), "suggests": (1, len(allowed)), "none": (0, 0)}[answer["decision"]]
     if not wanted[0] <= len(columns) <= wanted[1]:
         raise llm_select.LLMSelectError(
@@ -100,13 +103,16 @@ def alias_items(nodes: pl.DataFrame, info: dict, english: dict[str, list[str]],
 
 
 def route_items(pending: Sequence[dict], info: dict, columns: Sequence[str],
-                min_n: int) -> list[dict]:
+                weak: Collection[str], min_n: int) -> list[dict]:
     """The core diseases without a route (scripts/kg_disease_routes.py) with at least `min_n`
-    pool mentions as items: the disease and every score column, each a concept."""
+    pool mentions as items: the disease, every score column as a concept, and the weak ones
+    (D55; quality.json), which may be an IS_A parent but never a SUGGESTS source."""
     listed = [_concept(info, c) for c in columns]
+    weak_columns = sorted(set(weak) & set(columns))
     return [{"kind": "route", "string": row["cui"], "input": {
         "disease": _concept(info, row["cui"]), "n_pool_reports": row["n_pool"],
-        "columns": listed}} for row in pending if row["n_pool"] >= min_n]
+        "columns": listed, "weak_columns": weak_columns}}
+        for row in pending if row["n_pool"] >= min_n]
 
 
 def _tokens(text: str) -> list[str]:

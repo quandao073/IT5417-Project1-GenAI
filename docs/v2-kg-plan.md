@@ -32,6 +32,9 @@ Ngoài V2 (chưa xếp lịch):
 |---|---|---|---|
 | X-1 | Cột vòng hai: scoliosis, dextroscoliosis, pneumoperitoneum, hyperinflation (`graph.round_two_columns`, 4 Disease lõi không chấm được) — cần thêm dữ liệu hiệu chỉnh | dữ liệu hiệu chỉnh mới | ⏳ |
 
+38 Disease lõi chưa có đường và có dưới 50 lượt nhắc trên pool (danh sách ở `data/kg/graph/diseases_without_route.json`;
+sau khi thêm cạnh của lượt rà đường còn 37): không chấm được, không phân xử thêm trong V2.
+
 **TIẾP THEO:** V2-7. B2 chạy end-to-end (`cxr kg-query`, `POST /api/v1/search/kg`; D66); ma trận 37 cột (D62); parser dùng `claude-haiku-5-5` (D61). TIP nằm ở `notes/tip-*.md` (gitignored).
 
 ## Dữ liệu
@@ -41,21 +44,24 @@ data/umls/raw/                                  bản gốc NLM, chỉ đọc (D
   umls-2026AA-metathesaurus-level0.zip            UMLS_ZIP
   2026AA/META/*.RRF                               UMLS_META_DIR
 data/umls/2026AA/                               cxr kg-filter-umls: mrconso, mrsty, mrrel, mrsab .parquet + manifest.json
-data/kg/<kg_build_id>/                          V2-2 → V2-4: từ vựng, bảng liên kết, nút, cạnh, manifest (dự kiến)
+data/kg/{vocab,link,graph}/                     V2-2 → V2-4: từ vựng, bảng liên kết, nút, cạnh, manifest
 ```
 
 Cả hai thư mục nằm dưới `data/` (gitignored). Không commit, không đưa vào Docker image (D49). Thứ được commit: code,
 `configs/kg.yaml` và bảng ánh xạ của dự án sang CUI (chỉ mã, không tên).
 
-## Hiện trạng trên `main` (2026-10-27)
+## Hiện trạng trên `main` (2026-11-08)
 
 | Thành phần | Có gì | Thiếu gì |
 |---|---|---|
 | Pool, patient split | `cxr build-probe-pool` → `data/probe_pool/` (88.853 study); `src/embeddings/probe.py:patient_split` (sha256 của `seed:patient`, chia theo bệnh nhân) | — |
-| RadGraph-XL | Khớp text CSV 100% ở cả hai section; phủ 25.000/25.000 ca corpus; độ phủ trên pool đo ở V2-2 | — |
-| CXR-CLIP | Zero-shot `data/cache/models/cxrclip/swint_m.pt`, build corpus `20261023_chexpert25k_cxrclip_v1` đã đăng ký | Candidate FT6 `cxrclip_ft6_lr1e-04` (`runs/FT6_lr1e-04/model.pt`) mang về ở V2-5 |
-| Embedding | Pool 88.853 ảnh (zero-shot); pool-val 9.037 ảnh (zero-shot và FT6); corpus FT6 25.000 ảnh | — (build corpus FT6 đăng ký ở V2-5b) |
-| Ma trận điểm | V2-5: `cxr build-image-scores` → `data/indexes/image_scores/<build_id>/`, ma trận FT6 đã dựng | — |
+| RadGraph-XL | Khớp text CSV 100% ở cả hai section; phủ 25.000/25.000 ca corpus và cả pool (V2-2) | — |
+| CXR-CLIP | FT6 `cxrclip_ft6_lr1e-04` là encoder mặc định (D38, D54); zero-shot và BiomedCLIP vẫn là candidate; ba build corpus đã đăng ký | Trọng số FT6 chỉ có trên máy (`runs/`) |
+| Embedding | Pool 88.853 ảnh (zero-shot); pool-val 9.037 ảnh (zero-shot và FT6); corpus FT6 25.000 ảnh | — |
+| Ma trận điểm | `data/indexes/image_scores/<build_id>_ext1/`: 37 cột (14 nhãn + 23 cột mở rộng, D62), hiệu chỉnh trên pool-val; `cxr kg-quality` → `quality.json` (6 cột yếu, D55) | Cột vòng hai (X-1) |
+| KG | `cxr kg-build-graph` → `data/kg/graph/`: 9.632 nút (lõi 595), IS_A 10.234, PART_OF 3.826, SUGGESTS 69, TYPICALLY_AT 579; độ nối D59 theo lượt nhắc 0,948; cạnh tay ở `graph.manual_edges` | 48 Disease lõi có lượt nhắc vẫn chưa có đường (`docs/v2-6-smoke.md`) |
+| Neo4j | service `neo4j` (profile `kg`), `cxr kg-load-neo4j`, `validate-indexes --kg` (D65) | — |
+| Truy vấn B2 | `cxr kg-query`, `POST /api/v1/search/kg` (D66–D69); parser, chooser, diễn giải đều dùng `claude-haiku-5-5`; smoke 24 câu ở `docs/v2-6-smoke.md` | Benchmark V2-7; N2 dao động quanh 1,5 s; CI (V2-11); UI chờ `pnpm` (T5) |
 
 ## Các task
 

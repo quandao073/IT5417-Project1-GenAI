@@ -1552,7 +1552,9 @@ def _cmd_kg_graph_llm(args: argparse.Namespace) -> int:
         prompt_file, schema = mcfg["suggests_prompt"], graph_llm.SUGGEST_SCHEMA
         parse, refused = graph_llm.parse_review, graph_llm.REFUSED_REVIEW
     elif args.task == "route-review":
-        items = graph_llm.route_items(pending, info, columns, mcfg["route_min_n"])
+        quality = json.loads((out / "quality.json").read_text(encoding="utf-8"))
+        weak = {cui for cui, q in quality.items() if q["weak"]}
+        items = graph_llm.route_items(pending, info, columns, weak, mcfg["route_min_n"])
         prompt_file, schema = mcfg["route_prompt"], graph_llm.ROUTE_SCHEMA
         parse, refused = graph_llm.parse_route, graph_llm.REFUSED_ROUTE
     else:
@@ -1593,19 +1595,18 @@ def _cmd_kg_graph_llm(args: argparse.Namespace) -> int:
         pl.DataFrame(rows).write_csv(path)
     elif args.task == "route-review":
         path = out / "route_review.csv"
-        done = ({r["cui"]: (r["decision"], r["note"]) for r in
-                 pl.read_csv(path, infer_schema_length=0).fill_null("").iter_rows(named=True)}
-                if path.exists() else {})
-        rows = []
+        # rows already in the file are kept as adjudicated, also once their disease has a route
+        rows = (list(pl.read_csv(path, infer_schema_length=0).fill_null("").iter_rows(named=True))
+                if path.exists() else [])
+        done = {r["cui"] for r in rows}
         for it in items:
             answer = answers.get(("route", it["string"]))
-            if answer is None:
+            if answer is None or it["string"] in done:
                 continue
             # a proposed route waits for the chat's decision; "no sign among the columns" is none
-            proposed = ("none", "") if answer["decision"] == "none" else ("", "")
-            decision, note = done.get(it["string"], proposed)
+            decision, note = ("none" if answer["decision"] == "none" else ""), ""
             rows.append({"cui": it["string"], "name": it["input"]["disease"]["name"],
-                         "n_pool": it["input"]["n_pool_reports"],
+                         "n_pool": str(it["input"]["n_pool_reports"]),
                          "opus_decision": answer["decision"],
                          "opus_columns": ";".join(answer["columns"]),
                          "opus_column_names": ";".join(info.get(c, (c, ""))[0]

@@ -144,13 +144,19 @@ def test_alias_flags_and_suggest_items():
 
 def test_route_items_keep_the_mentioned_diseases_and_the_proposal_names_listed_columns():
     pending = [{"cui": "D1", "n_pool": 80}, {"cui": "D2", "n_pool": 10}]
-    items = graph_llm.route_items(pending, {"D1": ("d1", "T047")}, ["A", "B"], min_n=50)
+    items = graph_llm.route_items(pending, {"D1": ("d1", "T047")}, ["A", "B", "W"],
+                                  weak={"W", "not-a-column"}, min_n=50)
     assert [i["string"] for i in items] == ["D1"]
-    assert [c["cui"] for c in items[0]["input"]["columns"]] == ["A", "B"]
+    assert [c["cui"] for c in items[0]["input"]["columns"]] == ["A", "B", "W"]
+    assert items[0]["input"]["weak_columns"] == ["W"]
     ok = graph_llm.parse_route('{"decision": "suggests", "columns": ["B", "A", "B"], '
                                '"reason": "r"}', items[0])
     assert ok["columns"] == ["B", "A"]
+    # a weak column may be an IS_A parent (D55: climbing IS_A warns), never a SUGGESTS source
+    assert graph_llm.parse_route('{"decision": "is_a", "columns": ["W"], "reason": "r"}',
+                                 items[0])["columns"] == ["W"]
     for bad in ('{"decision": "is_a", "columns": ["A", "B"], "reason": "r"}',
+                '{"decision": "suggests", "columns": ["A", "W"], "reason": "r"}',
                 '{"decision": "suggests", "columns": ["Z"], "reason": "r"}',
                 '{"decision": "suggests", "columns": [], "reason": "r"}',
                 '{"decision": "none", "columns": ["A"], "reason": "r"}'):
