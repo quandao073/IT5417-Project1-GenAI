@@ -1007,7 +1007,7 @@ sai lẽ ra nên bị loại.
   C0016658 201 / 200; cột sống C0037933 (MSH) 98 / 87, C4021789 (HPO) 310 / 273; u C0027651 16.148 / 15.874. Miền: Anatomy
   10.482 / 112.355 CUI, Observation 22.531 / 231.853. 14 nhãn và override: 18 / 22 CUI trong miền; thiếu C0521530,
   C0577916, C0746459, C4022395. Loại oan nhiều: FMA chia phần theo hệ cơ quan nên lung, rib, lower lobe, hemidiaphragm,
-  apex of lung không nằm dưới gốc lồng ngực; lung base (C0225704) không có trong FMA; dấu hiệu chung (consolidation,
+  lung apex không nằm dưới gốc lồng ngực; lung base (C0225704) không có trong FMA; dấu hiệu chung (consolidation,
   nodule, mass, calcification, infiltrate, scarring, enlargement, degenerative change) không nằm dưới gốc bệnh.
 - **B, gốc dương mở rộng:** thêm 18 gốc cơ quan cho Anatomy (phổi, tim, hệ hô hấp, trung thất, cơ hoành, lồng sườn, xương
   lồng ngực, cột sống, khí quản, động mạch chủ, tĩnh mạch chủ trên, thực quản, dạ dày, khoang màng phổi, tĩnh mạch cảnh,
