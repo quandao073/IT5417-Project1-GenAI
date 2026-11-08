@@ -1438,11 +1438,13 @@ def _cmd_kg_build_graph(args: argparse.Namespace) -> int:
                                                    "aliases_manual.yaml").read_text(encoding="utf-8")))
 
     out.mkdir(parents=True, exist_ok=True)
-    nodes.write_parquet(out / "nodes.parquet")
-    stypes.write_parquet(out / "semantic_types.parquet")
-    edges.write_parquet(out / "edges.parquet")
+    # rows in a fixed order: the same graph gives the same bytes, so kg_build_id (a hash of
+    # these files) changes only when the data does
+    nodes.sort(nodes.columns).write_parquet(out / "nodes.parquet")
+    stypes.sort(stypes.columns).write_parquet(out / "semantic_types.parquet")
+    edges.sort(edges.columns).write_parquet(out / "edges.parquet")
     if alias_rows is not None:
-        alias_rows.write_parquet(out / "aliases.parquet")
+        alias_rows.sort(alias_rows.columns).write_parquet(out / "aliases.parquet")
     pl.concat([s_all, t_all]).write_parquet(out / "weights_all.parquet")   # before the n cut
     in_core = nodes.filter(pl.col("in_core"))
     chf = sorted(set(links.filter(pl.col("kind") == "Observation", pl.col("string").is_in(

@@ -178,6 +178,18 @@ def test_aliases_keep_only_reviewed_vietnamese_forms(tmp_path):
     assert "phổi" not in got["text"].to_list()
 
 
+def test_the_spelling_kept_for_a_norm_does_not_vary_by_run(tmp_path):
+    out = tmp_path / "u"
+    out.mkdir()
+    rows = [conso("C0000001", t) for t in ("pneumonia", "Pneumonia", "PNEUMONIA")]
+    nodes, empty = pl.DataFrame({"cui": ["C0000001"]}), pl.DataFrame(
+        schema={"cui": pl.String, "alias": pl.String, "decision": pl.String})
+    for order in (rows, rows[::-1]):
+        pl.DataFrame(order).write_parquet(out / "mrconso.parquet")
+        got = graph.aliases(nodes, out, {}, {}, empty)
+        assert got["text"].to_list() == ["PNEUMONIA"]     # the first spelling in sorted order
+
+
 def test_manual_edges_carry_the_source_and_equal_weights():
     cfg = {"manual_edges": {"is_a": [["C1", "C2"]], "suggests": {"C9": ["C3", "C4", "C5"]}}}
     edges = graph.manual_edges(cfg)

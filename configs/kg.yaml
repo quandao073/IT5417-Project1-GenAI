@@ -73,7 +73,7 @@ linker:
     biapical: lung apex
   laterality: [left, right, bilateral]   # a CUI named with one of these moves to its unlateralised parent
   pairs: {coverage: 0.90, max_pairs: 10} # located_at pairs tried per Observation string
-  # Candidate filter for exact, SapBERT and pair links (D56, option C; notes/v2-link-roots.md). A CUI of the
+  # Candidate filter for exact, SapBERT and pair links (D56, option C; docs/measured-facts.md). A CUI of the
   # label table stays unless every name comes from code_sabs, or it lies below a negative root of its kind and
   # below none of the positive ones. "Below": FMA parts and isa (relas) and every source's CHD rows (T39).
   domain:

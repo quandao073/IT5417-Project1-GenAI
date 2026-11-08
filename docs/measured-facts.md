@@ -894,3 +894,149 @@ nhắc. Hiệu chỉnh như 14 cột (`image_scores.calibrate`); AUROC lenient (
   6, 11, 22 đổi term do parser, kết quả như lượt h. Bước KG p50 76, p95 **152**, max 203 ms. N1 p50 1,45 s, p95 2,94 s, max 3,40 s;
   parser p95 1,85 s, 0 fallback; N2 token đầu p50 0,79 s, p95 **1,47 s**, max 1,73 s, 1/24 trên 1,5 s. 24/24 diễn giải `ok`.
   Bảng đầy đủ: `docs/v2-6-smoke.md`.
+
+## Số liệu chuyển từ `notes/` (đo 2026-10-27 → 2026-11-01, chuyển 2026-11-08)
+
+Các số dưới đây trước chỉ có ở `notes/` (gitignored). Ngày và cách đo là của lần đo gốc. Chỉ ghi mã, chuỗi của pool, tên
+nhãn CheXpert và mô tả tự viết (T38).
+
+### V2-2: ứng viên CUI của 14 nhãn (2026-10-27, `cxr kg-chexpert-candidates`, D53)
+
+Thứ hạng: khớp đúng tên nhãn (`*`) trước, rồi số dạng `en` khớp, tên ưu tiên, số nguồn. Mỗi ứng viên ghi CUI, TUI và số
+nguồn có tên khớp. Cột "Chốt" là lựa chọn của người dùng, ghi ở `configs/kg/chexpert_cuis.yaml`.
+
+| Nhãn | Ứng viên (CUI TUI số nguồn) | Chốt |
+|---|---|---|
+| Atelectasis | #1\* C0004144 T046 17 · #2 C4284020 T047 2 · #3 C0032326 T047 18 | C0004144 |
+| Cardiomegaly | #1\* C0018800 T033 12 | C0018800 |
+| Consolidation | #1\* C0702116 T080 2 · #2\* C0521530 T047 4 | C0521530 |
+| Edema | #1\* C0013604 T046 17 · #2\* C1717255 T201 2 · #3 C0034063 T046 15 | C0034063 |
+| Enlarged Cardiomediastinum | #1 C0746459 T033 3 | `PRJ:enlarged_cardiomediastinum` |
+| Fracture | #1\* C0016658 T037 17 · #2 C0035522 T037 8 · #3 C0159658 T037 6 | C0016658 |
+| Lung Lesion | #1\* C0577916 T033 2 · #2 C0034079 T033 6 · #3 C0149726 T033 4 | C0577916 |
+| Lung Opacity | #1 C0449584 T080 2 · #2 C4531104 T033 1 | C4531104 |
+| Pleural Effusion | #1\* C0032227 T046 17 · #2\* C1253943 T031 3 · #3 C0225778 T031 7 | C0032227 |
+| Pleural Other | #1 C0340030 T047 2 · #2 C0264545 T047 5 | `PRJ:pleural_other` |
+| Pneumonia | #1\* C0032285 T047 16 · #2 C0745283 T046 2 · #3 C0876973 T047 6 | C0032285 |
+| Pneumothorax | #1\* C0032326 T047 18 | C0032326 |
+| Support Devices | #1 C0008034 T074 5 · #2 C0336630 T074 3 · #3 C0810633 T074 3 | `PRJ:support_devices` |
+| No Finding | không có ứng viên | `PRJ:no_finding` |
+
+"collapsed lung" là dạng `en` của Atelectasis (D21), nhưng trong MRCONSO nó cũng khớp chính xác C0032326 (Pneumothorax)
+và C4284020; linker không được lấy khớp này mà bỏ qua D21.
+
+**`is_a` và `children` của ba nhãn PRJ** (cha tìm bằng MRREL `PAR` tới 3 tầng, chiều đã kiểm trên Pleural Effusion, T39;
+con là các CUI khớp chính xác dạng `en`; lựa chọn in đậm):
+
+- Enlarged Cardiomediastinum: `is_a` **C4022395** (T190, HPO; cha trực tiếp của C0746459) · C4022394 (T190, HPO; trên
+  C0746459 hai tầng, rộng hơn) · C0025061 (T047, MSH/NCI; nhóm bệnh trung thất, không là tổ tiên của con nào).
+  `children` C0746459 và C0018800 (Cardiomegaly, theo phân cấp CheXpert: trong 3 tầng hai con chỉ chung gốc HPO).
+- Pleural Other: `is_a` **C4025726** (T190, HPO; cha trực tiếp của cả hai con và của C0032227) · C0032226 (T047, MSH/NCI;
+  cha của C0032227, không là tổ tiên của hai con). `children` C0340030, C0264545.
+- Support Devices: `is_a` **C0025080** (T074; cha trực tiếp của C0008034 và C0030163) · C0699733 (T073; trên hai con đó
+  hai tầng). `children` C0008034, C0336630, C0030163, C0085590, C1145640, C0179740. Không lấy các con tùy chọn C1550230,
+  C0810633, C4489545. Loại C1546572, C1546728 (T170), C1549530 (T029), C0183683 (dạng số ít của nhãn, chỉ MTH và CHV,
+  không có quan hệ nào).
+
+### V2-2: chuỗi đầu bảng của từ vựng pool (2026-10-27, `data/kg/vocab/vocab_joined.parquet`, quy tắc D52)
+
+Mỗi chuỗi ghi lượt nhắc (mọi polarity) và, trong ngoặc, số study có ít nhất một lượt nhắc.
+
+**Observation, 50 chuỗi đầu** (tổng 744.691 lượt nhắc, 10.474 chuỗi; phủ 72,6%): effusion 69.847 (54.798) · opacity 51.599
+(37.001) · pneumothorax 46.803 (37.130) · edema 42.180 (34.149) · atelectasis 35.528 (28.717) · consolidation 33.168
+(28.334) · tube 22.664 (15.637) · low 18.117 (15.553) · clear 17.053 (16.470) · normal 13.565 (12.420) · line 12.013
+(10.496) · cardiomegaly 11.869 (10.502) · unremarkable 10.437 (9.521) · catheter 10.057 (8.898) · abnormality 8.024 (7.580)
+· change 7.632 (6.935) · endotracheal tube 6.719 (6.173) · wire 5.818 (5.338) · infection 5.807 (5.128) · opacification
+5.665 (4.480) · fracture 5.572 (3.911) · aspiration 5.553 (4.648) · drain 5.269 (4.375) · pneumonia 5.216 (4.417) · picc
+line 4.896 (4.310) · catheter tip 4.864 (4.369) · feeding tube 4.684 (4.317) · aeration 4.229 (3.752) · enlarged 4.156
+(3.840) · prominence 4.069 (3.508) · nasogastric tube 3.935 (3.756) · normal limits 3.796 (3.690) · marking 3.717 (3.227) ·
+thickening 3.446 (2.900) · blunting 3.249 (2.935) · prominent 3.219 (2.838) · picc 3.145 (2.824) · tip 2.964 (2.713) · swan
+ganz catheter 2.944 (2.521) · surgical clip 2.929 (2.827) · disease 2.892 (2.537) · emphysema 2.680 (2.236) · focal
+consolidation 2.525 (2.418) · elevation 2.474 (2.229) · scarring 2.381 (2.010) · central line 2.343 (2.173) · nodule 2.334
+(1.903) · within normal limits 2.328 (2.311) · tortuous 2.242 (2.130) · sheath 2.166 (1.972)
+
+**Anatomy, 30 chuỗi đầu** (tổng 556.551 lượt nhắc, 5.645 chuỗi; phủ 62,4%): pleural 67.434 (51.159) · pulmonary 40.262
+(32.002) · lung 37.311 (30.349) · cardiomediastinal 23.546 (23.023) · lung volumes 23.204 (19.767) · bibasilar 15.197
+(12.481) · retrocardiac 11.428 (9.731) · chest 11.058 (8.621) · osseous 8.164 (8.008) · mediastinal 7.283 (6.568) · basilar
+7.218 (5.691) · cardiac silhouette 7.114 (6.799) · base 6.168 (5.250) · lung base 6.151 (5.231) · apical 6.072 (4.111) ·
+interstitial 5.993 (4.771) · carina 5.814 (4.857) · central venous 5.603 (4.936) · rib 5.263 (4.288) · heart size 5.219
+(5.158) · jugular 4.925 (4.290) · vascularity 4.516 (4.446) · hemidiaphragm 4.501 (3.975) · bony 4.428 (4.250) · lower lobe
+4.180 (3.588) · upper extremity 4.075 (3.669) · cardiopulmonary 3.868 (3.750) · venous 3.796 (3.490) · soft tissue 3.673
+(3.559) · superior vena cava 3.582 (3.341)
+
+### V2-3: linker ở thiết kế đầu (2026-10-29, `cxr kg-link`, SapBERT argmax, chưa lọc miền; trước D56)
+
+Giữ để so "SapBERT argmax" với "SapBERT + LLM". Số của thiết kế cuối nằm ở khối *Linker V2-3*.
+
+- Phần đầu 95%: Observation 645 chuỗi (707.479 lượt nhắc), Anatomy 346 (528.767). Số chuỗi theo dải 80 / 90 / 95 trong
+  bảng duyệt: Observation 90 / 175 / 380, Anatomy 76 / 99 / 171. Embed từ điển SapBERT lần đầu, cả bước liên kết mất
+  3.687 s trên CPU; chạy lại với cache mất 13 s.
+- Liên kết đơn theo `method` (chuỗi, lượt nhắc): Anatomy adjective 17, 42.590 · exact 190, 270.944 · sapbert 139, 215.233;
+  Observation descriptive 9, 44.689 · exact 261, 338.664 · normal 5, 47.179 · override 4, 169.291 · sapbert 366, 107.656.
+  Chưa áp τ, nên cả 505 chuỗi SapBERT đều mang CUI. Không phân bên: 54 CUI quy được về cha, 18 chưa.
+- Chuỗi chỉ khớp tên MRCONSO có TUI ngoài bảng gán nhãn: **252 / 991 chuỗi (25,4%)**, vượt ngưỡng dừng 10% của TIP; theo
+  lượt nhắc Observation 15,8%, Anatomy 15,3%. Theo dải 80 / 90 / 95: Observation 21 / 55 / 115, Anatomy 17 / 14 / 30; 107
+  chuỗi nằm trong `review.csv`. Theo method: sapbert 238 (Observation 184, Anatomy 54), adjective 7, descriptive 4, normal
+  2, override 1. TUI hay gặp (số chuỗi): T082 (Observation 41, Anatomy 41), T061 37, T169 34, T080 (Observation 32,
+  Anatomy 8), T081 17, T170 17, T073 14, T078 12, T058 10, T028 8. Chuỗi lớn nhất: Anatomy "lung volumes" (23.204 lượt
+  nhắc, T042).
+- Liên kết cặp `located_at`: thử 4.375 cặp (614 Observation có vị trí), khớp 328 cặp ở 146 Observation. Lượt nhắc (liên
+  kết cặp / có vị trí / tổng): effusion 59.094 / 63.343 / 69.847; edema 33.949 / 37.499 / 42.180; opacity 0 / 46.365 /
+  51.599; thickening 2.582 / 3.080 / 3.446. Với "opacity", không cặp nào trong 10 anatomy đứng đầu (bibasilar,
+  retrocardiac, lung, basilar, base, lung base, airspace, air space, lower lobe, parenchymal) thành tên MRCONSO của một CUI
+  Observation.
+- `review.csv`: 335 dòng; 180 liên kết SapBERT trong phần đã duyệt, cosine min 0,530, tứ phân vị 0,767 / 0,838 / 0,895,
+  max 0,988.
+
+### V2-3: ba phương án gốc của bộ lọc miền (2026-10-29 → 2026-11-01, D56)
+
+Script chỉ đọc `artifacts/metrics/kg_link_roots_{lookup,probe,variant,negative}.py` và `kg_link_c_dropped.py`; bảng từng
+dòng ở `data/kg/link/roots_check.csv`. Tỉ lệ dưới đây là phần **liên kết hiện tại còn nằm trong miền**, gồm cả liên kết
+sai lẽ ra nên bị loại.
+
+- **Bước a, nguồn hệ mã** (bỏ CUI mà mọi tên đều từ các nguồn này; trên 344.208 CUI của bảng gán nhãn, cộng dồn): hệ mã
+  (LNC, HL7V2.5, HL7V3.0, HCPCS, CVX, CDCREC, SOP, MTHCMSFRF) 27.616 (Anatomy 3.590, Observation 24.026); thêm danh mục sản
+  phẩm, thuốc (VANDF, SPN, MTHSPL, RXNORM, ATC, MED-RT) 41.533 (Observation 37.943); thêm phân loại thống kê (ICD9CM,
+  MTHICD9, ICPC, CCS, CCSR_ICD10CM, CCSR_ICD10PCS) 57.879 (Anatomy 3.592, Observation 54.287). Tính cả MTH là hệ mã thì bỏ
+  104.434 (không áp dụng). Sau bước a, chuỗi "lung" và "heart" chỉ còn một ứng viên exact.
+- **A, gốc dương như spec.** Anatomy là bao đóng FMA (`regional_part_of`, `constitutional_part_of`, `isa`); Observation là
+  con cháu `IS_A` (MRREL `CHD`, mọi nguồn) cộng mọi T074. Gốc (CUI: dưới gốc / trong miền): Anatomy lồng ngực C0817096
+  5.739 / 5.081, cổ C0027530 1.239 / 1.217, chi trên C1140618 4.567 / 4.263, bụng trên C0230165 4 / 4; Observation hô hấp
+  C0035242 (MSH) 2.810 / 2.604, C0035204 (NCI) 1.491 / 1.464, C4018871 (HPO) 1.932 / 1.868; tim mạch C0007222 (MSH, NCI)
+  3.253 / 2.943, C0243050 (HPO) 2.585 / 2.302; lồng ngực C0039978 (MSH) 2.594 / 2.404, C4021797 (HPO) 181 / 153; gãy xương
+  C0016658 201 / 200; cột sống C0037933 (MSH) 98 / 87, C4021789 (HPO) 310 / 273; u C0027651 16.148 / 15.874. Miền: Anatomy
+  10.482 / 112.355 CUI, Observation 22.531 / 231.853. 14 nhãn và override: 18 / 22 CUI trong miền; thiếu C0521530,
+  C0577916, C0746459, C4022395. Loại oan nhiều: FMA chia phần theo hệ cơ quan nên lung, rib, lower lobe, hemidiaphragm,
+  apex of lung không nằm dưới gốc lồng ngực; lung base (C0225704) không có trong FMA; dấu hiệu chung (consolidation,
+  nodule, mass, calcification, infiltrate, scarring, enlargement, degenerative change) không nằm dưới gốc bệnh.
+- **B, gốc dương mở rộng:** thêm 18 gốc cơ quan cho Anatomy (phổi, tim, hệ hô hấp, trung thất, cơ hoành, lồng sườn, xương
+  lồng ngực, cột sống, khí quản, động mạch chủ, tĩnh mạch chủ trên, thực quản, dạ dày, khoang màng phổi, tĩnh mạch cảnh,
+  xương, bóng tim, đáy phổi), bao đóng qua `CHD` mọi nguồn cộng một bước `isa` lên trong FMA; Observation thêm mọi Finding
+  ngoài gốc âm dấu hiệu khoang miệng. Miền: Anatomy 28.809, Observation 138.483; neo 22 / 22. Vẫn mất 25 liên kết exact
+  Anatomy (apical, hemidiaphragm, costophrenic angle, pulmonary vasculature, soft tissue, hemithorax…); riêng gốc xương
+  kéo vào 17.684 CUI.
+- **C, gốc âm** (chốt): giữ mọi CUI còn lại sau bước a, chỉ bỏ CUI dưới một gốc âm mà không dưới gốc dương nào của A. Gốc
+  âm Anatomy: đầu C0018670, chi dưới C0023216, chậu C0559769 và C0030797. Gốc âm Observation: bệnh mắt C0015397, bệnh
+  răng hàm miệng C0038368, bệnh thần kinh C0027765, bệnh da C0037274, biến chứng thai C0032962, tiết niệu sinh dục nữ
+  C1720887 và nam C1720894, rối loạn tâm thần C0004936, bệnh tai C0013447, dấu hiệu khoang miệng C0455788. Miền: Anatomy
+  91.504, Observation 166.960; bị bỏ: Anatomy 18.803, Observation 8.837.
+- So trên `review.csv` (dòng có CUI → còn trong miền ở A / B / C): Anatomy adjective 10 → 2 / 8 / 10; Anatomy exact 63 →
+  16 / 40 / 60; Anatomy sapbert 59 → 2 / 16 / 44; Observation exact 64 → 38 / 60 / 62; Observation override 4 → 4 / 4 / 4;
+  Observation sapbert 121 → 20 / 90 / 95; neo 14 nhãn và override (22) → 18 / 22 / 22. C bỏ đúng các liên kết sai đã biết
+  ("crowding", "plaque" exact; "volume" → đầu; "apex" → một CUI dưới gốc răng miệng; "pleural" → C1508559).
+- Pleura: "pleura" chỉ khớp C0032225 (T024), ngoài Anatomy lúc đó, nên "pleura" (174 lượt nhắc) rơi vào `out_of_scope` và
+  "pleural" (67.434, Anatomy lớn nhất) phải sang SapBERT; vì vậy T024 được thêm vào Anatomy. T024 đưa 4 chuỗi của phần đầu
+  95% ra khỏi `out_of_scope`; chỉ "pleura" có CUI exact.
+- Liên kết của thiết kế đầu mà miền C (đã chốt, gồm bụng và T024) loại, trên 991 chuỗi của phần đầu 95%: 114 chuỗi.
+  Anatomy 31 (17 vì nguồn hệ mã, 71.828 lượt nhắc; 14 vì gốc âm, 9.164), Observation 83 (69 vì nguồn hệ mã, 22.782; 14 vì
+  gốc âm, 3.204); theo method sapbert 96, exact 18. Lớn nhất: "pleural" (Anatomy, sapbert, 67.434, nguồn hệ mã), "change"
+  (Observation, 7.632), "ij" (Anatomy, 2.930, gốc âm).
+
+## kg_build_id ổn định (đo 2026-11-08)
+
+- `kg_build_id` băm năm bảng KG (nodes, edges, aliases, semantic_types, quality.json). Trước khi sửa: dựng lại hai lần liên
+  tiếp, không đổi gì, ra hai id khác nhau; `edges.parquet` khác thứ tự dòng, `aliases.parquet` giữ cách viết khác nhau
+  cho cùng `norm` (MRCONSO `unique()` không giữ thứ tự). Sau khi sửa (bảng ghi theo thứ tự cố định, MRCONSO sắp theo
+  (cui, text) trước khi khử trùng): ba lần dựng liên tiếp ra cùng kg_1637d5c0ee06; sửa một chú thích trong `kg.yaml` vẫn ra
+  kg_1637d5c0ee06; thêm một cạnh `manual` thử thì ra kg_4329bbb527ae; khôi phục config thì về kg_1637d5c0ee06. Neo4j đã nạp
+  kg_1637d5c0ee06, cạnh và độ nối như lượt i (IS_A 10.234, SUGGESTS 69, D59 0,948).
