@@ -11,8 +11,11 @@ import pytest
 from src.common.config import load_config
 from src.kg import expand, knowledge, llm_select
 from src.kg.expand import PRESENT
+from src.kg.guard import Guard
+from src.kg.llm_query import Explainer, build_facts
 from tests.kg import tiny_kg
 from tests.kg.fake_store import FakeStore
+from tests.kg.search_kit import Chat, index
 
 CFG = load_config("kg")
 EXPAND = CFG["query"]["expand"] | {"min_n": CFG["graph"]["min_n"]}
@@ -151,3 +154,72 @@ def test_every_path_edge_matches_the_path_expand_wrote():
         assert set(names) == set(intent.path[0].replace(" ← ", "|").replace(" → ", "|")
                                  .split("|"))
 
+
+# ---- the knowledge part of the explanation ------------------------------------------------------
+
+def _page():
+    intents = [expand.expand_concepts(FakeStore(), "C6", PRESENT, EXPAND, "suy tim")]
+    rows = [{"rank": 1, "view": "PA"}]
+    probs = [{0: {"intent": 0.8, "columns": {c.cui: 0.8 for c in intents[0].columns}}}]
+    items = base().items(intents, "vi")
+    return intents, items, build_facts("suy tim", "vi", intents, rows, probs, knowledge=items)
+
+
+def _explain(knowledge_text: str):
+    reply = {"summary": "Câu hỏi tìm suy tim.", "images": [{"rank": 1, "line": "Khớp 80%."}],
+             "knowledge": knowledge_text}
+    intents, items, facts = _page()
+    return Explainer(Chat(reply), Guard(3, 60), "explain", 1.0, index()).explain(facts, intents,
+                                                                                 items)
+
+
+def test_a_cited_sentence_is_kept_and_its_citations_counted():
+    got = _explain("Tim to thường được ghi nhận cùng suy tim, p = 0,30 [K2]. "
+                   "Suy tim là tim bơm kém [K1][K2].")
+    assert got.status == "ok" and got.citations == 3
+    assert got.knowledge.startswith("Tim to") and got.knowledge_items[0]["id"] == "K1"
+
+
+@pytest.mark.parametrize("sentence, why", [
+    ("Tim to hay đi cùng suy tim.", "no citation"),
+    ("Tim to hay đi cùng suy tim [K9].", "citation not in the knowledge: K9"),
+    ("Tim to đi cùng suy tim, p = 0,55 [K2].", "number not in the cited items: 0,55"),
+    ("Suy tim hay kèm viêm phổi [K1].", "concept not in the cited items: viêm phổi"),
+    ("Phim giúp chẩn đoán suy tim [K1].", "diagnostic wording: chẩn đoán"),
+])
+def test_a_knowledge_sentence_without_a_valid_citation_or_with_outside_content_is_dropped(
+        sentence, why):
+    got = _explain(sentence)
+    assert got.knowledge == "" and got.status == "partial"
+    assert got.dropped == [{"text": sentence, "why": why, "part": "knowledge"}]
+
+
+def test_without_knowledge_the_facts_and_the_reply_are_those_of_prompt_v3():
+    intents = [expand.expand_concepts(FakeStore(), "C1", PRESENT, EXPAND, "x")]
+    facts = build_facts("x", "en", intents, [{"rank": 1, "view": "PA"}],
+                        [{0: {"intent": 0.9, "columns": {"C1": 0.9}}}])
+    assert "knowledge" not in facts
+    chat = Chat({"summary": "Pleural effusion fits 90%.", "images": []})
+    got = Explainer(chat, Guard(3, 60), "explain", 1.0, index()).explain(facts, intents)
+    assert got.knowledge_items is None and got.citations == 0
+
+
+def test_the_search_sends_the_items_of_its_path_and_the_event_carries_them():
+    from src.api.routes.kg import explanation_event
+    from tests.kg.search_kit import make_search, parse_reply
+
+    reply = {"summary": "Câu hỏi tìm tim to.", "images": [],
+             "knowledge": "Tim to là bóng tim rộng hơn bình thường [K1]."}
+    chat = Chat(reply)
+    search = make_search(parser_chat=Chat(parse_reply(include=["Cardiomegaly"])),
+                         explain_chat=chat)
+    search.explainer.knowledge = base()
+    result = search.search("tim to", top_k=2)
+    got = search.explain(result)
+    sent = json.loads(chat.calls[0][1]["content"])
+    assert sent["knowledge"] == [{"id": "K1", "text": "tim to: Bóng tim rộng hơn bình thường."}]
+    event = explanation_event(result, got)
+    assert event["knowledge"] == reply["knowledge"] and event["citations"] == 1
+    assert event["knowledge_items"] == sent["knowledge"]
+    search.explainer.knowledge = None                       # explain.knowledge: false (v3)
+    assert "knowledge" not in explanation_event(result, search.explain(result))

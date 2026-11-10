@@ -9,6 +9,7 @@ the rule parser and no chooser or explainer. Every version that shaped an answer
 
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 from pathlib import Path
@@ -17,7 +18,7 @@ import numpy as np
 import polars as pl
 
 from src.common.config import Settings, default_config_dir, load_config
-from src.kg import lookup
+from src.kg import knowledge, lookup
 from src.kg.guard import Guard, GuardedClient
 from src.kg.llm_query import ConceptChooser, Explainer, GroundingIndex, sha256
 from src.kg.pipeline import KGSearch
@@ -120,10 +121,22 @@ def build_kg_search(settings: Settings, manifest: dict, images: pl.DataFrame, *,
         index = GroundingIndex.build(
             nodes, pl.read_parquet(graph_dir / "aliases.parquet",
                                    columns=["cui", "norm", "lang", "source"]), cfg["explain"])
-        explain_text = _text(kl["explain"]["prompt_file"])
+        base = None
+        if cfg["explain"]["knowledge"]:
+            definitions = graph_dir.parent / "knowledge" / "definitions.parquet"
+            base = knowledge.KnowledgeBase.load(
+                definitions, pl.read_parquet(graph_dir / "edges.parquet"),
+                pl.read_parquet(graph_dir / "aliases.parquet", columns=["cui", "text", "lang",
+                                                                        "source"]),
+                nodes, cfg["query"]["expand"], cfg["explain"]["knowledge_max_items"])
+            versions["definitions"] = (f"{len(base.glosses)}@{_file_hash(definitions)}"
+                                       if definitions.is_file() else None)
+            if not definitions.is_file():
+                notes.append(f"knowledge: {definitions} missing, path edges only")
+        explain_text = _text(kl["explain"]["knowledge_prompt_file" if base else "prompt_file"])
         explainer = Explainer(client("explain", ("write_explanation", "Write the summary and "
                                                  "one line per image.")), guard, explain_text,
-                              kl["explain"]["timeout_seconds"], index)
+                              kl["explain"]["timeout_seconds"], index, base)
         versions |= {"parser_model": kl["parser"]["model"], "parser_prompt_sha256":
                      parser.prompt_sha256, "select_model": kl["select"]["model"],
                      "select_prompt_sha256": chooser.prompt_sha256,
@@ -172,6 +185,10 @@ def _yaml(name: str) -> dict:
 def _gloss() -> dict[str, str]:
     manual = _yaml("aliases_manual.yaml")
     return {cui: " ".join(text.split()) for cui, text in manual.get("gloss", {}).items()}
+
+
+def _file_hash(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()[:12]
 
 
 def _matrix_hash(matrix_dir: Path) -> str:

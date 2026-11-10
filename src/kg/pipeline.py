@@ -233,6 +233,8 @@ class KGSearch:
             return None
         rows = result.rows[:top or self.cfg["explain"]["top_results"]]
         probs = self.matrix.probabilities([r["row"] for r in rows], result.intents)
+        base = getattr(self.explainer, "knowledge", None)     # None: prompt v3, no knowledge
+        items = None if base is None else base.items(result.intents, result.language)
         facts = build_facts(result.question, result.language, result.intents, rows, probs,
-                            self.explainer.index.names(result.intents))
-        return self.explainer.explain(facts, result.intents)
+                            self.explainer.index.names(result.intents), items)
+        return self.explainer.explain(facts, result.intents, items)
