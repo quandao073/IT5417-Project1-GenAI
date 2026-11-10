@@ -128,7 +128,9 @@ def build_kg_search(settings: Settings, manifest: dict, images: pl.DataFrame, *,
                 definitions, pl.read_parquet(graph_dir / "edges.parquet"),
                 pl.read_parquet(graph_dir / "aliases.parquet", columns=["cui", "text", "lang",
                                                                         "source"]),
-                nodes, cfg["query"]["expand"], cfg["explain"]["knowledge_max_items"])
+                nodes, cfg["query"]["expand"], cfg["explain"]["knowledge_max_items"],
+                {cui: {"en": label, "vi": concepts["concepts"][label]["vi"][0]}
+                 for label, cui in label_ids.items()})
             versions["definitions"] = (f"{len(base.glosses)}@{_file_hash(definitions)}"
                                        if definitions.is_file() else None)
             if not definitions.is_file():

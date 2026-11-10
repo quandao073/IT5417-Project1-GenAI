@@ -145,6 +145,17 @@ def test_the_other_routes_give_is_a_typically_at_and_part_of_sentences():
     assert any("added by hand" in k["text"] for k in kb.items([manual], "en"))
 
 
+def test_a_label_is_named_by_its_label_and_another_concept_by_its_longest_vietnamese_alias(
+        tmp_path):
+    aliases = pl.concat([tiny_kg.aliases(), pl.DataFrame(
+        [{"cui": "C6", "text": "st", "norm": "st", "lang": "vi", "source": "llm"}])])
+    kb = knowledge.KnowledgeBase.load(tmp_path / "none.parquet", tiny_kg.edges(), aliases,
+                                      tiny_kg.nodes(), EXPAND, 10,
+                                      {"C1": {"en": "Pleural Effusion", "vi": "tdm"}})
+    assert kb.glosses == {}                                  # no definitions yet: edges only
+    assert (kb.name("C1", "en"), kb.name("C1", "vi")) == ("Pleural Effusion", "tdm")
+    assert kb.name("C6", "vi") == "suy tim" and kb.name("C6", "en") == "Heart failure"
+
 def test_every_path_edge_matches_the_path_expand_wrote():
     """The rebuilt edges walk the same concepts as intent.path (names joined by arrows)."""
     kb = base()

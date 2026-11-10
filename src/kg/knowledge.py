@@ -364,8 +364,9 @@ def _p(p: float, language: str) -> str:
 
 class KnowledgeBase:
     """Glosses (cui -> {en, vi}, the usable ones of definitions.parquet), the graph and a display
-    name per concept and language: the graph's hand-made alias first, then the shortest, else
-    the concept's name."""
+    name per concept and language: for a CheXpert label its label name and first Vietnamese form
+    of concepts.yaml (`labels`); else the longest Vietnamese alias not from UMLS (the shortest
+    are abbreviations), and the concept's name in English."""
 
     def __init__(self, glosses: dict[str, dict[str, str]], graph: Graph,
                  names: dict[str, dict[str, str]], fallback: dict[str, str], expand: dict,
@@ -375,18 +376,21 @@ class KnowledgeBase:
 
     @classmethod
     def load(cls, definitions: Path, edges: pl.DataFrame, aliases: pl.DataFrame,
-             nodes: pl.DataFrame, expand: dict, max_items: int) -> KnowledgeBase:
+             nodes: pl.DataFrame, expand: dict, max_items: int,
+             labels: dict[str, dict[str, str]] | None = None) -> KnowledgeBase:
         glosses: dict[str, dict[str, str]] = {}
         if definitions.is_file():
             for cui, en, vi in (pl.read_parquet(definitions).filter(pl.col("usable"))
                                 .select("cui", "final_en", "final_vi").iter_rows()):
                 glosses[cui] = {"en": en, "vi": vi}
         names: dict[str, dict[str, str]] = defaultdict(dict)
-        ranked = (aliases.with_columns((pl.col("source") == "mrconso").alias("umls"),
-                                       pl.col("text").str.len_chars().alias("len"))
-                  .sort("cui", "lang", "umls", "len", "text"))
-        for cui, lang, text in ranked.select("cui", "lang", "text").iter_rows():
-            names[cui].setdefault(lang, text)
+        vi = (aliases.filter((pl.col("lang") == "vi") & (pl.col("source") != "mrconso"))
+              .with_columns(pl.col("text").str.len_chars().alias("len"))
+              .sort(["cui", "len", "text"], descending=[False, True, False]))
+        for cui, text in vi.select("cui", "text").iter_rows():
+            names[cui].setdefault("vi", text)
+        for cui, forms in (labels or {}).items():
+            names[cui] = {**names[cui], **forms}
         return cls(glosses, Graph(edges), dict(names),
                    dict(nodes.select("cui", "name").iter_rows()), expand, max_items)
 
