@@ -51,4 +51,11 @@ eval:
   # no view); declared before any run.
   view_rule: true
   ablations: [lookup_deterministic, sapbert_off, no_narrower, no_wider, no_anatomy, no_disease, combine_max,
-              suggests_equal]
+              suggests_equal, probe_off]
+  # Score fusion (session C), declared before the dev run: score = z(KG) + w z(CLIP cosine), z over the whole corpus
+  # per question, the view filter after. Text: b1 = B1's caption, b0 = B0's raw English. w = 0 is B2 (fusion_off).
+  # Chosen on dev by nDCG@10; a w > 0 is kept only when it beats w = 0 by >= min_gain AND the paired 95% CI excludes 0.
+  fusion:
+    sources: [b1, b0]
+    weights: [0.1, 0.2, 0.3, 0.5, 1]
+    min_gain: 0.005

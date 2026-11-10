@@ -157,6 +157,23 @@ def error_analysis(rows, runs, per_q) -> list[dict]:
     return out
 
 
+def fusion_choice(per_q: dict, rows, fcfg: dict, n_boot: int, seed: int) -> dict:
+    """The declared rule: the grid's best by nDCG@10; kept only when it beats B2 (w = 0) by at
+    least `min_gain` and the paired 95% CI of the difference excludes 0."""
+    grid = [f"fuse_{s}_w{w:g}" for s in fcfg["sources"] for w in fcfg["weights"]]
+    grid = [g for g in grid if g in per_q]
+    if not grid or "B2" not in per_q:
+        return {}
+    d = kr.diffs(per_q, rows, [(g, "B2") for g in grid], n_boot, seed)
+    table = {g: d[f"{g}-B2"]["ndcg10"] for g in grid}
+    best = max(grid, key=lambda g: (table[g]["mean"] or -1.0, g))
+    t = table[best]
+    kept = t["mean"] is not None and t["mean"] >= fcfg["min_gain"] and t["lo"] > 0
+    vs_b1 = kr.diffs(per_q, rows, [(best, "B1")], n_boot, seed).get(f"{best}-B1", {})
+    return {"grid": table, "best": best, "kept": bool(kept),
+            "chosen": best if kept else "B2 (w = 0)", "best_vs_B1": vs_b1.get("ndcg10")}
+
+
 def score_all(rows, runs, meta, judge, cross, sample, pooled, ledger, ecfg, all_rows) -> dict:
     vcfg = ecfg["eval"]
     view_of = _view_of()
@@ -176,6 +193,8 @@ def score_all(rows, runs, meta, judge, cross, sample, pooled, ledger, ecfg, all_
                                        seed, keep),
             "layer2": {s: v["table"] for s, v in layer2_table(
                 runs, rows, ["B2", "lookup_deterministic", "sapbert_off"], keep).items()}}
+    if "fusion" in vcfg:
+        out["fusion"] = fusion_choice(per_q, rows, vcfg["fusion"], n_boot, seed)
     out["layer4"] = layer4(runs, rows)
     out["cost"] = cost_table(ledger, max(1, len(rows)))
     out["latency"] = latency_table(runs)
@@ -229,6 +248,11 @@ def markdown(out: dict) -> str:
                              f"{_f(c['columns_exact'])} | {_f(c['columns_f1'])} | "
                              f"{_f(c['warnings_all'])} | {_f(c['warnings_recall'])} |")
         lines.append("")
+    if out.get("fusion"):
+        f = out["fusion"]
+        lines += ["## Score fusion (vs B2, nDCG@10)", "", "| run | difference |", "|---|---|"]
+        lines += [f"| {g} | {_ci(d)} |" for g, d in f["grid"].items()]
+        lines += ["", f"best {f['best']}; kept {f['kept']}; chosen {f['chosen']}", ""]
     lines += ["## Layer 4", "", f"{out['layer4']}", "", "## Cost", "", f"{out['cost']}", "",
               "## Latency", "", f"{out['latency']}", "", "## Errors (B2 below B1)", "",
               "| id | step | nDCG B2 | nDCG B1 | gold | B2 | kinds | disputed |",

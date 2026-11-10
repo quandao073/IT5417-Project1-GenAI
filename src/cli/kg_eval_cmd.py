@@ -236,7 +236,13 @@ def _components(ecfg: dict, ledger, key: str):
         seed=rcfg["results"]["label_order_seed"])
     mapping = yaml_labels()
     label_of_cui = {entry["id"]: label for label, entry in mapping.items()}
+    from src.kg.scoring import ScoreMatrix
+
+    zero_shot = ScoreMatrix.load(Path(settings.indexes_dir) / "image_scores"
+                                 / f"{manifest['build_id']}_ext1",
+                                 images.select("image_id", "projection"))
     return {"corpus": corpus, "encoder": encoder, "b1_parser": b1_parser, "search": search,
+            "zero_shot_matrix": zero_shot,
             "translator": translator, "label_matrix": label_matrix,
             "label_of_cui": label_of_cui, "labels_cfg": rcfg["constraints"],
             "concepts_cfg": load_config("concepts"), "manifest": manifest, "notes": notes}
@@ -299,12 +305,13 @@ def cmd_eval_kg(args: argparse.Namespace) -> int:
                                **{k: parts[k] for k in (
                                    "corpus", "encoder", "b1_parser", "search", "translator",
                                    "label_matrix", "label_of_cui", "labels_cfg",
-                                   "concepts_cfg")})
+                                   "concepts_cfg", "zero_shot_matrix")})
             runner.runs.setdefault("_meta", {}).update(
                 {"versions": parts["search"].versions, "notes": parts["notes"],
                  "build_id": parts["manifest"]["build_id"]})
             runner.run_all([s for s in systems if s != "_meta"], args.rerun)
             runner.run_transforms()
+            runner.run_fusion()
             print(f"run done; spent {ledger.total:.2f} USD")
         runs = json.loads((work / f"runs_{args.split}.json").read_text(encoding="utf-8"))
         meta = runs.pop("_meta", {})
