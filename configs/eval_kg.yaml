@@ -1,0 +1,51 @@
+# V2-7 / V2-8 evaluation of the knowledge-graph search (docs/kg-evaluation.md). Codes only (CLAUDE.md §5).
+
+benchmark:
+  file: benchmarks/kg_queries_v1.jsonl
+  work_dir: data/eval                 # caches, pools, judgements, run records (gitignored)
+  seed: 20261110
+  per_group: 9
+  groups:
+    control: "Concepts the image model scores directly, chosen among the 14 CheXpert labels (not the extra columns, which have their own group); the KG must not make these worse."
+    synonym_vi: "Synonyms, lay wording and Vietnamese phrasings of scorable concepts (e.g. 'water on the lung', 'bóng tim to')."
+    narrower: "A concept narrower than a score column (a specific type or subtype); it should be scored at the column above it, with a warning."
+    broader: "A concept broader than the score columns (a group of conditions); it should be scored on its scorable children."
+    disease: "A disease the image model does not see directly, inferred from the radiographic signs that suggest it (use diseases routed by hand too)."
+    negation_broad: "The negation of a broad or narrow concept ('no pleural abnormality', 'không có bệnh lý phổi')."
+    anatomy: "A question about a body region (alone, or with a finding), e.g. 'something at the lung apex'."
+    new_column: "Concepts that got their own extra score column beyond the 14 labels (emphysema, nodule, calcification...)."
+  # A split keeps a question and its translation together; dev and heldout are stratified by group and language.
+  dev_per_group: [5, 4]               # alternating by group order, so 36 / 36 in all
+
+# Models (WORKLOG D61: the judge is not a model of the pipeline, which uses Haiku).
+llm:
+  author: {model: claude-opus-5-5, effort: high, max_tokens: 32000, timeout_seconds: 600}
+  reviewer: {model: claude-sonnet-5-5, effort: high, max_tokens: 16000, timeout_seconds: 600}
+  judge: {model: claude-opus-5-5, effort: medium, max_tokens: 16000, timeout_seconds: 300}
+  cross_judge: {model: claude-sonnet-5-5, effort: medium, max_tokens: 16000, timeout_seconds: 300}
+  translator: {model: claude-haiku-5-5, effort: low, max_tokens: 1024, timeout_seconds: 60}
+  author_prompt: prompts/kg_bench_author_v1.txt
+  review_prompt: prompts/kg_bench_review_v1.txt
+  judge_prompt: prompts/kg_judge_v1.txt
+  translate_prompt: prompts/kg_b0_translate_v1.txt
+  judge_batch: 10                     # reports of one question per judge call
+  workers: 4
+
+# USD per million tokens (Anthropic first-party list price, skill table cached 2026-10-06). Cache writes are not listed
+# there: priced at 1.25 x input, the higher of the usual multipliers.
+pricing:
+  claude-opus-5-5: {input: 4.0, output: 20.0, cache_read: 0.20, cache_write: 5.0}
+  claude-sonnet-5-5: {input: 2.0, output: 10.0, cache_read: 0.20, cache_write: 2.5}
+  claude-haiku-5-5: {input: 0.10, output: 0.50, cache_read: 0.01, cache_write: 0.125}
+budget_usd: 15.0
+
+eval:
+  top_k: 10
+  cross_judge_fraction: 0.10
+  human_sample: 100
+  bootstrap: 10000
+  # A result counts as relevant only when its view is one the gold asks for (the judge reads report text, which has
+  # no view); declared before any run.
+  view_rule: true
+  ablations: [lookup_deterministic, sapbert_off, no_narrower, no_wider, no_anatomy, no_disease, combine_max,
+              suggests_equal]

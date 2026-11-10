@@ -1945,6 +1945,8 @@ def build_parser() -> argparse.ArgumentParser:
     kgf.add_argument("--out", default="data/kg/chexpert_phrases")
     kgf.set_defaults(func=_cmd_kg_fetch_chexpert_phrases)
 
+    from src.cli import kg_eval_cmd  # the V2-7 evaluation commands live in their own module
+    kg_eval_cmd.register(sub)
     return parser
 
 
