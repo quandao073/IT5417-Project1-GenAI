@@ -301,6 +301,7 @@ def aliases(nodes: pl.DataFrame, umls_dir: Path, concepts: dict, mapping: dict,
     cuis = [c for c in nodes["cui"] if not c.startswith("PRJ:")]
     mrconso = (pl.scan_parquet(umls_dir / "mrconso.parquet").filter(pl.col("CUI").is_in(cuis))
                .select(pl.col("CUI").alias("cui"), pl.col("STR").alias("text")).unique()
+               .sort("cui", "text")      # which spelling of a norm is kept must not vary by run
                .with_columns(pl.lit("en").alias("lang"), pl.lit("mrconso").alias("source"))
                .collect())
     ids = {label: entry["id"] for label, entry in mapping.items()}

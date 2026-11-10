@@ -1,9 +1,12 @@
 """`lookup_concept` (docs/v2-kg-design.md, "Truy vấn online" step 2): a phrase of the question to
-at most five candidate concepts of the graph: by exact alias (the phrase or its singular); only
-when none matches, by fulltext alias; only when that finds nothing either, by SapBERT over the
-aliases (`lookup.sapbert`, WORKLOG D66, D68). Of equal matches a scorable concept comes
-first, a weak one (D55) after the strong ones: the specific concept with its own column before the
-weak label that covers it.
+at most five candidate concepts of the graph. Three steps always run and their hits are merged,
+one per concept: exact alias (the phrase or its singular), fulltext alias, and SapBERT over the
+aliases (`lookup.sapbert`, WORKLOG D66, D68). An exact hit comes first; the others are ranked by
+their score (Dice of a fulltext hit, cosine of a SapBERT one), except that a fulltext hit whose
+alias has under `min_coverage` of the phrase's words comes after every SapBERT hit: "mediastinum
+looks wider" shares one word with "mediastinum", which must not hide what SapBERT finds. Of equal
+matches a scorable concept comes first, a weak one (D55) after the strong ones: the specific
+concept with its own column before the weak label that covers it.
 
 The side of the question ("trái", "left") is not part of a concept (schema decision 3): it is cut
 before the lookup and reported, so "giảm thể tích phổi trái" finds the aliases of
@@ -57,6 +60,11 @@ def dice(a: list[str], b: list[str]) -> float:
     return 2 * shared / (len(set(a)) + len(set(b))) if a and b else 0.0
 
 
+def coverage(phrase: list[str], alias: list[str]) -> float:
+    """The share of the phrase's words that the alias has."""
+    return len(set(phrase) & set(alias)) / len(set(phrase)) if phrase else 0.0
+
+
 @dataclass(frozen=True)
 class Candidate:
     cui: str
@@ -69,6 +77,7 @@ class Candidate:
     score: float
     n_pool: int
     weak: bool | None
+    coverage: float | None = None     # fulltext only: the share of the phrase's words matched
 
 
 @dataclass
@@ -79,6 +88,11 @@ class Lookup:
     candidates: list[Candidate] = field(default_factory=list)
     modifier: bool = False                             # only modifier words: not looked up
     timings: dict = field(default_factory=dict)       # ms of each step, set by the pipeline
+
+    @property
+    def single_exact(self) -> bool:
+        """One alias is the phrase itself: the fuzzy hits ranked after it do not compete."""
+        return [c.match for c in self.candidates].count("exact") == 1
 
     def to_dict(self) -> dict:
         return {"term": self.term, "core": self.core, "sides": self.sides,
@@ -98,32 +112,40 @@ def lookup_concept(store, term: str, cfg: dict, semantic=None) -> Lookup:
     if core in modifiers or all(w in modifiers for w in core.split()):
         result.modifier = True
         return result
-    hits: dict[str, tuple[str, str, float]] = {}
+    # cui -> (tier, match, alias, score, coverage): tier 0 exact; 1 SapBERT, or fulltext covering
+    # enough of the phrase; 2 fulltext that does not. The best hit of a concept is kept.
+    hits: dict[str, tuple[int, str, str, float, float | None]] = {}
+
+    def add(cui: str, hit: tuple) -> None:
+        if cui not in hits or (hit[0], -hit[3]) < (hits[cui][0], -hits[cui][3]):
+            hits[cui] = hit
+
     for form in dict.fromkeys([core, singular_candidate(core) or core]):
         for row in store.aliases_exact(form):
-            hits.setdefault(row["cui"], ("exact", row["text"], 1.0))
-    if not hits:                          # fulltext only when no alias is the phrase itself
-        tokens = core.split()
-        for row in store.aliases_fulltext(core, qcfg["fulltext_limit"]):
-            score = dice(tokens, normalize(row["text"]).split())
-            if score >= qcfg["min_dice"] and (
-                    row["cui"] not in hits or hits[row["cui"]][2] < score):
-                hits[row["cui"]] = ("fulltext", row["text"], round(score, 3))
-    if not hits and semantic is not None:  # SapBERT last, when both others found nothing
+            add(row["cui"], (0, "exact", row["text"], 1.0, None))
+    tokens = core.split()
+    for row in store.aliases_fulltext(core, qcfg["fulltext_limit"]):
+        words = normalize(row["text"]).split()
+        score = dice(tokens, words)
+        if score >= qcfg["min_dice"]:
+            cover = round(coverage(tokens, words), 3)
+            add(row["cui"], (1 if cover >= qcfg["min_coverage"] else 2, "fulltext", row["text"],
+                             round(score, 3), cover))
+    if semantic is not None:
         floor = qcfg["sapbert"]["min_cos"]
         for row in semantic.search(core, qcfg["sapbert"]["top"]):
             if row["score"] >= floor:
-                hits.setdefault(row["cui"], ("sapbert", row["text"], round(row["score"], 3)))
+                add(row["cui"], (1, "sapbert", row["text"], round(row["score"], 3), None))
     info = store.concepts(list(hits))
     ranked = sorted(
         (c for c in hits if c in info),
-        key=lambda c: (hits[c][0] != "exact", -hits[c][2], not info[c]["scorable"],
+        key=lambda c: (hits[c][0], -hits[c][3], not info[c]["scorable"],
                        bool(info[c]["weak"]), -(info[c]["n_pool"] or 0), c))
     for cui in ranked[:qcfg["max_candidates"]]:
-        match, alias, score = hits[cui]
+        _, match, alias, score, cover = hits[cui]
         i = info[cui]
         result.candidates.append(Candidate(
             cui=cui, name=i["name"], label=i["label"], scorable=bool(i["scorable"]),
             parents=i["parents"], match=match, alias=alias, score=score,
-            n_pool=int(i["n_pool"] or 0), weak=i["weak"]))
+            n_pool=int(i["n_pool"] or 0), weak=i["weak"], coverage=cover))
     return result

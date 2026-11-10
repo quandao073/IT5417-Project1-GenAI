@@ -1,0 +1,25 @@
+# One question per line; run: uv run cxr kg-query --file docs/v2-6-smoke.txt --out data/kg/smoke/v2-6i.jsonl (docs/v2-6-smoke.md)
+ảnh X-quang có khí phế thũng
+phim có nốt phổi ở thùy trên
+is there water on the lung
+tràn khí màng phổi bên phải
+enlarged heart size with clear lungs
+lobar pneumonia in the right lower lobe
+loculated pleural effusion
+bệnh lý màng phổi
+interstitial lung disease
+suy tim
+heart failure with small pleural effusions
+abnormality at the lung apex
+tổn thương ở góc sườn hoành
+no pneumothorax and no pleural effusion
+không có nốt phổi nhưng có khí phế thũng
+phim PA, không tim to, có xẹp phổi
+atelectasis in the lower lobes
+pacemaker leads
+phim có xương bị gãy
+no lobar pneumonia, with consolidation
+tràn dịch màng phổi và sỏi thận
+mediastinum looks wider than normal
+giảm thể tích phổi trái
+giảm thể tích phổi hai bên

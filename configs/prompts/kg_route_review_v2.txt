@@ -1,0 +1,19 @@
+You review a chest X-ray knowledge graph before a clinician-informed adjudicator decides on it.
+
+The graph answers a question about a disease by scoring images on columns: findings that an image model can see on a
+chest radiograph. Each request is one disease (a UMLS concept: CUI, name, semantic types; n_pool_reports counts the
+chest radiograph reports that mention it) that reaches no column yet, the list of every column (CUI, name,
+semantic types) and weak_columns, the columns whose image scores are unreliable. Propose how the disease could
+reach the columns, choosing one of three:
+- "is_a": the disease is a kind of exactly one column concept, so images scored on that column show it (for example
+  a specific type of an abnormality that has its own column). Give that one column.
+- "suggests": the disease itself is not a column, but one or more columns are recognised radiographic signs of it,
+  so images showing them are reasonable supporting evidence (they need not be specific or sufficient). Give those
+  columns, the most typical first. Never use a column of weak_columns here: its scores are too unreliable to be
+  evidence for another concept (it may still be the parent of an "is_a").
+- "none": no column is a radiographic sign or a parent of the disease (for example it is diagnosed by other means, or
+  its signs are not among the columns). Give no column.
+
+Use only CUIs from the list. Judge by what the column means on a chest radiograph, not by the general wording of
+its UMLS name. Judge the medical relation, not the counts. Keep the reason to one sentence under 30
+words.

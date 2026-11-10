@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import polars as pl
+import pytest
 
 from src.common.config import load_config
-from src.kg import graph, graph_llm
+from src.kg import graph, graph_llm, llm_select
 
 LCFG = load_config("kg")["linker"]
 GCFG = {**load_config("kg")["graph"], "anatomy_depth": 1, "finding_down": 1, "finding_up": 2,
@@ -141,6 +142,28 @@ def test_alias_flags_and_suggest_items():
     assert [i["string"] for i in items] == ["B>D"] and items[0]["input"]["source"]["name"] == "B"
 
 
+def test_route_items_keep_the_mentioned_diseases_and_the_proposal_names_listed_columns():
+    pending = [{"cui": "D1", "n_pool": 80}, {"cui": "D2", "n_pool": 10}]
+    items = graph_llm.route_items(pending, {"D1": ("d1", "T047")}, ["A", "B", "W"],
+                                  weak={"W", "not-a-column"}, min_n=50)
+    assert [i["string"] for i in items] == ["D1"]
+    assert [c["cui"] for c in items[0]["input"]["columns"]] == ["A", "B", "W"]
+    assert items[0]["input"]["weak_columns"] == ["W"]
+    ok = graph_llm.parse_route('{"decision": "suggests", "columns": ["B", "A", "B"], '
+                               '"reason": "r"}', items[0])
+    assert ok["columns"] == ["B", "A"]
+    # a weak column may be an IS_A parent (D55: climbing IS_A warns), never a SUGGESTS source
+    assert graph_llm.parse_route('{"decision": "is_a", "columns": ["W"], "reason": "r"}',
+                                 items[0])["columns"] == ["W"]
+    for bad in ('{"decision": "is_a", "columns": ["A", "B"], "reason": "r"}',
+                '{"decision": "suggests", "columns": ["A", "W"], "reason": "r"}',
+                '{"decision": "suggests", "columns": ["Z"], "reason": "r"}',
+                '{"decision": "suggests", "columns": [], "reason": "r"}',
+                '{"decision": "none", "columns": ["A"], "reason": "r"}'):
+        with pytest.raises(llm_select.LLMSelectError):
+            graph_llm.parse_route(bad, items[0])
+
+
 def test_aliases_keep_only_reviewed_vietnamese_forms(tmp_path):
     nodes = pl.DataFrame({"cui": ["C0000001", "PRJ:support_devices"]})
     review = pl.DataFrame({"cui": ["C0000001", "C0000001"], "alias": ["viêm phổi", "phổi"],
@@ -153,6 +176,18 @@ def test_aliases_keep_only_reviewed_vietnamese_forms(tmp_path):
     assert set(got.select("text", "lang", "source").rows()) == {
         ("Pneumonia", "en", "mrconso"), ("viêm phổi", "vi", "concepts_yaml")}  # llm form, same norm
     assert "phổi" not in got["text"].to_list()
+
+
+def test_the_spelling_kept_for_a_norm_does_not_vary_by_run(tmp_path):
+    out = tmp_path / "u"
+    out.mkdir()
+    rows = [conso("C0000001", t) for t in ("pneumonia", "Pneumonia", "PNEUMONIA")]
+    nodes, empty = pl.DataFrame({"cui": ["C0000001"]}), pl.DataFrame(
+        schema={"cui": pl.String, "alias": pl.String, "decision": pl.String})
+    for order in (rows, rows[::-1]):
+        pl.DataFrame(order).write_parquet(out / "mrconso.parquet")
+        got = graph.aliases(nodes, out, {}, {}, empty)
+        assert got["text"].to_list() == ["PNEUMONIA"]     # the first spelling in sorted order
 
 
 def test_manual_edges_carry_the_source_and_equal_weights():

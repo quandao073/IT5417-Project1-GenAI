@@ -73,7 +73,7 @@ linker:
     biapical: lung apex
   laterality: [left, right, bilateral]   # a CUI named with one of these moves to its unlateralised parent
   pairs: {coverage: 0.90, max_pairs: 10} # located_at pairs tried per Observation string
-  # Candidate filter for exact, SapBERT and pair links (D56, option C; notes/v2-link-roots.md). A CUI of the
+  # Candidate filter for exact, SapBERT and pair links (D56, option C; docs/measured-facts.md). A CUI of the
   # label table stays unless every name comes from code_sabs, or it lies below a negative root of its kind and
   # below none of the positive ones. "Below": FMA parts and isa (relas) and every source's CHD rows (T39).
   domain:
@@ -143,10 +143,34 @@ graph:
     is_a:                 # child, parent
       - [C0264545, C0032226]    # the thickening concept below the parent of all pleural conditions
       - [C0747077, C0029453]    # the diffuse bone-density loss below the osteopenia column
+      # route review of 2026-11-08 (data/kg/graph/route_review.csv, adjudicated in the chat; docs/v2-6-smoke.md)
+      - [C0242699, C0029453]    # a disease-driven loss of bone mineral, below the osteopenia column
+      - [C0264541, C0006663]    # calcium deposits on the pleura, below the calcification column
+      - [C0264558, C0032326]    # the pressurised air leak around the lung, below the pneumothorax column
+      - [C0577702, C0032285]    # lung infection of the basal lobes, below the (weak) pneumonia column
+      - [C0034067, C0013990]    # air-space destruction of the lung, below the emphysema column (learnt from report "emphysema")
+      - [C1285162, C0011164]    # wear-and-tear disorders in general, below the degenerative-change column
+      - [C0741276, C0018800]    # an enlarged upper heart chamber, below the cardiomegaly column
+      - [C0158266, C0011164]    # wear of the spinal discs, below the degenerative-change column
+      - [C0746592, C0006663]    # calcium in the ring of the left heart valve, below the calcification column
+      - [C0029408, C0011164]    # wear-and-tear joint disease, below the degenerative-change column
     suggests:             # disease: findings that suggest it, equal weights, no pool count
       C0206062: [C1849561, C5539772, C4476748]   # the diffuse interstitial disease concept <- the interstitial markings, thickening and reticular-pattern findings
       C0024117: [C0013990]   # the chronic airflow-obstruction disease <- the emphysema column
       C0740451: [C0006663]   # the granuloma-forming disease <- the calcification column
+      # route review of 2026-11-08: only the columns the adjudication kept (`cols=` in its note)
+      C0020498: [C0011164]             # spinal ligament ossification disease <- degenerative change
+      C0006267: [C1849561]             # permanently widened airways <- interstitial markings
+      C0456973: [C0746459, C0577559]   # enlarged nodes at the lung roots <- widened mediastinum, mass
+      C0155733: [C0006663, C0741171]   # plaque in the main artery <- calcification, tortuous aorta
+      C0010674: [C1849561]             # the inherited mucus disease <- interstitial markings
+      C0003486: [C0746459]             # ballooning of the main artery <- widened mediastinum
+      C0004153: [C0006663, C0741171]   # arterial plaque in general <- calcification, tortuous aorta
+      C0521515: [C0006663]             # calcium in a shoulder tendon <- calcification
+      C0340766: [C0034063, C0018800]   # raised venous pressure (read as the lung veins) <- edema, cardiomegaly
+      C0340643: [C0746459]             # a tear in the wall of the main artery <- widened mediastinum
+      C0034072: [C0018800]             # right-heart failure from lung disease <- cardiomegaly
+      C0018021: [C0746459]             # a thyroid grown down behind the breastbone <- widened mediastinum
   # Core diseases that no column can score (no sign of theirs has one): candidates for the next round of extra
   # columns, reported apart by scripts/kg_disease_routes.py (WORKLOG D68). Codes only.
   round_two_columns:
@@ -180,6 +204,10 @@ graph:
     alias_prompt: prompts/kg_alias_vi_v1.txt
     alias_top: 200        # concepts by n_pool, besides the 14 labels
     alias_max: 3
+    # Core diseases without a route to a column (scripts/kg_disease_routes.py), at least this many pool mentions:
+    # Opus proposes IS_A to a column, SUGGESTS from columns, or none; Claude in the chat adjudicates (WORKLOG D68).
+    route_prompt: prompts/kg_route_review_v2.txt
+    route_min_n: 50
     budget_usd: 5.0
   # Vietnamese forms an alias must not hide inside (T20), on top of concepts.yaml blocked_phrases.vi.
   alias_common_phrases: [phù hợp, bình thường, không có, có thể, tương tự, so với, kích thước, vị trí, hình ảnh]
@@ -220,7 +248,9 @@ query:
     max_candidates: 5
     fulltext_limit: 12
     min_dice: 0.5
-    # The SapBERT stage (WORKLOG D66, D68): the last one, run only when exact and fulltext found nothing; its
+    # A fulltext hit whose alias has under this share of the phrase's words ranks after every SapBERT hit (D68).
+    min_coverage: 0.5
+    # The SapBERT stage (WORKLOG D66, D68): runs on every phrase beside exact and fulltext, hits merged; its
     # dictionary is the graph's aliases (cached under data/kg/sapbert_alias/). `enabled: false` is the V2-7 ablation.
     sapbert: {enabled: true, top: 5, min_cos: 0.8}
   sides: [bên trái, bên phải, hai bên, trái, phải, left, right, bilateral, bilaterally]

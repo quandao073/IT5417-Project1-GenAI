@@ -171,7 +171,8 @@ class KGSearch:
                             modifiers.append(term.text)
                         continue
                     intents.append(intent)
-                    if choice.via == "deterministic" and len(found.candidates) > 1:
+                    if (choice.via == "deterministic" and len(found.candidates) > 1
+                            and not found.single_exact):
                         warnings.append(Warn("chosen_deterministic", {
                             "term": term.text, "name": intent.name}))
                         degraded.append("chooser: first candidate")

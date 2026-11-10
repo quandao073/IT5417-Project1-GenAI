@@ -2,7 +2,7 @@
 #
 # Codes only: UMLS names stay under data/ (T38). Chosen by the user on 2026-10-27 from
 # data/kg/vocab/chexpert_candidates.csv (cxr kg-chexpert-candidates) and
-# data/kg/vocab/prj_proposals.csv; codes and reasons in notes/v2-vocab.md (local only).
+# data/kg/vocab/prj_proposals.csv; candidates and choices in docs/measured-facts.md.
 #
 # id: a CUI, or PRJ:<name> for a label whose own name is not in UMLS and that matched only
 # narrower concepts. A PRJ id has one is_a CUI and may list children: narrower CUIs that get
