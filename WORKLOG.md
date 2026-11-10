@@ -32,11 +32,11 @@ thì xóa (git giữ lịch sử); không có nhật ký; mã D/T/P không đán
   71 → 48 (4 chờ cột vòng hai, task X-1 của plan; 7 phân xử `none`; 37 dưới 50 lượt nhắc, không phân xử thêm trong V2).
   `kg_build_id` hiện tại kg_32e035ed37b0 (phiên C, sau D72, D73 và phân xử alias): băm năm bảng KG, ghi theo thứ tự cố định, nên chỉ đổi khi dữ liệu đổi.
   Còn hở: N2 dao động quanh ngưỡng (p95 1,17–1,59 s qua các lượt), chooser đôi khi chạm 3 s, vị trí chưa dùng để xếp hạng.
-  **V2-7 xong trên dev** (D70; `docs/kg-evaluation.md`): 72 câu, dev nDCG@10 B0 0,396 · B1 0,512 · B2 0,541 · Tham chiếu
-  0,663; B2 − B1 +0,029 [−0,065; +0,114], chưa tách khỏi 0. B2 thua ở bệnh và đồng nghĩa VI (thiếu alias VI, cạnh graph).
+  **V2-7 lượt 1 trên dev** (D70; `docs/kg-evaluation.md`): 36 câu, B2 − B1 +0,029 [−0,065; +0,114]; error analysis dẫn tới D73.
   Diễn giải có phần kiến thức K# (D71; 287/298 gloss dùng được sau phân xử của Claude bên chat).
   Phiên C (`notes/run-log-C.md`): ma trận probe là mặc định (D72), vá KG theo error analysis dev (D73); benchmark mở rộng
-  172 câu (dev 72, heldout 100), gold heldout đã duyệt; tiếp: dev đầy đủ và trộn điểm.
+  172 câu (dev 72, heldout 100), gold heldout đã duyệt. Dev lượt 2 (72 câu, lạc quan vì đã chỉnh theo dev): nDCG@10 B1 0,419
+  · B2 0,470 · B2 + trộn b0 w 0,2 0,503 (− B1 +0,083 [+0,017; +0,149]); chờ duyệt cấu hình cuối (mốc 3) rồi heldout.
   Heldout chưa chạy: gold heldout chờ Claude bên chat duyệt (P9). Phần vận hành V2-10 – V2-14; N1–N12 ở thiết kế.
   TIP và log chạy nằm ở `notes/` (gitignored, chỉ có trên máy). Bảng trạng thái và các task sau: `docs/v2-kg-plan.md`.
 - **Chặn:** web UI chờ `pnpm` (T5).

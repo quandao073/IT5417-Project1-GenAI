@@ -17,8 +17,8 @@ ghi vào `docs/measured-facts.md`, quyết định vào `WORKLOG.md`. Ngưỡng 
 | V2-4 | Mở rộng có kiểm soát; trọng số `SUGGESTS`, `TYPICALLY_AT` trên pool | V2-3 | ✅ |
 | V2-5c | Mở rộng ma trận điểm ngoài 14 nhãn (khái niệm lõi có lượt nhắc lớn) | V2-4 | ✅ |
 | V2-6 | Neo4j, bốn tool, LLM chọn khái niệm và diễn giải; B2 chạy end-to-end | V2-4, V2-5 | ✅ 2026-11-05 (D65, D66) |
-| V2-7 | Benchmark và pooling | V2-6, V2-5b | 🔄 dev xong 2026-11-10 (D70); heldout chờ duyệt gold (P9) |
-| V2-8 | Đánh giá chính thức, heldout một lần | V2-7 | 🔄 ablation, error analysis trên dev xong; heldout chưa chạy |
+| V2-7 | Benchmark và pooling | V2-6, V2-5b | 🔄 172 câu (dev 72, heldout 100), gold heldout đã duyệt; dev lượt 2 xong (D72–D74) |
+| V2-8 | Đánh giá chính thức, heldout một lần | V2-7 | 🔄 dev lượt 2, ablation, trộn điểm xong; heldout chưa chạy |
 | V2-9 | Agent (ablation) và UI | V2-8; UI chờ `pnpm` (T5) | ⏳ |
 | V2-10 | Thêm ảnh không dựng lại KG: embed rồi nối logit vào ma trận bằng probe đã có (N6) | V2-6 | ⏳ |
 | V2-11 | CI: pytest + ruff mỗi lần push (N12) | — | ⏳ |

@@ -2,7 +2,8 @@
 
 Kế hoạch đánh giá của thiết kế: `docs/v2-kg-design.md`, *Kế hoạch đánh giá*. Lệnh: `cxr kg-bench-build` (bộ câu và gold),
 `cxr eval-kg` (chạy, chấm, tính số). Config: `configs/eval_kg.yaml`. Mọi file trung gian ở `data/eval/` (gitignored).
-Số đo gốc kèm cách đo ở `docs/measured-facts.md`. **Heldout chưa chạy** (gold heldout chờ duyệt; heldout chạy một lần, D24).
+Số đo gốc kèm cách đo ở `docs/measured-facts.md`. **Heldout chưa chạy** (heldout chạy một lần, D24). Phần *Dev lượt 2* là trạng thái hiện tại; các phần trước là lượt 1
+(36 câu dev, trước D72–D74).
 
 ## Bộ câu và gold
 
@@ -187,10 +188,77 @@ lặp lại: (1) **thiếu alias tiếng Việt** cho bệnh (alias VI chỉ có
 EN thắng mà VI trắng; (2) **cạnh của graph** cho bệnh và khái niệm rộng (xơ phổi → Pleural Other qua D57; chấn thương chỉ
 tới rib fracture). Cả hai là việc của KG, không phải của ranking.
 
+## Dev lượt 2 (phiên C, 2026-11-10): 72 câu, ma trận probe, KG đã vá, trộn điểm
+
+**Dev đã được dùng để chỉnh** (error analysis lượt 1 → alias VI, cạnh xơ phổi và chấn thương, fallback văn bản; lưới trộn
+điểm chọn trên chính dev này), nên mọi số dưới đây **lạc quan**; số để báo cáo là heldout. Cấu hình: ma trận
+`..._ext1_probe1` (D72), graph kg_32e035ed37b0 (D73), gold dev sha256 `cae72e64…` (`scripts/kg_bench_apply_review.py`), cùng
+judge Opus, cùng prompt `kg_judge_v1`, cùng cache với lượt 1. Pool 2.986 cặp (0/1/2 = 1.271 / 788 / 927); chấm chéo Sonnet 299
+cặp: đồng thuận 0,789, kappa 0,680, kappa bậc hai 0,838. Khai báo trước khi đo: D74 (commit `b0ec9f5`).
+
+### Lớp 3 theo nhóm (nDCG@10)
+
+| nhóm | n | B0 | B1 | B2 | B2 + trộn (b0, w 0,2) | Tham chiếu |
+|---|---|---|---|---|---|---|
+| tất cả | 72 | 0,396 | 0,419 | 0,470 | **0,503** | 0,625 |
+| control | 9 | 0,448 | 0,735 | 0,766 | 0,774 | 0,867 |
+| synonym_vi | 9 | 0,391 | 0,371 | 0,408 | 0,382 | 0,430 |
+| narrower | 9 | 0,590 | 0,466 | 0,428 | 0,489 | 0,709 |
+| broader | 9 | 0,327 | 0,266 | 0,322 | 0,343 | 0,707 |
+| disease | 9 | 0,317 | 0,435 | 0,394 | 0,402 | 0,495 |
+| negation_broad | 9 | 0,287 | 0,485 | 0,532 | 0,544 | 0,740 |
+| anatomy | 9 | 0,475 | 0,256 | 0,303 | 0,442 | 0,636 |
+| new_column | 9 | 0,336 | 0,341 | 0,608 | 0,647 | 0,420 |
+
+P@10: B0 0,233 · B1 0,264 · B2 0,292 · Tham chiếu 0,385. excl-viol@10: 0,184 · 0,037 · 0,079 · 0,063. Không kết quả: 0 ở mọi
+hệ; B2 đi đường văn bản (D73) ở 8 / 72 câu. Bỏ 2 câu `gold_disputed`: B2 0,480, B2 + trộn 0,513.
+
+- **B2 − B1** nDCG@10 +0,051 [−0,010; +0,112] (35 thắng / 21 thua / 16 hòa): chưa tách khỏi 0.
+- **B2 + trộn − B1** +0,083 [+0,017; +0,149]: tách khỏi 0. B1 − B0 +0,023 [−0,069; +0,113]; Tham chiếu − B2 +0,155 [+0,071; +0,241].
+- So với lượt 1 trên đúng 36 câu dev cũ: B2 0,541 → 0,544, B1 0,512 → 0,482 (parse LLM không tái lập, T18; judge thêm cặp
+  làm đổi pool lý tưởng), B2 − B1 +0,029 → +0,063 [+0,012; +0,114]. Trên 36 câu dev mới: B2 − B1 +0,039 [−0,070; +0,147].
+
+### Trộn điểm (D74)
+
+Hiệu nDCG@10 so với B2 (w = 0), CI 95% paired, 10.000 lần bootstrap:
+
+| w | câu mẫu B1 (b1) | EN thô B0 (b0) |
+|---|---|---|
+| 0,1 | +0,011 [−0,002; +0,025] | +0,027 [+0,008; +0,049] |
+| 0,2 | +0,012 [−0,006; +0,030] | **+0,033 [+0,006; +0,062]** |
+| 0,3 | +0,013 [−0,005; +0,032] | +0,028 [−0,004; +0,062] |
+| 0,5 | +0,005 [−0,018; +0,029] | +0,010 [−0,031; +0,050] |
+| 1 | +0,000 [−0,032; +0,034] | +0,008 [−0,044; +0,060] |
+
+Luật khai báo trước giữ **b0, w = 0,2** (hơn w = 0 ≥ 0,005 và CI không chứa 0). Trộn giúp nhất ở anatomy (+0,139) và
+narrower (+0,061), làm hại synonym_vi (−0,026). Nguồn b0 cần một lượt dịch Haiku cho câu VI lúc truy vấn (p95 1,71 s ở lượt 1), nên khi đưa vào API phải chạy song song với parser.
+
+### Ablation (hiệu nDCG@10 với B2)
+
+tắt bệnh −0,040 [−0,078; −0,005]; tắt rộng hơn −0,012 [−0,031; 0]; tắt vị trí −0,011 [−0,033; 0]; tắt hẹp hơn −0,002
+[−0,012; +0,007]; SapBERT tắt −0,007 [−0,020; 0]; lookup tất định +0,008 [−0,020; +0,039]; gộp max +0,001; SUGGESTS đều 0;
+**probe_off** (intents của B2 chấm trên ma trận zero-shot) −0,004 [−0,034; +0,022]: ma trận probe chưa cho lợi đo được
+trên xếp hạng dev, dù AUROC từng cột tăng (D72).
+
+### Lớp 2 và lớp 4
+
+Lớp 2 (B2, 72 câu): CUI đúng 0,692 (lượt 1 0,588 trên 36 câu), F1 tập cột 0,723 (0,676), đủ cảnh báo kỳ vọng 0,704 (0,463).
+Theo nhóm (CUI / F1 cột): control 1,000 / 1,000; synonym_vi 0,500 / 0,556; narrower 0,778 / 0,611; broader 0,818 / 0,771;
+disease 0,917 / 0,799; negation_broad 0,688 / 0,663; anatomy 0,375 / 0,667; new_column 0,571 / 0,719. Lớp 4
+(`kg_explain_v4`, knowledge bật): 56 ok, 7 partial, 9 không diễn giải (8 câu đi đường văn bản + 1); 759 câu, 98,95 % có căn cứ,
+1 câu bị loại vì từ chẩn đoán; không câu nào còn bị loại vì markup (D73 e).
+
+### Error analysis lượt 2: 21 câu B2 thua B1
+
+ranking 8 (control-07/10/11, narrower-03/04/12, broader-04, negation_broad-03: cột đúng, thứ hạng kém hơn caption B1),
+parse/lookup 5 (synonym_vi-01/02, narrower-13, broader-19, negation_broad-12), expansion 5 (disease-01/05/10/11,
+negation_broad-16: SUGGESTS của bệnh chọn cột khác gold), choice 3 (narrower-02, anatomy-10, new_column-16). Không sửa KG
+thêm theo lượt này.
+
 ## Chạy heldout
 
-Chưa chạy. Điều kiện: gold heldout đã được Claude bên chat duyệt (sửa gold heldout thì ghi lại sha256 mới vào WORKLOG
-trước khi chạy). Chạy một lần, có khai báo; mọi hệ thống, mọi ablation đã khai báo trong `configs/eval_kg.yaml`
+Chưa chạy. Gold heldout (100 câu) đã được Claude bên chat duyệt; sha256 các dòng heldout ghi vào WORKLOG trước khi chạy.
+Cấu hình cuối đề xuất sau dev lượt 2: B2 + trộn điểm b0, w = 0,2 (chờ duyệt ở mốc 3). Chạy một lần, có khai báo; mọi hệ thống, mọi ablation đã khai báo trong `configs/eval_kg.yaml`
 (`lookup_deterministic`, `sapbert_off`, `no_narrower`, `no_wider`, `no_anatomy`, `no_disease`, `combine_max`,
 `suggests_equal`), cùng judge, cùng prompt, cùng tham số như dev:
 
@@ -198,6 +266,6 @@ trước khi chạy). Chạy một lần, có khai báo; mọi hệ thống, m�
 uv run cxr eval-kg --split heldout --heldout-declared
 ```
 
-Ước chi phí (theo dev): các lượt Haiku của pipeline và B0 < 0,1 USD; judge Opus ≈ 3 USD (≈ 0,0026 USD mỗi cặp); chấm chéo
-Sonnet ≈ 0,2 USD; tổng ≈ 3,5 USD. Cần Neo4j với `kg_build_id` kg_1637d5c0ee06 và `ANTHROPIC_API_KEY`. Kết quả ở
+Ước chi phí (theo dev lượt 2): ≈ 0,0029 USD mỗi cặp judge; 100 câu với các hệ và ablation đã khai báo ≈ 3.500 cặp ≈ 10 USD,
+chấm chéo ≈ 0,5 USD. Cần Neo4j với `kg_build_id` kg_32e035ed37b0 và `ANTHROPIC_API_KEY`. Kết quả ở
 `data/eval/metrics_heldout.json`, `report_heldout.md`.

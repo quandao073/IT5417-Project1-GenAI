@@ -1198,3 +1198,20 @@ kg-load-neo4j`, `uv run cxr validate-indexes --kg`. Chi phí từ `usage` của 
   hơn, sửa cờ weak của Pneumonia và Pleural Other, bỏ `weak_quality` khi hết cột yếu); 4 `heldout_edits` áp đủ.
 - `auto_check` tính lại trên graph hiện tại: graph lệch gold ở 54 / 172 câu (21 / 64 câu heldout mới).
 - Chi phí: 2,00 USD (ledger `data/eval/cost_ledger.jsonl` 4,853 → 6,856).
+
+## Đánh giá KG trên dev, lượt 2 (đo 2026-11-10, phiên C; bảng đầy đủ ở `docs/kg-evaluation.md`, *Dev lượt 2*)
+
+**Cách đo:** `uv run cxr eval-kg --split dev --phase run --rerun`, `--phase judge`, `--phase score` trên 72 câu dev (gold
+sha256 dòng dev `cae72e6418075a9a37ac488cb6d9ab705b31e3c19e3259f6d9c08d7c22f6e156`), ma trận `..._ext1_probe1`, graph
+kg_32e035ed37b0, judge `claude-opus-5-5` + `kg_judge_v1` (cache dùng chung với lượt 1), khai báo D74 trước khi đo. Bootstrap
+10.000 lần theo câu, seed 20261110. `data/eval/metrics_dev.json` sha256 `c9572a861a2d762e36a7add5edbeba3829a08f1fe6615c19d721fbb137ced244`. Dev đã dùng để chỉnh: lạc quan.
+
+- Pool 2.986 cặp, điểm 0 / 1 / 2 = 1.271 / 788 / 927; chấm chéo Sonnet 299 cặp: đồng thuận 0,789, kappa 0,680, bậc hai 0,838.
+- nDCG@10: B0 0,396 · B1 0,419 · B2 0,470 · B2 + trộn (b0, w 0,2) 0,503 · Tham chiếu 0,625. B2 − B1 +0,051 [−0,010; +0,112];
+  B2 + trộn − B1 +0,083 [+0,017; +0,149]; trộn − B2 +0,033 [+0,006; +0,062] (giữ theo luật D74). B2 đi đường văn bản ở 8 / 72.
+- 36 câu dev cũ: B2 0,544 (lượt 1 0,541), B1 0,482 (0,512), B2 − B1 +0,063 [+0,012; +0,114].
+- Ablation (với B2): tắt bệnh −0,040 [−0,078; −0,005]; probe_off −0,004 [−0,034; +0,022]; tắt rộng hơn −0,012 [−0,031; 0].
+- Lớp 2 B2: CUI đúng 0,692, F1 cột 0,723, đủ cảnh báo 0,704. Lớp 4: 759 câu, 98,95 % có căn cứ, 0 câu bị loại vì markup.
+- Độ trễ B2 (tìm): p50 2,17 s, p95 4,01 s; diễn giải p50 3,46 s, p95 4,91 s.
+- Chi phí lượt 2: judge 2.316 cặp mới 6,73 USD, chấm chéo 0,83 USD (hai mẫu vì pool đổi sau lần chạy lại), pipeline 0,12 USD.
+  Ledger `data/eval/cost_ledger.jsonl` 6,856 → 14,552.
