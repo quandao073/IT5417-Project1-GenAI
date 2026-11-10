@@ -154,3 +154,50 @@ def test_modifier_terms_are_listed_in_one_not_considered_warning():
     assert [i.term for i in got.intents] == ["Cardiomegaly"]
     assert codes(got).count("not_considered") == 1 and "unrecognized" not in codes(got)
     assert "Không xét: small, loculated." in got.warnings_text()           # a "vi" question
+
+
+class _Encoder:
+    """Every text points at the last matrix row."""
+
+    def __init__(self, n):
+        self.n, self.texts = n, []
+
+    def encode_texts(self, texts):
+        import numpy as np
+
+        self.texts += texts
+        return np.eye(self.n, dtype="float32")[[self.n - 1]]
+
+
+def _fallback(search_matrix):
+    import numpy as np
+
+    from src.common.config import load_config
+    from src.kg.text_fallback import TextFallback
+
+    n = len(search_matrix.study_ids)
+    return TextFallback(_Encoder(n), np.eye(n, dtype="float32"), search_matrix.views,
+                        load_config("concepts"))
+
+
+def test_a_question_the_graph_does_not_understand_is_ranked_by_text():
+    from tests.kg.search_kit import matrix
+
+    fb = _fallback(matrix())
+    got = make_search(parser_chat=Chat(parse_reply(terms=[("xyz qwerty", "PRESENT")])),
+                      text_fallback=fb).search("xyz qwerty", top_k=3)
+    assert "text_fallback" in codes(got) and "unrecognized" in codes(got)
+    assert got.rows and got.rows[0]["row"] == len(matrix().study_ids) - 1
+    assert got.trace["fallback"]["route"] == "text"
+    assert fb.encoder.texts == [got.query.semantic_query]       # no label: the free text
+
+
+def test_the_text_route_is_not_taken_when_something_wanted_was_scored_or_only_negated():
+    from tests.kg.search_kit import matrix
+
+    reply = parse_reply(include=["Cardiomegaly"], terms=[("xyz qwerty", "PRESENT")])
+    got = make_search(parser_chat=Chat(reply), text_fallback=_fallback(matrix())).search("x")
+    assert "text_fallback" not in codes(got) and "fallback" not in got.trace
+    only_no = parse_reply(exclude=["Pleural Effusion"])
+    got = make_search(parser_chat=Chat(only_no), text_fallback=_fallback(matrix())).search("y")
+    assert "text_fallback" not in codes(got) and got.rows

@@ -87,7 +87,7 @@ class FakeStore:
                         and self.nodes[e["src"]]["scorable"])
                 if kept and (e["src"] not in best or best[e["src"]]["p"] < e["p"]):
                     best[e["src"]] = {"cui": e["src"], "p": e["p"], "n": e["n"],
-                                      "target": self.nodes[t]["name"]}
+                                      "target": self.nodes[t]["name"], "source": e["source"]}
         return sorted(best.values(), key=lambda r: (-r["p"], r["cui"]))
 
     def anatomy_findings(self, cui, depth, min_n, top):

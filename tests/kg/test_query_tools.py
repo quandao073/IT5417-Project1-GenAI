@@ -120,6 +120,25 @@ def test_a_hand_written_suggests_edge_counts_without_a_pool_count(store):
     assert [(c.cui, round(c.weight, 2)) for c in got.columns] == [("C11", 0.5), ("C3", 0.5)]
 
 
+def test_hand_written_suggests_edges_come_before_the_is_a_routes(store):
+    # with a scorable ancestor (narrower) and, for C13, a scorable child (wider), the
+    # adjudicated SUGGESTS sources still win (D73), whatever the concept's label
+    store.edges += [{"src": "C14", "rel": "IS_A", "dst": "C1", "source": "test", "n": None,
+                     "n_src": None, "p": None, "review": None},
+                    {"src": "C2", "rel": "IS_A", "dst": "C13", "source": "test", "n": None,
+                     "n_src": None, "p": None, "review": None},
+                    {"src": "C3", "rel": "SUGGESTS", "dst": "C13", "source": "manual", "n": None,
+                     "n_src": None, "p": 1.0, "review": None}]
+    got = expand.expand_concepts(store, "C14", PRESENT, EXPAND_CFG, "interstitial disease")
+    assert got.kind == "disease" and [c.cui for c in got.columns] == ["C11", "C3"]
+    got = expand.expand_concepts(store, "C13", PRESENT, EXPAND_CFG, "low volumes")
+    assert got.kind == "disease" and [c.cui for c in got.columns] == ["C3"]
+    # a pool-weighted SUGGESTS edge does not jump the queue: C6 has none by hand
+    store.edges.append({"src": "C6", "rel": "IS_A", "dst": "C1", "source": "test", "n": None,
+                        "n_src": None, "p": None, "review": None})
+    assert expand.expand_concepts(store, "C6", PRESENT, EXPAND_CFG, "hf").kind == "narrower"
+
+
 def test_a_weak_finding_takes_no_slot_of_the_region_s_top_findings(store):
     # C4 (weak) has the strongest TYPICALLY_AT edge of the region: it must not push C1 out
     got = expand.expand_concepts(store, "C9", PRESENT, {**EXPAND_CFG, "anatomy_top": 1}, "space")

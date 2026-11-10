@@ -42,6 +42,23 @@ EXPLAIN_KNOWLEDGE_SCHEMA = {**EXPLAIN_SCHEMA, "properties": {
     "required": ["summary", "images", "knowledge"]}
 logger = logging.getLogger("cxr.kg")
 _SENTENCE = re.compile(r"(?<=[.!?])\s+")
+# T43: the model in tool mode sometimes closes a field inside its string and opens the next one
+_LEAK = re.compile(r"</\w+>\s*<parameter name=\"(\w+)\">")
+_TAG = re.compile(r"</?\w+[^<>]*>")
+
+
+def strip_leak(text: str) -> tuple[str, dict]:
+    """(the text before a leaked tool-call tag with any other tag removed, {field: parsed value}
+    of the fields that leaked after it, where they parse as JSON)."""
+    parts = _LEAK.split(text)
+    leaked = {}
+    for name, raw in zip(parts[1::2], parts[2::2], strict=True):
+        raw = raw.strip().removesuffix("</parameter>").strip()
+        try:
+            leaked[name] = json.loads(raw)
+        except ValueError:
+            leaked[name] = _TAG.sub(" ", raw).strip()
+    return " ".join(_TAG.sub(" ", parts[0]).split()), leaked
 _NUMBER = re.compile(r"\d+(?:[.,]\d+)?")
 _CITATION = re.compile(r"\[(K\d+)\]")
 
@@ -339,6 +356,13 @@ class Explainer:
                 lambda: self.client.chat(messages, schema, stream=True, meta=meta),
                 self.timeout_s)
             answer = json.loads(content)
+            # a field leaked into another's string is cut out and recovered when missing (T43)
+            for field in ("summary", "images", "knowledge"):
+                if isinstance(answer.get(field), str):
+                    answer[field], leaked = strip_leak(answer[field])
+                    for name, value in leaked.items():
+                        if not answer.get(name):
+                            answer[name] = value
             summary, images = str(answer["summary"]), list(answer["images"])
             told = str(answer["knowledge"]) if with_knowledge else ""
         except (LLMError, LLMInvalidOutput, ValueError, KeyError, TypeError) as exc:

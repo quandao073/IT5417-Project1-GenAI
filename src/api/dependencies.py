@@ -194,7 +194,8 @@ def _attach_kg(state: AppState, manifest: dict, images: pl.DataFrame, factory,
         state.kg_reason = "KG_ENABLED is false"
         return
     try:
-        state.kg, state.kg_notes = factory(state.settings, manifest, images, warm_up=warm_up)
+        state.kg, state.kg_notes = factory(state.settings, manifest, images, warm_up=warm_up,
+                                           encoder=state.encoder)
     except Exception as exc:  # noqa: BLE001 - missing tables, another matrix build, bad config
         state.kg_reason = f"{type(exc).__name__}: {exc}"
         logger.warning("KG search disabled: %s", state.kg_reason)

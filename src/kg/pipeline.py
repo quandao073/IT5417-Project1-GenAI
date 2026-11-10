@@ -54,11 +54,13 @@ class KGResult:
 class KGSearch:
     def __init__(self, *, cfg: dict, matrix: ScoreMatrix, parser, store, quality: dict,
                  label_ids: dict[str, str], names: dict[str, str], chooser=None,
-                 explainer=None, versions: dict | None = None, semantic=None):
+                 explainer=None, versions: dict | None = None, semantic=None,
+                 text_fallback=None):
         self.cfg, self.matrix, self.parser, self.store = cfg, matrix, parser, store
         self.quality, self.label_ids, self.names = quality, label_ids, names
         self.chooser, self.explainer, self.versions = chooser, explainer, versions or {}
         self.semantic = semantic        # sapbert.AliasIndex or None
+        self.text_fallback = text_fallback  # text_fallback.TextFallback or None (D73)
         self._terms_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="kg-terms")
 
     # -- intents ---------------------------------------------------------------------------
@@ -220,6 +222,18 @@ class KGSearch:
             rows = [{"rank": r, "row": int(row), "study_id": self.matrix.study_ids[row],
                      "image_id": self.matrix.image_ids[row], "view": str(self.matrix.views[row]),
                      "score": float(scores[row])} for r, row in enumerate(top, start=1)]
+        # nothing wanted was understood: rank by text like B1 (D73); a resolved negation alone
+        # keeps the KG ranking
+        wanted = [i for i in intents if i.polarity == PRESENT]
+        if (self.text_fallback is not None and not any(i.columns for i in wanted)
+                and (wanted or not rows)):
+            text = self.text_fallback.text(query)
+            top = self.text_fallback.top(text, top_k, tuple(views or query.views))
+            rows = [{"rank": r, "row": row, "study_id": self.matrix.study_ids[row],
+                     "image_id": self.matrix.image_ids[row], "view": str(self.matrix.views[row]),
+                     "score": score} for r, (row, score) in enumerate(top, start=1)]
+            warnings.append(Warn("text_fallback"))
+            trace["fallback"] = {"route": "text", "text": text}
         timings["score_ms"] = (time.perf_counter() - t) * 1000
         timings["total_ms"] = (time.perf_counter() - started) * 1000
         timings = {k: round(v, 1) for k, v in timings.items()}
@@ -228,8 +242,8 @@ class KGSearch:
 
     def explain(self, result: KGResult, top: int | None = None):
         """The explanation of the page, or None when no explainer is configured or there is
-        nothing to explain (no results)."""
-        if self.explainer is None or not result.rows:
+        nothing to explain (no results, or results of the text route: no KG facts)."""
+        if self.explainer is None or not result.rows or "fallback" in result.trace:
             return None
         rows = result.rows[:top or self.cfg["explain"]["top_results"]]
         probs = self.matrix.probabilities([r["row"] for r in rows], result.intents)

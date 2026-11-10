@@ -1525,7 +1525,14 @@ def _cmd_kg_build_graph(args: argparse.Namespace) -> int:
     device_phrases = chexpert_phrases.load(phrase_dir)["Support Devices"]
     groups = graph.device_groups(links, grown, umls, lcfg, device_phrases, gcfg["devices_parent"],
                                  mapping["Support Devices"].get("children", []))
-    cx, missing = graph.chexpert_edges(mapping, gcfg, links, groups)
+    generic = (links.filter(pl.col("kind") == "Observation",
+                            pl.col("string").is_in([s for v in gcfg["generic_is_a"].values()
+                                                    for s in v]))["cui"].drop_nulls().to_list())
+    english = {}
+    for cui, text in (pl.scan_parquet(umls / "mrconso.parquet").filter(pl.col("CUI").is_in(generic))
+                      .select("CUI", "STR").unique().collect().iter_rows()):
+        english.setdefault(cui, []).append(text)
+    cx, missing = graph.chexpert_edges(mapping, gcfg, links, groups, english)
     suggests, s_all = graph.weighted(mcuis, "suggests", "Observation", graph.SUGGESTS,
                                      gcfg["min_n"])
     located, t_all = graph.weighted(mcuis, "located_at", "Anatomy", graph.TYPICALLY_AT,
@@ -1725,6 +1732,8 @@ def _cmd_kg_graph_llm(args: argparse.Namespace) -> int:
     if not key:
         print("STOP: ANTHROPIC_API_KEY is not set (environment or .env)", file=sys.stderr)
         return 1
+    if args.task == "alias-check":
+        return _kg_alias_check(args, mcfg, out, umls, key)
     nodes = pl.read_parquet(out / "nodes.parquet")
     concepts = load_config("concepts")
     existing_vi = {label: entry.get("vi", []) for label, entry in concepts["concepts"].items()}
@@ -1860,6 +1869,58 @@ def _cmd_kg_graph_llm(args: argparse.Namespace) -> int:
     return 0
 
 
+def _english_names(umls: Path, cuis: list[str]) -> dict[str, list[str]]:
+    english: dict[str, list[str]] = {}
+    for cui, text in (pl.scan_parquet(umls / "mrconso.parquet").filter(pl.col("CUI").is_in(cuis))
+                      .select("CUI", "STR").unique().sort("CUI", "STR").collect().iter_rows()):
+        english.setdefault(cui, []).append(text)
+    return english
+
+
+def _kg_alias_check(args, mcfg: dict, out: Path, umls: Path, key: str) -> int:
+    """D73: Sonnet checks the Vietnamese aliases Opus proposed that are not yet decided. A row
+    both models agree on, with no automatic flag, is kept at once; the others wait for Claude in
+    the chat app (decision empty, Sonnet's verdict beside it)."""
+    path = out / "alias_vi_review.csv"
+    table = pl.read_csv(path, infer_schema_length=0).fill_null("")
+    for col in ("sonnet_verdict", "sonnet_reason"):
+        if col not in table.columns:
+            table = table.with_columns(pl.lit("").alias(col))
+    todo = [r for r in table.iter_rows(named=True) if r["alias"] and not r["decision"]
+            and (not args.cuis or r["cui"] in set(args.cuis))]
+    cuis = sorted({r["cui"] for r in todo if not r["cui"].startswith("PRJ:")})
+    info = {c: (n, t or "") for c, n, t in linker.describe(cuis, umls)
+            .select("cui", "name", "semantic_types").iter_rows()}
+    items = graph_llm.alias_check_items(todo, info, _english_names(umls, cuis))
+    system, prompt_sha = llm_select.load_prompt(default_config_dir() / mcfg["alias_check_prompt"])
+    cache = _llm_cache(out, "alias-check_sonnet")
+    chooser = _chooser("sonnet", mcfg["check_model"], key)
+    stats = llm_select.run(items, chooser, system, prompt_sha, cache,
+                           None if args.all else args.limit, mcfg["workers"],
+                           schema=graph_llm.ALIAS_CHECK_SCHEMA, parse=graph_llm.parse_alias_check,
+                           refused=graph_llm.REFUSED_CHECK)
+    answers = llm_select.choices(items, cache, chooser.model, prompt_sha)
+    verdict = {(it["string"], v["alias"].strip().lower()): v
+               for it in items for v in (answers.get(("alias-check", it["string"])) or {})
+               .get("verdicts", [])}
+    rows, kept, waiting = [], 0, 0
+    for r in table.iter_rows(named=True):
+        v = verdict.get((r["cui"], r["alias"])) if r["alias"] and not r["decision"] else None
+        if v is not None:
+            r["sonnet_verdict"], r["sonnet_reason"] = v["verdict"], v["reason"]
+            if v["verdict"] == "agree" and not r["flags"]:
+                r["decision"], r["note"] = "keep", "opus proposed, sonnet agreed"
+                kept += 1
+            else:
+                waiting += 1
+        rows.append(r)
+    pl.DataFrame(rows, schema={c: pl.String for c in table.columns}).write_csv(path)
+    print(f"alias check: {kept} rows kept (both agree, no flag), {waiting} waiting for the chat")
+    print(json.dumps({"task": "alias-check", "model": chooser.model, "prompt_sha256": prompt_sha,
+                      **stats}, indent=2))
+    return 0
+
+
 def _cmd_kg_fetch_chexpert_phrases(args: argparse.Namespace) -> int:
     """V2-3 (D56): the CheXpert labeler's mention phrases at the pinned commit, into data/."""
     target = chexpert_phrases.fetch(load_config("kg")["linker"]["chexpert_phrases"],
@@ -1944,7 +2005,7 @@ def build_parser() -> argparse.ArgumentParser:
     val.add_argument("--kg", action="store_true",
                      help="also run the four KG checks (needs the kg profile of compose)")
     val.add_argument("--kg-matrix", default="data/indexes/image_scores/"
-                     "20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1_ext1")
+                     "20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1_ext1_probe1")
     val.set_defaults(func=_cmd_validate_indexes)
 
     rep = sub.add_parser("build-report-index", help="Phase 5: build the SQLite FTS5 report index")
@@ -1986,7 +2047,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     kgq = sub.add_parser("kg-quality", help="`quality` (lenient AUROC) of every scorable concept")
     kgq.add_argument("--matrix", default="data/indexes/image_scores/"
-                     "20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1_ext1")
+                     "20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1_ext1_probe1")
     kgq.add_argument("--pool-dir", default="data/probe_pool")
     kgq.add_argument("--canonical-dir", default="data/canonical")
     kgq.add_argument("--out", default="data/kg/graph/quality.json")
@@ -2004,7 +2065,7 @@ def build_parser() -> argparse.ArgumentParser:
     kgq.add_argument("questions", nargs="*")
     kgq.add_argument("--file", default=None, help="one question per line")
     kgq.add_argument("--matrix", default="data/indexes/image_scores/"
-                     "20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1_ext1")
+                     "20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1_ext1_probe1")
     kgq.add_argument("--top-k", type=int, default=10)
     kgq.add_argument("--no-explain", action="store_true")
     kgq.add_argument("--out", default=None, help="JSONL, one record per question")
@@ -2013,7 +2074,7 @@ def build_parser() -> argparse.ArgumentParser:
     kgn = sub.add_parser("kg-load-neo4j", help="load the KG and the top-N PREDICTED edges")
     kgn.add_argument("--graph-dir", default="data/kg/graph")
     kgn.add_argument("--matrix", default="data/indexes/image_scores/"
-                     "20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1_ext1")
+                     "20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1_ext1_probe1")
     kgn.add_argument("--canonical-dir", default="data/canonical")
     kgn.add_argument("--top-n", type=int, default=None, help="default: kg.yaml neo4j.top_n")
     kgn.set_defaults(func=_cmd_kg_load_neo4j)
@@ -2144,7 +2205,7 @@ def build_parser() -> argparse.ArgumentParser:
     kgg.add_argument("--link-dir", default="data/kg/link")
     kgg.add_argument("--chexpert-dir", default="data/kg/chexpert_phrases")
     kgg.add_argument("--image-scores", default="data/indexes/image_scores/"
-                     "20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1_ext1",
+                     "20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1_ext1_probe1",
                      help="score matrix whose extended columns make their concepts scorable")
     kgg.add_argument("--out", default="data/kg/graph")
     kgg.set_defaults(func=_cmd_kg_build_graph)
@@ -2162,12 +2223,14 @@ def build_parser() -> argparse.ArgumentParser:
     kgr = sub.add_parser("kg-graph-llm",
                          help="V2-4: Opus reviews SUGGESTS edges, proposes Vietnamese aliases, "
                               "or proposes routes for diseases that reach no column")
-    kgr.add_argument("--task", choices=["suggests", "alias", "route-review"], required=True)
+    kgr.add_argument("--task", choices=["suggests", "alias", "alias-check", "route-review"],
+                     required=True)
     budget = kgr.add_mutually_exclusive_group(required=True)
     budget.add_argument("--limit", type=int, help="at most this many uncached items")
     budget.add_argument("--all", action="store_true", help="every uncached item")
     kgr.add_argument("--cuis", nargs="+", default=None,
-                     help="alias task: only these concepts (rows already in the file are kept)")
+                     help="alias and alias-check tasks: only these concepts (rows already "
+                          "in the file are kept)")
     kgr.add_argument("--umls-dir", default="data/umls/2026AA")
     kgr.add_argument("--out", default="data/kg/graph")
     kgr.set_defaults(func=_cmd_kg_graph_llm)

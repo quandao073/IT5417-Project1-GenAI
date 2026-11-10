@@ -7,6 +7,7 @@ answer must carry, and the path in the graph.
     non-scorable, with scorable concepts below it (IS_A)   those, noisy-OR (wider)
     otherwise, a scorable ancestor (IS_A)                  that, with a warning (narrower)
     otherwise a Disease     the scorable findings that SUGGESTS it, weights from p
+    (before IS_A) a concept with `manual` SUGGESTS into it takes them first (D73)
     otherwise an Anatomy    the scorable findings usually seen there (TYPICALLY_AT), noisy-OR
                             weighted by how often each is seen there (p of the edge, divided by
                             the largest p of the region, so the most typical finding counts fully)
@@ -93,6 +94,11 @@ def expand_concepts(store, cui: str, polarity: str, cfg: dict, term: str = "") -
                     intent.path = [f"{name} + {', '.join(k['name'] for k in kids)}"]
         return intent
 
+    # an adjudicated route (manual SUGGESTS into this very concept) comes before IS_A (D73)
+    if _suggested(store, intent, [r for r in store.suggesting(cui, 0, cfg["min_n"])
+                                  if r["source"] == "manual"]):
+        return intent
+
     below = store.scorable_below(cui, down)
     strong = _strong(store, [r["cui"] for r in below])
     if strong:
@@ -115,19 +121,9 @@ def expand_concepts(store, cui: str, polarity: str, cfg: dict, term: str = "") -
                 intent.warnings.append(_weak_warning(ancestor))
         return intent
 
-    if label == "Disease":
-        rows = store.suggesting(cui, cfg["suggests_depth"], cfg["min_n"])
-        found = _strong(store, [r["cui"] for r in rows])
-        if found:
-            p = {r["cui"]: r["p"] for r in rows}
-            total = sum(p[k["cui"]] for k in found)
-            intent.kind, intent.combine = "disease", WEIGHTED
-            intent.columns = [_column(k, p[k["cui"]] / total) for k in found]
-            intent.path = [f"{k['name']} —SUGGESTS(p={p[k['cui']]:.4f})→ "
-                           f"{next(r['target'] for r in rows if r['cui'] == k['cui'])}"
-                           for k in found]
-            intent.warnings.append(Warn("disease_inferred", {"name": name}))
-            return intent
+    if label == "Disease" and _suggested(store, intent, store.suggesting(
+            cui, cfg["suggests_depth"], cfg["min_n"])):
+        return intent
     if label == "Anatomy":
         # the best `anatomy_top` findings that are not weak: ask for more, a weak one takes no slot
         rows = store.anatomy_findings(cui, cfg["part_depth"], cfg["min_n"], ANATOMY_FETCH)
@@ -143,6 +139,21 @@ def expand_concepts(store, cui: str, polarity: str, cfg: dict, term: str = "") -
             return intent
     intent.warnings.append(nothing)
     return intent
+
+
+def _suggested(store, intent: Intent, rows: list[dict]) -> bool:
+    """The disease route: the strong findings among `rows` (SUGGESTS sources), weighted by p."""
+    found = _strong(store, [r["cui"] for r in rows])
+    if not found:
+        return False
+    p = {r["cui"]: r["p"] for r in rows}
+    total = sum(p[k["cui"]] for k in found)
+    intent.kind, intent.combine = "disease", WEIGHTED
+    intent.columns = [_column(k, p[k["cui"]] / total) for k in found]
+    intent.path = [f"{k['name']} —SUGGESTS(p={p[k['cui']]:.4f})→ "
+                   f"{next(r['target'] for r in rows if r['cui'] == k['cui'])}" for k in found]
+    intent.warnings.append(Warn("disease_inferred", {"name": intent.name}))
+    return True
 
 
 def _strong(store, cuis: list[str]) -> list[dict]:

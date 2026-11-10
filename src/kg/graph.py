@@ -179,10 +179,13 @@ def semantic_types(umls_dir: Path) -> tuple[pl.DataFrame, pl.DataFrame]:
 
 
 def chexpert_edges(mapping: dict, gcfg: dict, links: pl.DataFrame,
-                   groups: dict[str, list[str]]) -> tuple[pl.DataFrame, list[str]]:
+                   groups: dict[str, list[str]], english: dict[str, list[str]] | None = None,
+                   ) -> tuple[pl.DataFrame, list[str]]:
     """IS_A with source chexpert (D57, D58): the PRJ ids' is_a and children, the CheXpert
     hierarchy, extra children, generic strings to their label, and the device groups. Returns
-    the edges and the generic strings that have no Observation CUI."""
+    the edges and the generic strings that have no Observation CUI. A label in
+    `generic_is_a_require` takes a generic string's CUI only when one of its English names
+    (`english`) contains that word: "fibrosis" means the pleura only beside "pleural" (D73)."""
     ids = {label: entry["id"] for label, entry in mapping.items()}
     rows = []
     for entry in mapping.values():
@@ -193,13 +196,14 @@ def chexpert_edges(mapping: dict, gcfg: dict, links: pl.DataFrame,
     rows += [(c, ids[label]) for label, cuis in gcfg["chexpert_children"].items() for c in cuis]
     obs = dict(links.filter(pl.col("kind") == "Observation", pl.col("cui").is_not_null())
                .select("string", "cui").iter_rows())
-    missing = []
+    missing, require = [], gcfg.get("generic_is_a_require", {})
     for label, strings in gcfg["generic_is_a"].items():
         for s in strings:
-            if s in obs:
-                rows.append((obs[s], ids[label]))
-            else:
+            if s not in obs:
                 missing.append(s)
+            elif label not in require or any(require[label] in t.lower()
+                                             for t in (english or {}).get(obs[s], [])):
+                rows.append((obs[s], ids[label]))
     rows += [(c, ids[label]) for label, cuis in gcfg.get("phrase_is_a", {}).items() for c in cuis]
     rows += [(c, ids["Support Devices"]) for c in groups["support_devices"]]
     rows += [(c, gcfg["devices_parent"]) for c in groups["other"]]

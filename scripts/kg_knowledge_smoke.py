@@ -121,7 +121,7 @@ def main() -> int:
     ap.add_argument("--file", default="docs/v2-6-smoke.txt")
     ap.add_argument("--out", required=True, help="prefix: <out>.jsonl and <out>.summary.json")
     ap.add_argument("--matrix", default="data/indexes/image_scores/"
-                    "20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1_ext1")
+                    "20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1_ext1_probe1")
     ap.add_argument("--max-items", type=int, default=None, help="override knowledge_max_items")
     args = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")

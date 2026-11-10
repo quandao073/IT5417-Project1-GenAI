@@ -156,6 +156,10 @@ graph:
       - [C0029408, C0011164]    # wear-and-tear joint disease, below the degenerative-change column
     suggests:             # disease: findings that suggest it, equal weights, no pool count
       C0206062: [C1849561, C5539772, C4476748]   # the diffuse interstitial disease concept <- the interstitial markings, thickening and reticular-pattern findings
+      # session C (D73): fibrosis of the lung, same sources as C0206062; chest trauma and its parent (dev broader-03/04)
+      C0034069: [C1849561, C5539772, C4476748]   # scarring of the lung tissue <- interstitial markings, thickening, reticular pattern
+      C0039980: [C0035522, C0016655, C0032326, C0038536]   # injury of the chest <- rib fracture, multiple fractures, pneumothorax, subcutaneous emphysema
+      C3263723: [C0035522, C0016655, C0032326, C0038536]   # traumatic injury, as a chest film shows it <- the same four
       C0024117: [C0013990]   # the chronic airflow-obstruction disease <- the emphysema column
       C0740451: [C0006663]   # the granuloma-forming disease <- the calcification column
       # route review of 2026-11-08: only the columns the adjudication kept (`cols=` in its note)
@@ -191,6 +195,8 @@ graph:
     Lung Opacity: [infiltrate, increased density, reticular pattern, scar]
     Pleural Other: [fibrosis]
     Pneumonia: [infection, infectious process]
+  generic_is_a_require:   # D73: in pleural_other.txt only "fibrosis" means the pleura just beside "pleural", so the
+    Pleural Other: pleur  # linked CUI must carry a pleural English name (the general fibrosis CUI does not)
   phrase_is_a:            # D57 for CUIs reached through a pair link: the labeler phrase is verbatim in <label>.txt
     Edema: [C5194648,     # "vascular prominence" (edema.txt): pairs prominence/prominent + vascular(ity)
             C0242073]     # "vascular congestion", "pulmonary congestion" (edema.txt): congestion + (pulmonary) vascular
@@ -202,6 +208,9 @@ graph:
     suggests_prompt: prompts/kg_suggests_review_v1.txt
     suggests_top: 50
     alias_prompt: prompts/kg_alias_vi_v1.txt
+    # D73: Sonnet checks Opus's aliases independently; both agree and no flag = kept, else the chat adjudicates
+    alias_check_prompt: prompts/kg_alias_check_v1.txt
+    check_model: {model: claude-sonnet-5-5, effort: medium, max_tokens: 4000, timeout_seconds: 120}
     alias_top: 200        # concepts by n_pool, besides the 14 labels
     alias_max: 3
     # Core diseases without a route to a column (scripts/kg_disease_routes.py), at least this many pool mentions:
@@ -280,7 +289,7 @@ query:
     part_depth: 5          # PART_OF steps below an anatomy region
     anatomy_top: 3         # findings kept for a region, by p (a region asked for alone, WORKLOG D67)
     min_n: 20              # same cut as graph.min_n
-    weak_or_children: [C0016658]   # weak labels that D63 scores noisy-OR with their scorable children (Fracture)
+    weak_or_children: []   # weak labels that D63 scores noisy-OR with their scorable children; Fracture left with the probe matrix (D72)
   # Forms of concepts.yaml that mean two things: left out of the KG parser's concept list so that the question's
   # words reach lookup_concept and the language model chooses with the whole question (WORKLOG D64), and the forms
   # that also name a scorable concept below the label, which has its own, better scored column (WORKLOG D67; the

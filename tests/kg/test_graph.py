@@ -110,6 +110,15 @@ def test_chexpert_edges_and_scorable_reach():
         ("PRJ:support_devices", "C0025080"), ("C0000020", "PRJ:support_devices"),
         ("C0000001", "C0000005"), ("C0000005", "C0000099"), ("C0000007", "C0000099"),
         ("C0000021", "C0025080")}
+    # D73: a label that requires a word takes only a CUI with an English name containing it
+    cfg = {**cfg, "generic_is_a": {"Lung Opacity": ["infiltrate", "scar"]},
+           "generic_is_a_require": {"Lung Opacity": "pleur"}}
+    links = pl.DataFrame({"kind": ["Observation"] * 2, "string": ["infiltrate", "scar"],
+                          "cui": ["C0000007", "C0000008"]})
+    edges, _ = graph.chexpert_edges(mapping, cfg, links, {"support_devices": [], "other": []},
+                                    {"C0000007": ["Infiltrate"], "C0000008": ["Pleural scar"]})
+    assert ("C0000008", "C0000099") in set(edges.select("src", "dst").rows())
+    assert ("C0000007", "C0000099") not in set(edges.select("src", "dst").rows())
     nodes = pl.DataFrame({"cui": ["C0000001", "C0000002", "C0000003", "C0000010", "C0000011",
                                   "C0000012"],
                           "scorable": [True, False, False, False, False, False]})

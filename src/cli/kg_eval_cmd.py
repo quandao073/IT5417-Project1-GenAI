@@ -200,11 +200,11 @@ def _components(ecfg: dict, ledger, key: str):
     if status != "ok":
         raise SystemExit(f"STOP: B1 parser language model is {status}")
     matrix_dir = (Path(settings.indexes_dir) / "image_scores"
-                  / f"{manifest['build_id']}_ext1")
+                  / f"{manifest['build_id']}{runtime.MATRIX_SUFFIX}")
     search, notes = runtime.build_kg_search(
         settings.model_copy(update={"kg_matrix_dir": matrix_dir}),
         {"build_id": manifest["build_id"]},
-        images.select("image_id", "projection"))
+        images.select("image_id", "projection"), encoder=encoder)
     if search.store is None or search.chooser is None:
         raise SystemExit(f"STOP: the KG search is degraded at startup: {notes}")
     translator = kg_llm.CachedCaller("translator", ecfg["llm"]["translator"], key,

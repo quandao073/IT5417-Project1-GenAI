@@ -44,6 +44,9 @@ TEXT = {
     "llm_fallback": {
         "en": "The language model was unavailable ({reason}); the deterministic route was used.",
         "vi": "Model ngôn ngữ không dùng được ({reason}); đã dùng đường tất định."},
+    "text_fallback": {
+        "en": "No concept was recognised; results follow text similarity.",
+        "vi": "Không nhận ra khái niệm; kết quả theo độ giống văn bản."},
     "kg_unavailable": {
         "en": "The knowledge graph was unavailable; only the 14 labels were scored.",
         "vi": "KG không dùng được; chỉ chấm 14 nhãn."},

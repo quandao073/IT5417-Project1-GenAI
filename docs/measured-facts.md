@@ -1166,3 +1166,21 @@ probe − zero-shot trên pool-val, CI 95% nằm hẳn trên 0. `quality` tính 
 |  | C5539772 | 0,692 | 0,754 | +0,062 [+0,021; +0,107] | 1 | probe | 0,754 [0,706; 0,798] |  |  |
 |  | C0028259 | 0,709 | 0,743 | +0,034 [+0,002; +0,068] | 10 | probe | 0,743 [0,680; 0,799] |  |  |
 |  | C0746216 | 0,768 | 0,835 | +0,067 [+0,032; +0,103] | 0.1 | probe | 0,835 [0,789; 0,877] |  |  |
+
+## Vá KG theo error analysis dev (đo 2026-11-10, D73)
+
+**Cách đo:** `uv run cxr kg-build-graph` (ma trận `..._ext1_probe1`), `uv run cxr kg-graph-llm --task alias --all --cuis <66 CUI>`,
+`uv run cxr kg-graph-llm --task alias-check --all --cuis <66 CUI>`, dựng lại graph, `uv run cxr kg-quality`, `uv run cxr
+kg-load-neo4j`, `uv run cxr validate-indexes --kg`. Chi phí từ `usage` của cache theo bảng giá `configs/eval_kg.yaml`.
+
+- Chọn khái niệm cho alias: Disease có đường tới cột và thiếu alias VI 2.273, trong đó có lượt nhắc pool 63 (2.210 chỉ đến từ
+  mở rộng UMLS); cột thiếu alias 1 (C0028259, ba đề xuất cũ đã bị loại khi phân xử, giữ nguyên); khái niệm chấn thương 1 → 66
+  CUI, 65 nhận đề xuất mới.
+- Opus: 65 khái niệm, 172 alias đề xuất, 51.337 / 7.156 token vào / ra, 0,35 USD. Sonnet kiểm: 57.738 / 13.146 token, 0,25 USD.
+  124 dòng `keep` (cả hai agree, không cờ); 48 chờ phân xử (36 Sonnet disagree, 12 agree nhưng bị cờ); 6 khái niệm chưa có
+  alias nào được giữ. Alias VI nguồn `llm` 473 → 597.
+- Graph: IS_A 10.234 → 10.233 (bỏ Fibrosis → PRJ:pleural_other), SUGGESTS 69 → 80 (11 cạnh manual); D59 theo lượt nhắc 0,950.
+  `kg_build_id` kg_c49f488911e6, ma trận `..._ext1_probe1@e878b151d823`; `validate-indexes --kg` bốn check KG PASS.
+- `cxr kg-query` (Haiku): "xơ phổi" → C0034069 đường disease 3 cột; "bóc tách động mạch chủ" → C0340643 disease 1 cột;
+  "chấn thương ngực" → C0039980 disease 4 cột; "traumatic injuries after a fall from a ladder" lượt này parser giữ cả câu làm
+  một term, lookup không có ứng viên (T18; trong eval có fallback văn bản).
