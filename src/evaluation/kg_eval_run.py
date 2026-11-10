@@ -162,16 +162,38 @@ class Runner:
         if explain:
             from src.api.routes.kg import explanation_event
 
+            keys = ("status", "summary", "images", "dropped", "first_token_ms", "total_ms",
+                    "error")
             t = time.perf_counter()
             event = explanation_event(result, self.search.explain(result))
-            out["explanation"] = {k: event.get(k) for k in (
-                "status", "summary", "images", "dropped", "first_token_ms", "total_ms",
-                "error")}
+            out["explanation"] = {k: event.get(k) for k in keys}
             out["ms"]["explain_ms"] = (time.perf_counter() - t) * 1000
+            v3 = self._explainer_v3()
+            if v3 is not None:      # layer 4 without the knowledge part, on the same results
+                v4, self.search.explainer = self.search.explainer, v3
+                try:
+                    event = explanation_event(result, self.search.explain(result))
+                finally:
+                    self.search.explainer = v4
+                out["explanation_v3"] = {k: event.get(k) for k in keys}
         for name, client in clients.items():
             step = name if tag == "b2" else f"{tag}:{name}"
             self.ledger.add_client_delta(step, client, before[name])
         return out
+
+    def _explainer_v3(self):
+        """The explainer with prompt v3 and no knowledge base, when B2 runs v4; else None."""
+        e = self.search.explainer
+        if e is None or e.knowledge is None:
+            return None
+        if not hasattr(self, "_v3"):
+            from src.common.config import default_config_dir, load_config
+            from src.kg.llm_query import Explainer
+
+            name = load_config("models")["kg_llm"]["explain"]["prompt_file"]
+            text = (default_config_dir() / name).read_text(encoding="utf-8")
+            self._v3 = Explainer(e.client, e.guard, text, e.timeout_s, e.index, None)
+        return self._v3
 
     def run_all(self, systems, rerun: bool) -> None:
         todo = [s for s in systems if rerun or s not in self.runs]

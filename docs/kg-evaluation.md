@@ -255,6 +255,35 @@ parse/lookup 5 (synonym_vi-01/02, narrower-13, broader-19, negation_broad-12), e
 negation_broad-16: SUGGESTS của bệnh chọn cột khác gold), choice 3 (narrower-02, anatomy-10, new_column-16). Không sửa KG
 thêm theo lượt này.
 
+## Heldout: khai báo (D24, D75), ghi trước khi chạy
+
+Cấu hình khóa: B2 = ma trận `..._ext1_probe1` + graph kg_32e035ed37b0 (`matrix_version` `..._ext1_probe1@e878b151d823`) +
+fallback văn bản + trộn b0, w = 0,2; `explain.knowledge` bật (prompt v4). Commit code của lượt chạy: commit khóa này. sha256
+(bản trong working copy lúc chạy):
+
+```
+b9e7eccbefecfda8371f6041e7d18a3097c2c8ce63655eea07337f8853518348  dòng heldout (kb.split_sha256, 100 câu)
+b3ce4dcef6597a183cbb278c45285a3bb2345350843ece1fca6887830ccf800e  benchmarks/kg_queries_v1.jsonl
+6afff35044156d7739291722ed1e53fed19fc0ad7c0948eb024af1a2e75ed6aa  configs/eval_kg.yaml
+47e87f860f26544a105d5d002707ea975215b8ccbdad715a9aa738d6d23ee41c  configs/kg.yaml
+1e91735d6b55fec3936b8aac081ee39f05043e7fb3269f861406f3ad8148a0e8  configs/models.yaml
+e0cacc2cb6634ad6b99c8c02474b324382c1f8ed34067d3ba07c538f30bcfdad  configs/concepts.yaml
+1a1ed039b55c4dd5bc5bd66b7090f5746bb7dd8887cb87382ca349e2d909db5f  configs/kg/aliases_manual.yaml
+b93212d8dc875d8050dd3eeb0d8337321d601f997c17ef7e0a08e2d6ac8254cd  configs/kg/chexpert_cuis.yaml
+8280508edc18ab35a49f7c957ca0f9d1a7b3babdd573a79285c5a7e5886273f6  configs/kg/linker_overrides.yaml
+9e798cc5fe0d1fc82768098891c6a4071c12981729e8055b3581718c83b86918  configs/prompts/kg_judge_v1.txt
+d22db8aeab4931f9056b5cc7c84bb56eec7ac77fa0366af51ec2cdcc2b3f99ba  configs/prompts/kg_b0_translate_v1.txt
+8f647955ca123d19b52091e44e22ab5657b8475dae1f2ef6799a28d975e88a8f  configs/prompts/query_parser_v1.txt
+38e161cee59c0abfadc4d9e8ef4bce750fcf45414fab8992a4fbc323210d59e0  configs/prompts/query_parser_v3.txt
+7ae3b5452940a6988866417df574dc0aa2eff1b89bd3eb3c64a88135578a7058  configs/prompts/kg_choose_concept_v2.txt
+83610c273291d72867347544519aa69e3d8ffbb39bdd8b2580eb3692f9586bcd  configs/prompts/kg_explain_v3.txt
+a7e51fbbcea9a4c7a075784ec6571b0f995a373761e0c02b3cd8fae3ac87276d  configs/prompts/kg_explain_v4.txt
+```
+
+Cùng lượt: B0, B1, Tham chiếu, `fusion_off` (= B2 không trộn), `probe_off`, mọi ablation của `eval.ablations`, lưới 10 ô trộn
+điểm. **Lưới trên heldout chỉ là phân tích độ nhạy: kết quả chính luôn là cấu hình đã khóa, kể cả khi ô khác cao hơn.**
+Lớp 4 đo cả có (v4) và không có knowledge (v3, cùng kết quả tìm). Chạy một lần; sau đó không sửa gì theo heldout.
+
 ## Chạy heldout
 
 Chưa chạy. Gold heldout (100 câu) đã được Claude bên chat duyệt; sha256 các dòng heldout ghi vào WORKLOG trước khi chạy.

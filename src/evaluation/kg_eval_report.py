@@ -56,12 +56,12 @@ def layer2_table(runs: dict, rows, systems, keep) -> dict:
     return out
 
 
-def layer4(runs: dict, rows) -> dict:
+def layer4(runs: dict, rows, key: str = "explanation") -> dict:
     statuses: dict[str, int] = {}
     kept = dropped = diagnostic = 0
     reasons: dict[str, int] = {}
     for r in rows:
-        e = runs["B2"].get(r["id"], {}).get("explanation")
+        e = runs["B2"].get(r["id"], {}).get(key)
         if e is None:
             continue
         statuses[e["status"]] = statuses.get(e["status"], 0) + 1
@@ -164,6 +164,12 @@ def fusion_choice(per_q: dict, rows, fcfg: dict, n_boot: int, seed: int) -> dict
     grid = [g for g in grid if g in per_q]
     if not grid or "B2" not in per_q:
         return {}
+    if fcfg.get("locked"):
+        # the configuration was chosen on dev and locked: the grid is a sensitivity analysis
+        d = kr.diffs(per_q, rows, [(g, "B2") for g in grid], n_boot, seed)
+        return {"grid": {g: d[f"{g}-B2"]["ndcg10"] for g in grid}, "best": max(
+            grid, key=lambda g: (d[f"{g}-B2"]["ndcg10"]["mean"] or -1.0, g)),
+            "kept": True, "chosen": fcfg["locked"], "sensitivity_only": True}
     d = kr.diffs(per_q, rows, [(g, "B2") for g in grid], n_boot, seed)
     table = {g: d[f"{g}-B2"]["ndcg10"] for g in grid}
     best = max(grid, key=lambda g: (table[g]["mean"] or -1.0, g))
@@ -180,6 +186,9 @@ def score_all(rows, runs, meta, judge, cross, sample, pooled, ledger, ecfg, all_
     per_q = kr.score_runs(runs, rows, judge, view_of, vcfg["top_k"], vcfg["view_rule"], pooled)
     undisputed = lambda r: not r["gold_disputed"]          # noqa: E731
     ablations = [a for a in vcfg["ablations"] if a in runs]
+    main = vcfg.get("fusion", {}).get("locked")
+    pairs = MAIN_PAIRS if main not in runs else [
+        (main, "B1"), ("B2", "B1"), ("B1", "B0"), ("REF", main), (main, "B2")]
     n_boot, seed = vcfg["bootstrap"], ecfg["benchmark"]["seed"]
     out = {"meta": meta, "split": rows[0]["split"] if rows else None, "questions": len(rows),
            "disputed": sum(r["gold_disputed"] for r in rows),
@@ -188,7 +197,7 @@ def score_all(rows, runs, meta, judge, cross, sample, pooled, ledger, ecfg, all_
     for name, keep in (("all", lambda r: True), ("undisputed", undisputed)):
         out[name] = {
             "layer3": kr.aggregate(per_q, rows, keep),
-            "diffs": kr.diffs(per_q, rows, MAIN_PAIRS, n_boot, seed, keep),
+            "diffs": kr.diffs(per_q, rows, pairs, n_boot, seed, keep),
             "ablation_diffs": kr.diffs(per_q, rows, [(a, "B2") for a in ablations], n_boot,
                                        seed, keep),
             "layer2": {s: v["table"] for s, v in layer2_table(
@@ -196,6 +205,8 @@ def score_all(rows, runs, meta, judge, cross, sample, pooled, ledger, ecfg, all_
     if "fusion" in vcfg:
         out["fusion"] = fusion_choice(per_q, rows, vcfg["fusion"], n_boot, seed)
     out["layer4"] = layer4(runs, rows)
+    if any("explanation_v3" in v for v in runs.get("B2", {}).values()):
+        out["layer4_without_knowledge"] = layer4(runs, rows, "explanation_v3")
     out["cost"] = cost_table(ledger, max(1, len(rows)))
     out["latency"] = latency_table(runs)
     out["errors"] = error_analysis(rows, runs, per_q)
@@ -250,10 +261,16 @@ def markdown(out: dict) -> str:
         lines.append("")
     if out.get("fusion"):
         f = out["fusion"]
-        lines += ["## Score fusion (vs B2, nDCG@10)", "", "| run | difference |", "|---|---|"]
+        lines += ["## Score fusion (vs B2, nDCG@10)", ""]
+        if f.get("sensitivity_only"):
+            lines += [f"Sensitivity only: the main result is the locked {f['chosen']}, even "
+                      "where another cell is higher.", ""]
+        lines += ["| run | difference |", "|---|---|"]
         lines += [f"| {g} | {_ci(d)} |" for g, d in f["grid"].items()]
         lines += ["", f"best {f['best']}; kept {f['kept']}; chosen {f['chosen']}", ""]
-    lines += ["## Layer 4", "", f"{out['layer4']}", "", "## Cost", "", f"{out['cost']}", "",
+    lines += ["## Layer 4", "", f"{out['layer4']}", "",
+              f"without knowledge: {out.get('layer4_without_knowledge')}", "",
+              "## Cost", "", f"{out['cost']}", "",
               "## Latency", "", f"{out['latency']}", "", "## Errors (B2 below B1)", "",
               "| id | step | nDCG B2 | nDCG B1 | gold | B2 | kinds | disputed |",
               "|---|---|---|---|---|---|---|---|"]
