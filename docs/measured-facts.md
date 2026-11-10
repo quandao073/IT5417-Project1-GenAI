@@ -1184,3 +1184,17 @@ kg-load-neo4j`, `uv run cxr validate-indexes --kg`. Chi phí từ `usage` của 
 - `cxr kg-query` (Haiku): "xơ phổi" → C0034069 đường disease 3 cột; "bóc tách động mạch chủ" → C0340643 disease 1 cột;
   "chấn thương ngực" → C0039980 disease 4 cột; "traumatic injuries after a fall from a ladder" lượt này parser giữ cả câu làm
   một term, lookup không có ứng viên (T18; trong eval có fallback văn bản).
+
+## Benchmark KG mở rộng (đo 2026-11-10, phiên C)
+
+**Cách đo:** `uv run cxr kg-bench-build --extend --attempts 3` (prompt `kg_bench_author_v1`, `kg_bench_review_v1` như lượt
+đầu; graph kg_c49f488911e6; `do_not_reuse` thêm 72 câu cũ), rồi `uv run python scripts/kg_bench_apply_review.py --edits`.
+
+- 100 câu mới: dev 36, heldout 64; mỗi nhóm qua kiểm cấu trúc ở lượt soạn đầu; 24 cặp dịch mới, không cặp nào tách split.
+  Toàn bộ: 172 câu, dev 72 (37 EN / 35 VI), heldout 100 (49 EN / 51 VI); 72 câu cũ giữ nguyên từng byte trước khi áp luật.
+- Sonnet phản đối 7 / 100 câu mới (tổng `gold_disputed` 7 sau khi bỏ cờ của kg-broader-07). Trùng chữ (Jaccard token ≥ 0,6)
+  với câu cũ, parser_queries_v1, smoke: 10 cặp, đều cùng khuôn câu khác khái niệm.
+- `general_rule` (cột yếu mới): đổi 16 câu dev và 16 câu heldout (bỏ cột yếu không phải hỏi trực tiếp hay tổ tiên của luật hẹp
+  hơn, sửa cờ weak của Pneumonia và Pleural Other, bỏ `weak_quality` khi hết cột yếu); 4 `heldout_edits` áp đủ.
+- `auto_check` tính lại trên graph hiện tại: graph lệch gold ở 54 / 172 câu (21 / 64 câu heldout mới).
+- Chi phí: 2,00 USD (ledger `data/eval/cost_ledger.jsonl` 4,853 → 6,856).

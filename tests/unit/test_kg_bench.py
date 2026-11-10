@@ -71,3 +71,16 @@ def test_the_ledger_prices_usage_and_stops_at_the_budget(tmp_path):
         ledger.check()
     again = kg_llm.Ledger(tmp_path / "l.jsonl", pricing, budget=1.0)   # read back from disk
     assert again.total == pytest.approx(1.2) and again.by("step") == {"s": 1.2}
+
+
+def test_an_extension_fills_each_group_to_its_targets_and_new_ids_follow_the_old_ones():
+    old = [{"split": "dev", "lang": "en"}] * 5 + [{"split": "heldout", "lang": "vi"}] * 4
+    got = kb.extend_counts(old, 0, 9, [13, 12])
+    assert got == {"dev": 4, "heldout": 9, "n_en": 6, "n_vi": 7}
+    odd = kb.extend_counts(old, 1, 9, [13, 12])        # 21 in all: the extra one alternates
+    assert (odd["dev"], odd["heldout"]) == (4, 8) and odd["n_en"] + odd["n_vi"] == 12
+    with pytest.raises(ValueError):
+        kb.extend_counts(old, 0, 4, [13, 12])          # already more dev than the target
+    rows = kb.assign_ids("anatomy", [q("en"), q("vi", 0)], start=10)
+    assert [r["id"] for r in rows] == ["kg-anatomy-10", "kg-anatomy-11"]
+    assert rows[1]["pair"] == "kg-anatomy-10"
