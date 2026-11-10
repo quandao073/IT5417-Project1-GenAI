@@ -1040,3 +1040,37 @@ sai lẽ ra nên bị loại.
   (cui, text) trước khi khử trùng): ba lần dựng liên tiếp ra cùng kg_1637d5c0ee06; sửa một chú thích trong `kg.yaml` vẫn ra
   kg_1637d5c0ee06; thêm một cạnh `manual` thử thì ra kg_4329bbb527ae; khôi phục config thì về kg_1637d5c0ee06. Neo4j đã nạp
   kg_1637d5c0ee06, cạnh và độ nối như lượt i (IS_A 10.234, SUGGESTS 69, D59 0,948).
+
+## Diễn giải theo tri thức KG (đo 2026-11-10, nhánh `feat/kg-knowledge-explanation`)
+
+- **Tập khái niệm** (`knowledge.concept_set`, kg_1637d5c0ee06): 298 = 37 cột scorable, 20 Disease có cột bên dưới
+  (wider), 74 Disease có SUGGESTS từ cột không yếu, 36 Disease lõi chỉ có đường narrower, 131 Anatomy có TYPICALLY_AT
+  (n ≥ 20) từ cột không yếu, trực tiếp hay qua PART_OF ≤ 5. Nếu tính narrower cho mọi Disease: 2.018 Disease.
+- **MRDEF Level 0** (SRL 0, CURVER Y, SUPPRESS N): 216/298 khái niệm có định nghĩa; 82 `source=llm`.
+- **Gloss** (`cxr kg-definitions --all`; Opus `kg_gloss_v1`, Sonnet `kg_gloss_check_v1`, effort medium, lô 10): Sonnet
+  agree 244/298 (81,9%); theo đường anatomy 113/131, column 31/37, narrower 28/36, suggests 55/74, wider 13/20; theo
+  nguồn mrdef 171/216, llm 69/82. Cờ tự động 5 (3 quá dài EN, 2 chép ≥ 6 từ MRDEF), 4 trong đó Sonnet agree. Dùng được
+  240. Chi phí từ usage của cache: 1,940 USD (Opus 1,498, Sonnet 0,442; lô đầu gọi hai lần vì sửa prompt).
+- **Smoke 24 câu** (`scripts/kg_knowledge_smoke.py`, `docs/v2-6-smoke.txt`): mỗi câu tìm một lần, diễn giải hai lần từ
+  cùng kết quả (v4 có knowledge / v3 không), thứ tự xen kẽ; Haiku `claude-haiku-5-5`; ba lượt final1–3, 72 trang mỗi
+  điều kiện, không trang nào degraded. Kết quả ở `data/kg/knowledge/smoke/final*.{jsonl,summary.json}`.
+
+  | | v4 (knowledge) | v3 |
+  |---|---|---|
+  | trang có căn cứ (ok hoặc partial) | 72/72 | 72/72 |
+  | trang ok trọn vẹn | 63/72 | 72/72 |
+  | câu khớp ảnh bị bỏ | 3/834 (cả 3: markup rò rỉ) | 0/864 |
+  | câu kiến thức bị bỏ | 6/120 (đều không có [K#]) | – |
+  | [K#] hợp lệ trong câu giữ lại; dẫn tới mục không có | 160; 0 | – |
+  | trang có câu kiến thức | 69/72 | – |
+  | mục K# mỗi trang, trung bình / lớn nhất (trần 10) | 2,6 / 7 | – |
+  | N2 token đầu p50 / p95 gộp | 879 / 1.811 ms | 842 / 1.591 ms |
+  | N2 p95 từng lượt | 1.692 / 1.736 / 2.183 ms | 1.550 / 1.592 / 1.529 ms |
+  | tổng thời gian diễn giải p50 / p95 | 3.193 / 4.254 ms | 2.799 / 3.703 ms |
+
+  Ba lượt trước đó (run1–3, luật tên hiển thị cũ, 70 trang mỗi điều kiện): N2 p50 1.117 / 906 ms, p95 1.544 / 1.711 ms;
+  chênh p95 đổi dấu giữa hai bộ lượt. Markup rò rỉ gộp sáu lượt: v4 8/142 trang, v3 2/142.
+  Đường đi dựng lại từ edges.parquet khớp `intent.path` ở mọi intent có cột (28/28, 30/30 mỗi lượt).
+- Lượt thử trần 5 mục (max5, một lượt, 24 trang): mục trung bình 2,2; N2 p50 / p95 1.224 / 1.768 ms (v4) so với 958 /
+  1.505 ms (v3): không tốt hơn trần 10, nên giữ 10 (`explain.knowledge_max_items`).
+
