@@ -153,6 +153,11 @@ def cmd_kg_bench_build(args: argparse.Namespace) -> int:
         r["split"] = assignment[r["id"]]
         r["gold_by"] = {"author": author.model, "author_prompt_sha256": a_sha,
                         "reviewer_prompt_sha256": r_sha}
+    # The author's note and the reviewer's reason quote concept names from the catalog (UMLS
+    # content): they stay under data/, the committed file keeps codes and question text only.
+    kb.write_jsonl(work / "bench_notes.jsonl", [
+        {"id": r["id"], "note": r.pop("note"), "review_reason": r["review"].pop("reason")}
+        for r in rows])
     out = Path(args.out or bcfg["file"])
     file_sha = kb.write_jsonl(out, rows)
     summary = {"file": str(out), "sha256": file_sha, "questions": len(rows),
