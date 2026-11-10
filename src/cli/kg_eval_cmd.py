@@ -8,6 +8,7 @@ import json
 import sys
 from pathlib import Path
 
+import numpy as np
 import polars as pl
 
 from src.common.config import Settings, default_config_dir, load_config
@@ -172,7 +173,178 @@ def cmd_kg_bench_build(args: argparse.Namespace) -> int:
     return 0
 
 
+def _components(ecfg: dict, ledger, key: str):
+    """Everything the run phase needs, built in-process: the corpus vectors of the FT6 build,
+    its text encoder, the B1 parser, the KG search, the B0 translator, the label matrix."""
+    from src.api.dependencies import build_query_parser
+    from src.embeddings import index
+    from src.evaluation import kg_eval as ke
+    from src.evaluation.vector_baseline import _all_vectors
+    from src.kg import runtime
+    from src.retrieval import label_filter as lf
+
+    settings = Settings()
+    models, rcfg = load_config("models"), load_config("retrieval")
+    build = models["image_encoder"]["selected"]
+    manifest = json.loads((Path(settings.indexes_dir) / "builds" / _build_id(settings, build)
+                           / "manifest.json").read_text(encoding="utf-8"))
+    vectors, image_ids = _all_vectors(Path(settings.indexes_dir) / "embeddings"
+                                      / manifest["build_id"])
+    images = pl.read_parquet(Path(settings.canonical_dir) / "images.parquet")
+    study_of = dict(zip(images["image_id"], images["study_id"], strict=True))
+    view_of = dict(zip(images["image_id"], images["projection"], strict=True))
+    corpus = ke.Corpus(ke.unit_rows(vectors), image_ids, [study_of[i] for i in image_ids],
+                       np.array([view_of[i] for i in image_ids]))
+    encoder = index.build_encoder(manifest, models["image_encoder"]["candidates"], "cpu")
+    b1_parser, status = build_query_parser(settings)
+    if status != "ok":
+        raise SystemExit(f"STOP: B1 parser language model is {status}")
+    matrix_dir = (Path(settings.indexes_dir) / "image_scores"
+                  / f"{manifest['build_id']}_ext1")
+    search, notes = runtime.build_kg_search(
+        settings.model_copy(update={"kg_matrix_dir": matrix_dir}),
+        {"build_id": manifest["build_id"]},
+        images.select("image_id", "projection"))
+    if search.store is None or search.chooser is None:
+        raise SystemExit(f"STOP: the KG search is degraded at startup: {notes}")
+    translator = kg_llm.CachedCaller("translator", ecfg["llm"]["translator"], key,
+                                     Path(ecfg["benchmark"]["work_dir"])
+                                     / "llm_cache_translator.jsonl", ledger)
+    labels_long = pl.read_parquet(Path(settings.canonical_dir) / "labels.parquet")
+    label_matrix = lf.build_label_matrix(
+        labels_long, corpus.study_ids, rcfg["label_resolution"]["source_priority"],
+        seed=rcfg["results"]["label_order_seed"])
+    mapping = yaml_labels()
+    label_of_cui = {entry["id"]: label for label, entry in mapping.items()}
+    return {"corpus": corpus, "encoder": encoder, "b1_parser": b1_parser, "search": search,
+            "translator": translator, "label_matrix": label_matrix,
+            "label_of_cui": label_of_cui, "labels_cfg": rcfg["constraints"],
+            "concepts_cfg": load_config("concepts"), "manifest": manifest, "notes": notes}
+
+
+def yaml_labels() -> dict:
+    import yaml
+
+    return yaml.safe_load((default_config_dir() / "kg" / "chexpert_cuis.yaml")
+                          .read_text(encoding="utf-8"))["labels"]
+
+
+def _build_id(settings: Settings, encoder: str) -> str:
+    """The registered build of `encoder` (BUILD_ID when set)."""
+    if settings.build_id:
+        return settings.build_id
+    builds = Path(settings.indexes_dir) / "builds"
+    found = [p.name for p in builds.iterdir() if (p / "manifest.json").is_file()
+             and json.loads((p / "manifest.json").read_text(encoding="utf-8"))["encoder"]
+             == encoder]
+    if len(found) != 1:
+        raise SystemExit(f"STOP: {len(found)} registered builds of {encoder}: {found}")
+    return found[0]
+
+
+def cmd_eval_kg(args: argparse.Namespace) -> int:
+    """V2-7 on one split: run (systems + B2 ablations), judge (pool, cross judge, human
+    sample), score (layers 2-4, cost, latency, ablations, error analysis)."""
+    from src.evaluation import kg_eval as ke
+    from src.evaluation import kg_eval_run as kr
+
+    sys.stdout.reconfigure(encoding="utf-8")
+    if args.split == "heldout" and not args.heldout_declared:
+        print("STOP: heldout runs once and must be declared (--heldout-declared)",
+              file=sys.stderr)
+        return 1
+    ecfg = _ecfg()
+    bcfg, lcfg, vcfg = ecfg["benchmark"], ecfg["llm"], ecfg["eval"]
+    work = Path(bcfg["work_dir"])
+    key = llm_select.api_key("ANTHROPIC_API_KEY")
+    if not key:
+        print("STOP: ANTHROPIC_API_KEY is not set", file=sys.stderr)
+        return 1
+    ledger = _ledger(ecfg)
+    rows = [r for r in kb.read_jsonl(Path(bcfg["file"])) if r["split"] == args.split]
+    rows = rows[:args.limit] if args.limit else rows
+    phases = {"run", "judge", "score"} if args.phase == "all" else {args.phase}
+    systems = args.systems or [*ke.SYSTEMS, "lookup_deterministic", "sapbert_off"]
+    reports_df = pl.read_parquet(Path(Settings().canonical_dir) / "reports.parquet",
+                                 columns=["study_id", "findings", "impression"])
+    reports = {s: ke.report_text(f, i) for s, f, i in reports_df.iter_rows()}
+
+    runner = None
+    try:
+        if "run" in phases:
+            parts = _components(ecfg, ledger, key)
+            t_text, t_sha = _prompt(ecfg, "translate_prompt")
+            runner = kr.Runner(rows=rows, split=args.split, ecfg=ecfg, work=work,
+                               ledger=ledger, t_text=t_text, t_sha=t_sha,
+                               **{k: parts[k] for k in (
+                                   "corpus", "encoder", "b1_parser", "search", "translator",
+                                   "label_matrix", "label_of_cui", "labels_cfg",
+                                   "concepts_cfg")})
+            runner.runs.setdefault("_meta", {}).update(
+                {"versions": parts["search"].versions, "notes": parts["notes"],
+                 "build_id": parts["manifest"]["build_id"]})
+            runner.run_all([s for s in systems if s != "_meta"], args.rerun)
+            runner.run_transforms()
+            print(f"run done; spent {ledger.total:.2f} USD")
+        runs = json.loads((work / f"runs_{args.split}.json").read_text(encoding="utf-8"))
+        meta = runs.pop("_meta", {})
+        pooled = kr.pool(runs, rows, vcfg["top_k"])
+        j_text, j_sha = _prompt(ecfg, "judge_prompt")
+        judge = ke.Judge(llm_select.AnthropicChooser("judge", lcfg["judge"], key),
+                         lcfg["judge"]["model"], j_text, j_sha, work / "judge_opus.jsonl",
+                         ledger, "judge", lcfg["judge_batch"])
+        cross = ke.Judge(llm_select.AnthropicChooser("cross", lcfg["cross_judge"], key),
+                         lcfg["cross_judge"]["model"], j_text, j_sha,
+                         work / "judge_sonnet.jsonl", ledger, "cross_judge",
+                         lcfg["judge_batch"])
+        sample = kr.cross_pairs(rows, pooled, vcfg["cross_judge_fraction"], bcfg["seed"])
+        if "judge" in phases:
+            n_pairs = sum(len(v) for v in pooled.values())
+            print(f"pool: {n_pairs} pairs over {len(rows)} questions")
+            judged = kr.judge_pool(judge, rows, pooled, reports)
+            print(f"judged {judged} new pairs; spent {ledger.total:.2f} USD")
+            by_q: dict[str, list[str]] = {}
+            for qid, s in sample:
+                by_q.setdefault(qid, []).append(s)
+            by_id = {r["id"]: r for r in rows}
+            for qid, studies in by_q.items():
+                cross.grade(qid, by_id[qid]["question"], by_id[qid]["query_en"], studies,
+                            reports)
+            print(f"cross-judged {len(sample)} pairs; spent {ledger.total:.2f} USD")
+            per = kr.write_human_sample(work / "human_sample.csv", work / "human_sample_key.csv",
+                                        rows, judge, pooled, reports, vcfg["human_sample"],
+                                        bcfg["seed"])
+            print(f"human sample by judge grade: {per}")
+        if "score" in phases:
+            from src.evaluation import kg_eval_report as rep
+
+            out = rep.score_all(rows, runs, meta, judge, cross, sample, pooled, ledger, ecfg,
+                                kb.read_jsonl(Path(bcfg["file"])))
+            path = work / f"metrics_{args.split}.json"
+            path.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
+            (work / f"report_{args.split}.md").write_text(rep.markdown(out), encoding="utf-8")
+            print(f"written: {path}, {work / f'report_{args.split}.md'}")
+    except kg_llm.BudgetExceeded as exc:
+        if runner is not None:
+            runner.save()
+        print(f"STOP (budget): {exc}", file=sys.stderr)
+        return 2
+    print(f"total spent this session: {ledger.total:.2f} USD; by step {ledger.by('step')}")
+    return 0
+
+
 def register(sub) -> None:
+    e = sub.add_parser("eval-kg", help="V2-7: run, judge and score the KG benchmark on a split")
+    e.add_argument("--split", choices=["dev", "heldout"], default="dev")
+    e.add_argument("--heldout-declared", action="store_true",
+                   help="heldout runs once (D24); required to run it")
+    e.add_argument("--phase", choices=["run", "judge", "score", "all"], default="all")
+    e.add_argument("--systems", nargs="+", default=None,
+                   help="systems and search ablations to run (default: all)")
+    e.add_argument("--rerun", action="store_true", help="run again systems already on disk")
+    e.add_argument("--limit", type=int, default=None, help="only the first N questions (a trial)")
+    e.set_defaults(func=cmd_eval_kg)
+
     b = sub.add_parser("kg-bench-build", help="V2-7: write the KG benchmark and its gold")
     b.add_argument("--out", default=None)
     b.add_argument("--groups", nargs="+", default=None, help="only these groups (a trial)")

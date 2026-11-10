@@ -13,7 +13,8 @@ def q(lang, translation_of=-1, cui="C1", views=(), text="x", unscorable=False):
     if unscorable:
         terms.append({"text": "fever", "cui": "", "polarity": "PRESENT"})
     return {"question": text, "lang": lang, "translation_of": translation_of, "query_en": text,
-            "views": list(views), "terms": terms, "expected_scorable": [{"cui": cui, "weak": False}],
+            "views": list(views), "terms": terms,
+            "expected_scorable": [{"cui": cui, "weak": False}],
             "exclude": [], "expect_warnings": [], "note": ""}
 
 
