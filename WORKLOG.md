@@ -17,7 +17,7 @@ thì xóa (git giữ lịch sử); không có nhật ký; mã D/T/P không đán
 
 ## Trạng thái hiện tại
 
-**Cập nhật:** 2026-11-10, trên nhánh `feat/kg-evaluation` (PR #20), đã merge `main` (#14–#19).
+**Cập nhật:** 2026-11-11, nhánh `feat/kg-probe-and-eval-round-two` (xếp chồng trên `feat/kg-evaluation`, PR #20).
 
 - **Hệ thống đang chạy:** câu hỏi EN/VI → parser (`claude-haiku-5-5`, rule dự phòng; D61) → câu mẫu `render(include, exclude)` →
   text encoder CXR-CLIP FT6 → cosine trên Qdrant, chỉ lọc view → top-k → trích câu report sau xếp hạng (D38–D40,
@@ -36,8 +36,9 @@ thì xóa (git giữ lịch sử); không có nhật ký; mã D/T/P không đán
   Diễn giải có phần kiến thức K# (D71; 287/298 gloss dùng được sau phân xử của Claude bên chat).
   Phiên C (`notes/run-log-C.md`): ma trận probe là mặc định (D72), vá KG theo error analysis dev (D73); benchmark mở rộng
   172 câu (dev 72, heldout 100), gold heldout đã duyệt. Dev lượt 2 (72 câu, lạc quan vì đã chỉnh theo dev): nDCG@10 B1 0,419
-  · B2 0,470 · B2 + trộn b0 w 0,2 0,503 (− B1 +0,083 [+0,017; +0,149]); chờ duyệt cấu hình cuối (mốc 3) rồi heldout.
-  Heldout chưa chạy: gold heldout chờ Claude bên chat duyệt (P9). Phần vận hành V2-10 – V2-14; N1–N12 ở thiết kế.
+  · B2 0,470 · B2 + trộn b0 w 0,2 0,503. **Heldout đã chạy một lần (D75; V2-7, V2-8 xong):** nDCG@10 B0 0,355 · B1 0,359 ·
+  B2 0,482 · B2 + trộn (khóa) 0,497 · Tham chiếu 0,537; trộn − B1 +0,138 [+0,078; +0,198], B2 − B1 +0,123 [+0,060; +0,188],
+  trộn − B2 +0,015 [−0,018; +0,045]; `probe_off` −0,071. Không sửa gì theo heldout. Phần vận hành V2-10 – V2-14; N1–N12 ở thiết kế.
   TIP và log chạy nằm ở `notes/` (gitignored, chỉ có trên máy). Bảng trạng thái và các task sau: `docs/v2-kg-plan.md`.
 - **Chặn:** web UI chờ `pnpm` (T5).
 
@@ -133,6 +134,7 @@ nào lệch thì bảng này và `docs/scope-and-non-goals.md` đúng.
 | T40 | Cosine câu–ảnh của FT6 lệch âm (median −0,13, max 0,08 cho một câu trên 25.000 ảnh; zero-shot median 0,10). Thứ hạng đúng, giá trị tuyệt đối thì không | Không đặt ngưỡng hay giả định dấu trên cosine thô; điểm cần ý nghĩa tuyệt đối thì dùng logit đã hiệu chỉnh của ma trận V2-5 |
 | T41 | Windows: `localhost` thử IPv6 trước, mỗi kết nối Neo4j mới chờ ~2 s; kết nối loopback bị từ chối cũng mất 2 s. SDK `anthropic` dùng `httpx2`, `httpx.Timeout` bị từ chối | `NEO4J_URI` mặc định `127.0.0.1`; `kg_llm.connect_timeout_seconds` 0,8 qua `anthropic.Timeout` |
 | T42 | LLM đề xuất cạnh theo tên UMLS của cột, không theo nghĩa cột thật sự chấm: C0013990 mang tên chung (khí tích tụ trong mô), nên Opus đề xuất `is_a` → C0013990 cho C0032319 (khí trong khoang màng ngoài tim) và trả `none` cho C0034067 (khí phế thũng phổi), trong khi cột học từ chữ "emphysema" của report, tức khí phế thũng phổi | Phân xử theo nghĩa cột trên phim; prompt route-review v2 dặn không xét theo tên chung |
+| T44 | Parser không nhận ra khái niệm nào thì trả `semantic_query` là chuỗi `""` (hai dấu nháy); đường văn bản (D73) mã hóa nguyên chuỗi đó: 9 / 12 câu fallback heldout, 5 / 9 dev | Chưa sửa (tìm ra sau heldout); P21 |
 | T39 | MRREL không đồng nhất giữa các nguồn: phân cấp MSH là `PAR`/`CHD` với RELA **rỗng**, còn NCI, FMA, HPO dùng `isa`/`inverse_isa`; bộ phận trong FMA nằm ở `regional_part_of` và `constitutional_part_of`, RELA `part_of` chỉ có 23 dòng. REL/RELA mô tả quan hệ của CUI2 đối với CUI1 | Lọc `IS_A`, `PART_OF` theo cả REL lẫn RELA của từng nguồn; kiểm chiều trên một cặp đã biết trước khi tin (`docs/measured-facts.md`, *UMLS 2026AA*) |
 
 ---
@@ -142,5 +144,6 @@ nào lệch thì bảng này và `docs/scope-and-non-goals.md` đúng.
 | # | Câu hỏi | Đang làm theo |
 |---|---|---|
 | P5 | Đóng gói trọng số vào image API hay dựa vào volume `hf_cache` | Volume; chọn khi build image thật |
-| P9 | Người chấm `data/eval/human_sample.csv` để báo kappa người–máy | Kappa hiện chỉ giữa hai máy (0,702) |
+| P9 | Người chấm `data/eval/human_sample.csv` (100 cặp heldout) để báo kappa người–máy | Kappa hiện chỉ giữa hai máy (heldout 0,708) |
+| P21 | Sửa T44 (văn bản rỗng → câu mẫu B1 hay bản dịch EN) và đưa trộn b0 vào API; đo lại trên dev, không đo lại heldout | Chưa làm; hệ đã báo cáo là hệ còn T44 |
 | P8 | Người dùng duyệt gold heldout của `benchmarks/parser_queries_v1.jsonl` | Giữ như lúc đo (sha256 `8d19c619…`); đổi gold heldout thì khai báo một lần chạy mới |

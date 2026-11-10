@@ -17,8 +17,8 @@ ghi vào `docs/measured-facts.md`, quyết định vào `WORKLOG.md`. Ngưỡng 
 | V2-4 | Mở rộng có kiểm soát; trọng số `SUGGESTS`, `TYPICALLY_AT` trên pool | V2-3 | ✅ |
 | V2-5c | Mở rộng ma trận điểm ngoài 14 nhãn (khái niệm lõi có lượt nhắc lớn) | V2-4 | ✅ |
 | V2-6 | Neo4j, bốn tool, LLM chọn khái niệm và diễn giải; B2 chạy end-to-end | V2-4, V2-5 | ✅ 2026-11-05 (D65, D66) |
-| V2-7 | Benchmark và pooling | V2-6, V2-5b | 🔄 172 câu (dev 72, heldout 100), gold heldout đã duyệt; dev lượt 2 xong (D72–D74) |
-| V2-8 | Đánh giá chính thức, heldout một lần | V2-7 | 🔄 dev lượt 2, ablation, trộn điểm xong; heldout chưa chạy |
+| V2-7 | Benchmark và pooling | V2-6, V2-5b | ✅ 172 câu (dev 72, heldout 100), gold đã duyệt, pool heldout 4.602 cặp (D70, D72–D74) |
+| V2-8 | Đánh giá chính thức, heldout một lần | V2-7 | ✅ heldout một lần (D75): B2 + trộn − B1 +0,138 [+0,078; +0,198]; `docs/kg-evaluation.md` |
 | V2-9 | Agent (ablation) và UI | V2-8; UI chờ `pnpm` (T5) | ⏳ |
 | V2-10 | Thêm ảnh không dựng lại KG: embed rồi nối logit vào ma trận bằng probe đã có (N6) | V2-6 | ⏳ |
 | V2-11 | CI: pytest + ruff mỗi lần push (N12) | — | ⏳ |
@@ -61,7 +61,7 @@ Cả hai thư mục nằm dưới `data/` (gitignored). Không commit, không đ
 | Ma trận điểm | `data/indexes/image_scores/<build_id>_ext1/`: 37 cột (14 nhãn + 23 cột mở rộng, D62), hiệu chỉnh trên pool-val; `cxr kg-quality` → `quality.json` (6 cột yếu, D55) | Cột vòng hai (X-1) |
 | KG | `cxr kg-build-graph` → `data/kg/graph/`, `kg_build_id` **kg_1637d5c0ee06** (băm năm bảng KG; bảng ghi theo thứ tự cố định nên dựng lại hay sửa chú thích config không đổi id): 9.632 nút (lõi 595), IS_A 10.234, PART_OF 3.826, SUGGESTS 69, TYPICALLY_AT 579; độ nối D59 theo lượt nhắc 0,948; cạnh tay ở `graph.manual_edges` | 48 Disease lõi có lượt nhắc vẫn chưa có đường (`docs/v2-6-smoke.md`) |
 | Neo4j | service `neo4j` (profile `kg`), `cxr kg-load-neo4j`, `validate-indexes --kg` (D65) | — |
-| Truy vấn B2 | `cxr kg-query`, `POST /api/v1/search/kg` (D66–D69); parser, chooser, diễn giải đều dùng `claude-haiku-5-5`; smoke 24 câu ở `docs/v2-6-smoke.md` | Heldout V2-8 (chờ duyệt gold); N2 dao động quanh 1,5 s; CI (V2-11); UI chờ `pnpm` (T5) |
+| Truy vấn B2 | `cxr kg-query`, `POST /api/v1/search/kg` (D66–D69); parser, chooser, diễn giải đều dùng `claude-haiku-5-5`; smoke 24 câu ở `docs/v2-6-smoke.md` | Lỗi văn bản rỗng của fallback (T44, P21); N2 dao động quanh 1,5 s; CI (V2-11); UI chờ `pnpm` (T5) |
 
 ## Các task
 

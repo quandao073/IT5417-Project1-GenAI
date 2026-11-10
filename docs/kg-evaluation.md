@@ -1,8 +1,8 @@
-# Đánh giá truy vấn qua KG (V2-7, phần V2-8 trên dev)
+# Đánh giá truy vấn qua KG (V2-7, V2-8)
 
 Kế hoạch đánh giá của thiết kế: `docs/v2-kg-design.md`, *Kế hoạch đánh giá*. Lệnh: `cxr kg-bench-build` (bộ câu và gold),
 `cxr eval-kg` (chạy, chấm, tính số). Config: `configs/eval_kg.yaml`. Mọi file trung gian ở `data/eval/` (gitignored).
-Số đo gốc kèm cách đo ở `docs/measured-facts.md`. **Heldout chưa chạy** (heldout chạy một lần, D24). Phần *Dev lượt 2* là trạng thái hiện tại; các phần trước là lượt 1
+Số đo gốc kèm cách đo ở `docs/measured-facts.md`. **Heldout đã chạy một lần (D24, D75), xem mục *Heldout*.** Phần *Dev lượt 2* là trạng thái dev hiện tại; các phần trước là lượt 1
 (36 câu dev, trước D72–D74).
 
 ## Bộ câu và gold
@@ -284,17 +284,183 @@ Cùng lượt: B0, B1, Tham chiếu, `fusion_off` (= B2 không trộn), `probe_o
 điểm. **Lưới trên heldout chỉ là phân tích độ nhạy: kết quả chính luôn là cấu hình đã khóa, kể cả khi ô khác cao hơn.**
 Lớp 4 đo cả có (v4) và không có knowledge (v3, cùng kết quả tìm). Chạy một lần; sau đó không sửa gì theo heldout.
 
-## Chạy heldout
+## Heldout (2026-11-10, chạy một lần theo khai báo D75)
 
-Chưa chạy. Gold heldout (100 câu) đã được Claude bên chat duyệt; sha256 các dòng heldout ghi vào WORKLOG trước khi chạy.
-Cấu hình cuối đề xuất sau dev lượt 2: B2 + trộn điểm b0, w = 0,2 (chờ duyệt ở mốc 3). Chạy một lần, có khai báo; mọi hệ thống, mọi ablation đã khai báo trong `configs/eval_kg.yaml`
-(`lookup_deterministic`, `sapbert_off`, `no_narrower`, `no_wider`, `no_anatomy`, `no_disease`, `combine_max`,
-`suggests_equal`), cùng judge, cùng prompt, cùng tham số như dev:
+**Kết quả chính là cấu hình đã khóa B2 + trộn (b0, w = 0,2).** Lưới trộn bên dưới chỉ là phân tích độ nhạy: kết quả chính
+luôn là cấu hình đã khóa, kể cả khi một ô khác cao hơn. Sau lượt này không sửa gì theo heldout.
 
-```bash
-uv run cxr eval-kg --split heldout --heldout-declared
-```
+Chạy: `uv run cxr eval-kg --split heldout --heldout-declared` (pha run, judge, score), commit `3d9d551`, `kg_build_id`
+kg_32e035ed37b0, `matrix_version` `..._ext1_probe1@e878b151d823`. 100 câu (49 EN / 51 VI), 0 câu `gold_disputed`.
+23 hệ trong cùng một lượt: B0, B1, B2 (= `fusion_off`), Tham chiếu, 9 ablation, lưới 10 ô. Judge là Opus `kg_judge_v1`,
+giống dev. Pool có 4.602 cặp (0/1/2 = 2.204 / 1.154 / 1.244). Sonnet chấm chéo 458 cặp: đồng thuận 0,817, kappa 0,708,
+kappa bậc hai 0,852, đồng thuận nhị phân "liên quan" 0,893.
 
-Ước chi phí (theo dev lượt 2): ≈ 0,0029 USD mỗi cặp judge; 100 câu với các hệ và ablation đã khai báo ≈ 3.500 cặp ≈ 10 USD,
-chấm chéo ≈ 0,5 USD. Cần Neo4j với `kg_build_id` kg_32e035ed37b0 và `ANTHROPIC_API_KEY`. Kết quả ở
-`data/eval/metrics_heldout.json`, `report_heldout.md`.
+### Lớp 3 theo nhóm (nDCG@10)
+
+| nhóm | n | B0 | B1 | B2 | **B2 + trộn (khóa)** | Tham chiếu |
+|---|---|---|---|---|---|---|
+| tất cả | 100 | 0,355 | 0,359 | 0,482 | **0,497** | 0,537 |
+| control | 13 | 0,493 | 0,521 | 0,627 | 0,615 | 0,763 |
+| synonym_vi | 12 | 0,347 | 0,415 | 0,409 | 0,432 | 0,513 |
+| narrower | 13 | 0,225 | 0,155 | 0,319 | 0,326 | 0,343 |
+| broader | 12 | 0,439 | 0,501 | 0,606 | 0,593 | 0,603 |
+| disease | 13 | 0,295 | 0,181 | 0,311 | 0,369 | 0,474 |
+| negation_broad | 12 | 0,518 | 0,523 | 0,659 | 0,708 | 0,736 |
+| anatomy | 13 | 0,237 | 0,380 | 0,539 | 0,538 | 0,441 |
+| new_column | 12 | 0,299 | 0,211 | 0,398 | 0,405 | 0,434 |
+
+P@10: B0 0,206 · B1 0,235 · B2 0,303 · B2 + trộn 0,320 · Tham chiếu 0,351.
+excl-viol@10: 0,046 · 0,054 · 0,054 · 0,069 · 0,035.
+Không hệ nào trả về rỗng. B2 đi đường văn bản (D73) ở 12 / 100 câu.
+
+### Hiệu (paired, CI 95%, 10.000 lần bootstrap, seed 20261110; thắng/thua/hòa)
+
+| cặp | nDCG@10 | P@10 |
+|---|---|---|
+| **B2 + trộn − B1** | **+0,138 [+0,078; +0,198]** (67/28/5) | +0,085 [+0,038; +0,134] |
+| B2 − B1 | +0,123 [+0,060; +0,188] (62/30/8) | +0,068 [+0,016; +0,121] |
+| B1 − B0 | +0,004 [−0,046; +0,055] (44/41/15) | +0,029 [−0,011; +0,071] |
+| Tham chiếu − B2 + trộn | +0,040 [−0,028; +0,107] (54/40/6) | +0,031 [−0,022; +0,082] |
+| B2 + trộn − B2 (`fusion_off`) | +0,015 [−0,018; +0,045] (46/38/16) | +0,017 [−0,007; +0,041] |
+
+- Trên heldout, cả B2 lẫn B2 + trộn đều hơn B1 và CI tách khỏi 0. Mức hơn lớn hơn trên dev (dev: +0,051 và +0,083).
+- B1 không hơn B0.
+- Khoảng cách tới Tham chiếu chưa tách khỏi 0. Riêng nhóm anatomy, B2 cao hơn Tham chiếu.
+- Lợi của trộn trên B2 là +0,015, CI chứa 0: nhỏ hơn trên dev (+0,033 [+0,006; +0,062]).
+
+### Ablation (hiệu nDCG@10 với B2, không trộn)
+
+| ablation | hiệu |
+|---|---|
+| **`probe_off`** (intents B2 chấm trên ma trận zero-shot) | **−0,071 [−0,118; −0,027]** (29/50/21) |
+| `no_anatomy` | −0,032 [−0,058; −0,011] |
+| `no_disease` | −0,029 [−0,055; −0,007] |
+| `no_narrower` | −0,026 [−0,053; −0,005] |
+| `lookup_deterministic` | −0,021 [−0,045; −0,002] |
+| `combine_max` | −0,004 [−0,015; +0,006] |
+| `no_wider` | −0,002 [−0,006; 0] |
+| `suggests_equal` | 0 |
+| `sapbert_off` | +0,014 [−0,019; +0,049] |
+
+- Ma trận probe (D72) giúp rõ trên heldout, dù trên dev chưa đo được lợi (dev −0,004).
+- Các route anatomy, disease, narrower và lookup có chọn bằng LLM đều có lợi với CI không chứa 0.
+- Tắt SapBERT không làm kém đi.
+
+### Lưới trộn điểm: chỉ phân tích độ nhạy
+
+Hiệu nDCG@10 so với w = 0 (= B2), CI 95% paired. **Kết quả chính luôn là ô đã khóa (b0, w = 0,2), kể cả khi ô khác cao
+hơn.**
+
+| w | câu mẫu B1 (b1) | EN thô B0 (b0) |
+|---|---|---|
+| 0,1 | +0,000 [−0,020; +0,020] | +0,009 [−0,015; +0,030] |
+| 0,2 | −0,005 [−0,033; +0,020] | **+0,015 [−0,018; +0,045]** (khóa) |
+| 0,3 | −0,018 [−0,051; +0,012] | +0,006 [−0,032; +0,043] |
+| 0,5 | −0,032 [−0,069; +0,003] | −0,013 [−0,059; +0,031] |
+| 1 | −0,062 [−0,105; −0,020] | −0,048 [−0,100; +0,002] |
+
+- Ô đã khóa cũng là ô cao nhất trên heldout, nhưng CI của mọi ô đều chứa 0, trừ b1, w = 1 (làm hại).
+- w lớn kéo kết quả về phía B1/B0.
+- Trộn giúp ở disease (+0,058) và negation_broad (+0,049), làm hại nhẹ ở control (−0,012) và broader (−0,013).
+
+### Lớp 2 (B2, 100 câu)
+
+Toàn bộ: CUI đúng 0,654, tập cột đúng 0,510, F1 tập cột 0,713, đủ cảnh báo kỳ vọng 0,660, recall cảnh báo 0,669.
+
+| nhóm | CUI đúng | F1 cột |
+|---|---|---|
+| control | 1,000 | 1,000 |
+| synonym_vi | 0,579 | 0,622 |
+| narrower | 0,600 | 0,628 |
+| broader | 0,412 | 0,609 |
+| disease | 0,786 | 0,758 |
+| negation_broad | 0,609 | 0,764 |
+| anatomy | 0,588 | 0,500 |
+| new_column | 0,565 | 0,822 |
+
+`lookup_deterministic`: CUI 0,621, F1 0,653 (synonym_vi chỉ còn 0,368 / 0,372). `sapbert_off`: CUI 0,660, F1 0,696.
+
+### Lớp 4: diễn giải, có và không có knowledge (cùng kết quả tìm)
+
+| | ok / partial / tắt | câu | có căn cứ | bị loại |
+|---|---|---|---|---|
+| v4, knowledge bật (cấu hình khóa) | 82 / 6 / 12 | 1.064 | 99,44 % | 6 |
+| v3, không knowledge | 85 / 3 / 12 | 1.058 | 99,72 % | 3 |
+
+- 12 câu "tắt" là 12 câu đi đường văn bản: khi đó không có diễn giải (D73).
+- Lý do bị loại ở v4: 3 thiếu trích dẫn, 2 khái niệm không có trong facts, 1 con số không có trong mục được trích. Không câu
+  nào bị loại vì từ chẩn đoán.
+- Ở v3: 2 câu bị loại vì từ chẩn đoán, 1 vì con số.
+- Knowledge không làm tăng tỉ lệ có căn cứ: hai bản chênh 0,3 điểm, trên ~1.060 câu, nên chưa phân biệt được.
+
+### Chi phí và độ trễ (heldout)
+
+**Chi phí** (USD trên 1.000 câu hỏi):
+
+| bước | USD / 1.000 câu | lượt gọi LLM / câu |
+|---|---|---|
+| B0 | 0,036 | 0,86 |
+| B1 | 0,395 | 2,83 |
+| B2, tìm | 0,705 | 4,25 |
+| B2, diễn giải | 1,754 | 3,39 |
+
+Lượt heldout tốn ≈ 14,3 USD (run 0,14; judge 13,45; chấm chéo 0,70).
+
+**Độ trễ p50 / p95:**
+
+| hệ | bước | p50 (ms) | p95 (ms) |
+|---|---|---|---|
+| B2 | tổng | 2.472 | 4.469 |
+| B2 | parse | 1.898 | 2.462 |
+| B2 | terms | 163 | 2.313 |
+| B2 | chấm | 0,4 | 36 |
+| B2 | diễn giải (luồng riêng) | 3.476 | 4.701 |
+| B1 | parse | 1.673 | 2.387 |
+| B0 | dịch | 1.049 | 1.933 |
+
+Muốn dùng cấu hình khóa trong API, phải thêm lượt dịch B0 cho câu VI và chạy nó song song với parser của B2. Code trong
+API hiện chưa trộn điểm.
+
+### Error analysis heldout: 30 câu B2 thua B1 (không sửa gì theo phần này)
+
+| loại | số câu | các câu và diễn giải |
+|---|---|---|
+| ranking | 9 | control-06/08/18/19, narrower-06, disease-06/12/16, new_column-08. Cột đúng với gold, nhưng thứ hạng kém caption B1. Ở control-08, B1 đạt 1,0 còn B2 0,626 |
+| parse/lookup | 12 | synonym_vi-04/12/16 (B2 không nhận ra term VI nào; xem lại ở dưới), narrower-16 (chọn sai cột: C0016655 thay C0016658), broader-12/13 (chỉ lấy cột chung, bỏ các khái niệm con gold muốn), negation_broad-07/08, anatomy-20/22, new_column-15/19 |
+| expansion | 4 | narrower-17, broader-05, disease-09, anatomy-21. Graph không có đường từ term tới cột gold, hoặc đường đi tới cột khác |
+| choice | 5 | narrower-21, broader-15, disease-18 (đảo cực: cột gold PRESENT bị chọn thành ABSENT), negation_broad-09, new_column-06 |
+
+**Ba câu synonym_vi trả nDCG 0:** B2 không có intent nào. Alias VI chỉ được quét trên 63 bệnh có trong pool (D73), nên
+chỗ hổng này đúng như đã biết.
+
+**Lỗi tìm thấy sau lượt chạy (chưa sửa): đường văn bản mã hóa chuỗi `""`.**
+
+- Khi parser không nhận ra khái niệm nào, nó trả `semantic_query` là chuỗi `""`, tức đúng hai dấu nháy.
+- `TextFallback.text` mã hóa nguyên chuỗi đó. Kết quả đường văn bản vì vậy gần như ngẫu nhiên theo câu hỏi.
+- Gặp ở 9 / 12 câu fallback của heldout và 5 / 9 câu của dev (`fallback_text` trong `runs_*.json`). Lỗi đã có mặt từ dev lượt
+  2, nhưng không được phát hiện trước khi khóa cấu hình.
+- Số heldout ở trên là số của hệ còn lỗi này. Ảnh hưởng chỉ nằm ở 9 câu đó; chưa đo xem sửa xong thì
+  số thay đổi bao nhiêu.
+- Cách sửa đề xuất: khi `semantic_query` rỗng hoặc chỉ là dấu nháy, dùng câu mẫu B1 hoặc bản dịch EN của câu hỏi. Đây là
+  việc cho lượt sau và cần đo lại trên dev; không đo lại heldout.
+
+**Lỗ hổng KG đã biết từ duyệt gold heldout, chưa sửa** (theo D24, chỉ sửa KG theo dev):
+
+- Tràn khí trung thất đi IS_A tới C0013990, không tới cột gold.
+- Hạch vôi hóa không tới cột vôi hóa.
+- C1881236, C3809515 và C2102813 không có đường tới cột nào.
+- `auto_check` lệch gold ở 18 câu heldout (55 / 172 trên cả hai split).
+- Ở broader-05 và anatomy-22, gold muốn bộ ba cột kẽ phổi C1849561 / C4476748 / C5539772. B2 không ra cột nào, vì từ term
+  của câu không có đường tới bộ ba này.
+
+### Giới hạn
+
+1. **Dev đã dùng để chọn cấu hình.** Gồm: vá KG (alias VI, cạnh xơ phổi và chấn thương), fallback văn bản, λ của probe trên
+   pool-val, và lưới trộn. Vì vậy số dev lạc quan. Số heldout là số báo cáo, nhưng lựa chọn "trộn b0, w = 0,2" chỉ dựa trên
+   72 câu dev.
+2. **Parser LLM không tái lập được** (T18): cùng câu, cùng prompt, kết quả có thể khác giữa hai lượt. Ví dụ: trên đúng 36
+   câu dev cũ, B1 0,512 (lượt 1) → 0,482 (lượt 2), và B2 0,541 → 0,544. Mọi hiệu ở trên vì thế còn mang phương sai của
+   parser, ngoài phương sai bootstrap đã báo.
+3. Hai giới hạn của probe (D72): encoder FT6 đã thấy pool-train; λ và cổng cùng chọn trên pool-val.
+4. Judge là LLM. Kappa với Sonnet là 0,708, nhưng chưa có mẫu người chấm (P9; mẫu 100 cặp đã rút ở
+   `data/eval/human_sample.csv`).

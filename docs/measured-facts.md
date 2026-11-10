@@ -1215,3 +1215,23 @@ kg_32e035ed37b0, judge `claude-opus-5-5` + `kg_judge_v1` (cache dùng chung vớ
 - Độ trễ B2 (tìm): p50 2,17 s, p95 4,01 s; diễn giải p50 3,46 s, p95 4,91 s.
 - Chi phí lượt 2: judge 2.316 cặp mới 6,73 USD, chấm chéo 0,83 USD (hai mẫu vì pool đổi sau lần chạy lại), pipeline 0,12 USD.
   Ledger `data/eval/cost_ledger.jsonl` 6,856 → 14,552.
+
+## Đánh giá KG trên heldout (đo 2026-11-10, phiên C, một lần theo D75)
+
+**Cách đo:** `uv run cxr eval-kg --split heldout --heldout-declared` (pha run, judge, score) tại commit `3d9d551`; graph
+kg_32e035ed37b0, ma trận `..._ext1_probe1@e878b151d823`, gold heldout sha256 `b9e7eccb…` (D75), judge `claude-opus-5-5` +
+`kg_judge_v1`; bootstrap 10.000 lần theo câu, seed 20261110. `data/eval/metrics_heldout.json` sha256 `d3af7ea51043a6ed28b090b43ad1bfad67395247dc2ded34d4e6f738772df0dc`.
+
+- 100 câu (49 EN / 51 VI), 23 hệ; pool 4.602 cặp, điểm 0 / 1 / 2 = 2.204 / 1.154 / 1.244; chấm chéo Sonnet 458 cặp: đồng thuận
+  0,817, kappa 0,708, bậc hai 0,852.
+- nDCG@10: B0 0,355 · B1 0,359 · B2 0,482 · B2 + trộn (b0, w 0,2; khóa) 0,497 · Tham chiếu 0,537. Trộn − B1 +0,138
+  [+0,078; +0,198]; B2 − B1 +0,123 [+0,060; +0,188]; B1 − B0 +0,004 [−0,046; +0,055]; Tham chiếu − trộn +0,040 [−0,028; +0,107];
+  trộn − B2 +0,015 [−0,018; +0,045]. B2 đi đường văn bản ở 12 / 100, trong đó 9 mã hóa chuỗi `""` (T44).
+- Ablation (với B2): probe_off −0,071 [−0,118; −0,027]; tắt vị trí −0,032 [−0,058; −0,011]; tắt bệnh −0,029 [−0,055; −0,007];
+  tắt hẹp hơn −0,026 [−0,053; −0,005]; lookup tất định −0,021 [−0,045; −0,002]; SapBERT tắt +0,014 [−0,019; +0,049].
+- Lưới trộn (độ nhạy, so với w = 0): b0 w 0,1 / 0,2 / 0,3 / 0,5 / 1 = +0,009 / +0,015 / +0,006 / −0,013 / −0,048; b1 = +0,000 /
+  −0,005 / −0,018 / −0,032 / −0,062 (chỉ b1 w 1 có CI không chứa 0).
+- Lớp 2 B2: CUI đúng 0,654, F1 cột 0,713, đủ cảnh báo 0,660. Lớp 4 v4 (knowledge): 1.064 câu, 99,44 % có căn cứ; v3: 1.058 câu,
+  99,72 %.
+- Độ trễ B2 (tìm): p50 2,47 s, p95 4,47 s; diễn giải p50 3,48 s, p95 4,70 s; dịch B0 p50 1,05 s.
+- Chi phí lượt heldout 14,29 USD (judge 13,45, chấm chéo 0,70, pipeline 0,14). Ledger 14,552 → 28,845.
