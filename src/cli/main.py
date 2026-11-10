@@ -899,6 +899,122 @@ def _cmd_build_image_scores_ext(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_build_image_scores_probe(args: argparse.Namespace) -> int:
+    """Linear-probe columns (src/retrieval/image_scores_probe.py): every column of the base
+    matrix gets a probe trained on pool-train, its penalty chosen and its logit calibrated on
+    pool-val; the probe replaces the caption column only when the paired bootstrap of the
+    lenient AUROC difference on pool-val is above 0. FT6 was fine-tuned on pool-train, so the
+    probe is fitted on vectors the encoder has seen; pool-val was only its epoch selection."""
+    from src.embeddings.probe import make_targets
+    from src.retrieval import image_scores_probe as isp
+
+    cfg = load_config("kg")
+    pcfg, ecfg = cfg["scores_probe"], cfg["scores_ext"]
+    base_dir = Path(args.base)
+    base_meta = json.loads((base_dir / "probe.json").read_text(encoding="utf-8"))
+    build_id = base_meta["build_id"]
+    expect = {k: base_meta["encoder"][k] for k in ("model_id", "revision", "dim")}
+    canonical_dir = Path(args.canonical_dir)
+    corpus_images = pl.read_parquet(canonical_dir / "images.parquet")
+    split = load_config("models")["image_probe"]
+    sides = {}
+    for side, pool_build in (("train", args.pool_train_build_id),
+                             ("val", base_meta["pool_build_id"])):
+        args.pool_build_id = pool_build
+        error, pool = _load_pool(args, expect, corpus_images)
+        if error:
+            print(error, file=sys.stderr)
+            return 1
+        X, statuses, patients, _ = pool
+        val = patient_split(patients, val_fraction=split["val_fraction"], seed=split["seed"])
+        if bool(val.all()) != (side == "val") or bool(val.any()) != (side == "val"):
+            print(f"STOP: pool build {pool_build} is not exactly pool-{side}", file=sys.stderr)
+            return 1
+        _, image_ids = vb._all_vectors(Path(args.pool_dir) / "embeddings" / pool_build)
+        sides[side] = (X.astype(np.float64), statuses, image_ids)
+
+    # silver statuses of the extended columns on every pool study (the rule of D62)
+    images = pl.read_parquet(Path(args.pool_dir) / probe_pool.POOL_IMAGES)
+    study_of = dict(zip(images["image_id"], images["study_id"], strict=True))
+    edges = pl.read_parquet(Path(args.graph_dir) / "edges.parquet")
+    links = pl.read_parquet(Path(args.link_dir) / "links.parquet")
+    pairs = pl.read_parquet(Path(args.link_dir) / "pair_links.parquet")
+    extended = list(base_meta["columns"]["extended"])
+    below = iext.descendants(edges, extended)
+    sections = vocab.pool_sections(images, Path(args.plus_csv))
+    found, _ = vocab.read_mentions(sections, Path(args.radgraph_dir))
+    mentions = vocab.apply_rules(found, cfg["vocab"],
+                                 vocab.mrconso_names(Path(args.umls_dir) / "mrconso.parquet"))
+    mcuis = graph.mention_cuis(mentions, links, pairs)
+    targets = {}
+    for side, (_, statuses, image_ids) in sides.items():
+        silver = iext.silver_statuses(mcuis, [study_of[i] for i in image_ids],
+                                      {c: below[c] for c in extended})
+        targets[side] = np.concatenate([statuses, silver], axis=1)
+
+    base_probe = np.load(base_dir / "probe.npz")
+    names = [str(c) for c in base_probe["concepts"]]
+    if names != [*CHEXPERT_LABELS, *extended]:
+        print("STOP: base matrix columns are not the 14 labels then the extended ones",
+              file=sys.stderr)
+        return 1
+    X_tr, X_val = sides["train"][0], sides["val"][0]
+    s_tr, s_val = targets["train"], targets["val"]
+    W = base_probe["W"].astype(np.float64)
+    b = base_probe["b"].astype(np.float64)
+    results = {}
+    for j, name in enumerate(names):
+        started = time.perf_counter()
+        fit = isp.fit_column(X_tr, s_tr[:, j], X_val, s_val[:, j], pcfg["lambdas"],
+                             max_iter=pcfg["max_iter"], tol=pcfg["tol"])
+        delta = isp.paired_delta(X_val @ fit["w"] + fit["b"], X_val @ W[j] + b[j], s_val[:, j],
+                                 n_boot=pcfg["bootstrap"]["n"], seed=pcfg["bootstrap"]["seed"])
+        chosen = "probe" if isp.use_probe(delta) else "zero_shot"
+        y, keep = make_targets(s_tr[:, j])
+        results[name] = {**delta, "choice": chosen, "lambda": fit["lambda"],
+                         "per_lambda": fit["per_lambda"], "calibration": fit["calibration"],
+                         "n_train_pos": int(y[keep].sum()),
+                         "n_train_neg": int(keep.sum() - y[keep].sum())}
+        if chosen == "probe":
+            W[j], b[j] = fit["w"], fit["b"]
+        # codes only for the extended columns (T38)
+        print(f"{name:<27} caption {delta['caption']:.3f}  probe {delta['probe']:.3f}  delta "
+              f"{delta['delta']:+.3f} [{delta['ci95'][0]:+.3f}, {delta['ci95'][1]:+.3f}]  "
+              f"lam {fit['lambda']:g}  -> {chosen}  ({time.perf_counter() - started:.0f} s)",
+              flush=True)
+
+    probe = Probe(W=W.astype(np.float32), b=b.astype(np.float32), concepts=tuple(names))
+    studies = pl.read_parquet(canonical_dir / "studies.parquet")
+    scores = iscores.corpus_scores(probe, _corpus_rows(args, build_id, studies), studies)
+    logits_val = X_val @ W.T + b
+    ext_meta = {}
+    for j, cui in enumerate(extended, start=len(CHEXPERT_LABELS)):
+        res = iext.lenient_auroc(logits_val[:, j], s_val[:, j], n_boot=ecfg["bootstrap"]["n"],
+                                 seed=ecfg["bootstrap"]["seed"])
+        ext_meta[cui] = {**base_meta["columns"]["extended"][cui], **res,
+                         "borderline": res["ci95"][0] < ecfg["quality"],
+                         "source": results[cui]["choice"]}
+    meta = {**base_meta,
+            "columns": {"base": names[:len(CHEXPERT_LABELS)], "extended": ext_meta,
+                        "source": {n: results[n]["choice"] for n in names}},
+            "probe_columns": {"base_matrix": str(base_dir),
+                              "pool_train_build_id": args.pool_train_build_id,
+                              "n_train": int(X_tr.shape[0]), "n_val": int(X_val.shape[0]),
+                              "config": pcfg, "results": results,
+                              "note": "FT6 was fine-tuned on pool-train (79,115 rows), pool-val "
+                                      "was its epoch selection set"},
+            "git_commit": _git_commit(),
+            "built_at": datetime.now(UTC).isoformat(timespec="seconds")}
+    out = Path(args.out or f"{base_dir}_probe1")
+    save_probe(out, probe, meta, scores)
+    report = Path(args.report)
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text(json.dumps(results, indent=1), encoding="utf-8")
+    took = [n for n in names if results[n]["choice"] == "probe"]
+    print(f"probe in {len(took)} of {len(names)} columns; matrix: {out}; report: {report}")
+    return 0
+
+
 def _cmd_parse(args: argparse.Namespace) -> int:
     parser, status = _build_parser_or_exit(args.parser == "llm")
     result = parser.parse(args.text, mode=args.parser)
@@ -1917,6 +2033,24 @@ def build_parser() -> argparse.ArgumentParser:
     bie.add_argument("--candidates", default="data/kg/scores_ext/candidates.csv")
     bie.add_argument("--out", default=None, help="default: <base>_ext1")
     bie.set_defaults(func=_cmd_build_image_scores_ext)
+
+    bip = sub.add_parser("build-image-scores-probe",
+                         help="linear-probe columns where they beat the caption on pool-val")
+    bip.add_argument("--base", default="data/indexes/image_scores/"
+                                       "20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1_ext1")
+    bip.add_argument("--pool-train-build-id",
+                     default="20261110_pooltrain80k_cxrclip_ft6_lr1e-04_v1")
+    bip.add_argument("--pool-dir", default="data/probe_pool")
+    bip.add_argument("--plus-csv", default="data/raw/chexpert-plus/df_chexpert_plus_240401.csv")
+    bip.add_argument("--radgraph-dir", default="data/raw/chexpert-plus/radgraph_xl")
+    bip.add_argument("--umls-dir", default="data/umls/2026AA")
+    bip.add_argument("--link-dir", default="data/kg/link")
+    bip.add_argument("--graph-dir", default="data/kg/graph")
+    bip.add_argument("--embeddings", default="data/indexes/embeddings")
+    bip.add_argument("--canonical-dir", default="data/canonical")
+    bip.add_argument("--report", default="artifacts/metrics/image_scores_probe.json")
+    bip.add_argument("--out", default=None, help="default: <base>_probe1")
+    bip.set_defaults(func=_cmd_build_image_scores_probe)
 
     prs = sub.add_parser("parse", help="Phase 4: parse one request, print the SearchQuery")
     prs.add_argument("text")

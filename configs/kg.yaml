@@ -213,6 +213,16 @@ graph:
   alias_common_phrases: [phù hợp, bình thường, không có, có thể, tương tự, so với, kích thước, vị trí, hình ảnh]
 
 # Extra score-matrix columns beyond the 14 labels (WORKLOG D60, D62). Codes and pool strings only.
+# Linear-probe columns (`cxr build-image-scores-probe`, WORKLOG D72): a probe per matrix column on the pool-train FT6
+# vectors, the penalty chosen per column on pool-val by the lenient AUROC (grid fixed before measuring), the logit
+# calibrated on pool-val; it replaces the caption column only when the paired bootstrap of the difference has its 95%
+# interval above 0.
+scores_probe:
+  lambdas: [0.01, 0.1, 1, 10, 100, 1000]
+  max_iter: 50
+  tol: 1.0e-6
+  bootstrap: {n: 1000, seed: 20260101}
+
 scores_ext:
   max_candidates: 30
   captions: 3              # most frequent pool strings of the concept and its IS_A descendants
