@@ -30,6 +30,7 @@ from src.kg import (
     chexpert_phrases,
     graph,
     graph_llm,
+    knowledge,
     link_gate,
     linker,
     llm_select,
@@ -1511,6 +1512,93 @@ def _reach_report(core: pl.DataFrame, links: pl.DataFrame) -> dict:
             "unreached_top20": [[named.get(c, ""), c, label, n] for c, label, n in top]}
 
 
+def _cmd_kg_definitions(args: argparse.Namespace) -> int:
+    """Glosses of the concepts a search can show (src/kg/knowledge.py): Opus writes one sentence
+    in EN and VI per concept, Sonnet reviews it; batches are cached, the spend is summed from the
+    caches' usage and the run stops at knowledge.budget_usd. Writes data/kg/knowledge/
+    definitions.parquet and definitions_review.csv (the chat adjudicates the rows not agreed)."""
+    cfg = load_config("kg")
+    kcfg, graph_dir, umls = cfg["knowledge"], Path(args.graph_dir), Path(args.umls_dir)
+    out = graph_dir.parent / "knowledge"
+    prices = load_config("models")["llm"]["prices"]
+    nodes = pl.read_parquet(graph_dir / "nodes.parquet")
+    kg = knowledge.Graph(pl.read_parquet(graph_dir / "edges.parquet"))
+    quality_table = json.loads((graph_dir / "quality.json").read_text(encoding="utf-8"))
+    concepts = knowledge.concept_set(nodes, kg, quality_table,
+                                     cfg["query"]["expand"] | {"min_n": cfg["graph"]["min_n"]})
+    print(f"concepts {concepts.height}: " + ", ".join(
+        f"{r} {n}" for r, n in concepts.group_by("route").len().sort("route").iter_rows()))
+    out.mkdir(parents=True, exist_ok=True)
+    defs = knowledge.mrdef_level0(umls_filter.UmlsPaths().umls_meta_dir, umls,
+                                  concepts["cui"].to_list(), kcfg["definition_sources"],
+                                  kcfg["definitions_per_concept"])
+    defs.write_parquet(out / "mrdef.parquet")
+    print(f"MRDEF (Level 0): {defs['cui'].n_unique()} of {concepts.height} concepts")
+    inputs = knowledge.concept_inputs(concepts, nodes, kg,
+                                      pl.read_parquet(graph_dir / "aliases.parquet"), defs,
+                                      kcfg["names_per_language"])
+    gloss_items = knowledge.batches(inputs, kcfg["batch"], "gloss")
+
+    key = llm_select.api_key("ANTHROPIC_API_KEY")
+    if not key and not args.offline:
+        print("STOP: ANTHROPIC_API_KEY is not set (environment or .env)", file=sys.stderr)
+        return 1
+    caches = {name: _llm_cache(out, f"{name}_{kcfg[name]['model']}") for name in ("gloss", "check")}
+
+    def spent() -> float:
+        return sum(knowledge.usd(knowledge.cache_records(c.path), prices) for c in caches.values())
+
+    def answers(name: str, items: list[dict], field: str) -> dict[str, dict]:
+        system, sha = llm_select.load_prompt(default_config_dir() / kcfg[name]["prompt_file"])
+        got = llm_select.choices(items, caches[name], kcfg[name]["model"], sha)
+        return {row["cui"]: row for answer in got.values() for row in answer[field]}
+
+    def run(name: str, items: list[dict], parse) -> int:
+        """Batches until done, the limit or the budget; returns the batches called."""
+        system, sha = llm_select.load_prompt(default_config_dir() / kcfg[name]["prompt_file"])
+        chooser = llm_select.AnthropicChooser(name, kcfg[name], key)
+        schema = knowledge.GLOSS_SCHEMA if name == "gloss" else knowledge.CHECK_SCHEMA
+        called = 0
+        while args.all or called < args.limit:
+            if spent() >= kcfg["budget_usd"]:
+                print(f"STOP: budget {kcfg['budget_usd']} USD reached ({spent():.3f})")
+                break
+            step = kcfg["workers"] if args.all else min(kcfg["workers"], args.limit - called)
+            stats = llm_select.run(items, chooser, system, sha, caches[name], step,
+                                   kcfg["workers"], schema=schema, parse=parse)
+            called += stats["called"]
+            if stats["errors"]:
+                print(f"{name}: errors {stats['errors']}")
+            if not stats["answered"] or not stats["remaining"]:   # nothing left, or all failing
+                break
+        return called
+
+    if not args.offline:
+        n = run("gloss", gloss_items, knowledge.parse_glosses)
+        print(f"gloss: {n} batches called; spent so far {spent():.3f} USD")
+    glosses = answers("gloss", gloss_items, "glosses")
+    check_items = knowledge.check_batches(gloss_items, glosses)
+    if not args.offline:
+        n = run("check", check_items, knowledge.parse_verdicts)
+        print(f"check: {n} batches called; spent so far {spent():.3f} USD")
+    verdicts = answers("check", check_items, "verdicts")
+
+    review = out / "definitions_review.csv"
+    adjudicated = knowledge.read_adjudication(review)
+    table = knowledge.table(concepts, defs, glosses, verdicts, adjudicated, kcfg,
+                            cfg["explain"]["diagnostic"])
+    table.write_parquet(out / "definitions.parquet")
+    knowledge.review_rows(table, adjudicated).write_csv(review)
+    glossed = table.filter(pl.col("gloss_en") != "")
+    print(f"glossed {glossed.height}/{table.height}; source " + ", ".join(
+        f"{s} {n}" for s, n in glossed.group_by("source").len().sort("source").iter_rows()))
+    print(f"sonnet agree {int((glossed['sonnet_verdict'] == 'agree').sum())}, "
+          f"disagree {int((glossed['sonnet_verdict'] == 'disagree').sum())}; flagged "
+          f"{int((glossed['flags'] != '').sum())}; usable {int(table['usable'].sum())}")
+    print(f"spent {spent():.3f} USD (budget {kcfg['budget_usd']}); {review}")
+    return 0
+
+
 def _cmd_kg_graph_llm(args: argparse.Namespace) -> int:
     """V2-4 (D58): Opus reviews the strongest SUGGESTS edges, or proposes Vietnamese aliases, or
     (D68) proposes a route to the columns for each core disease that has none; answers are cached
@@ -1926,6 +2014,16 @@ def build_parser() -> argparse.ArgumentParser:
                      help="score matrix whose extended columns make their concepts scorable")
     kgg.add_argument("--out", default="data/kg/graph")
     kgg.set_defaults(func=_cmd_kg_build_graph)
+
+    kgd = sub.add_parser("kg-definitions",
+                         help="Opus glosses of the concepts a search can show, reviewed by Sonnet")
+    budget = kgd.add_mutually_exclusive_group(required=True)
+    budget.add_argument("--limit", type=int, help="at most this many uncached batches per model")
+    budget.add_argument("--all", action="store_true", help="every uncached batch")
+    budget.add_argument("--offline", action="store_true", help="no call: rebuild the tables")
+    kgd.add_argument("--graph-dir", default="data/kg/graph")
+    kgd.add_argument("--umls-dir", default="data/umls/2026AA")
+    kgd.set_defaults(func=_cmd_kg_definitions)
 
     kgr = sub.add_parser("kg-graph-llm",
                          help="V2-4: Opus reviews SUGGESTS edges, proposes Vietnamese aliases, "

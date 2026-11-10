@@ -187,6 +187,9 @@ chữ report, người chấm một mẫu để báo Cohen's kappa.
 Bốn lớp của thiết kế (chất lượng KG, hiểu câu hỏi, end-to-end, diễn giải). Heldout chạy một lần, có khai báo (D24);
 error analysis theo nhóm câu; các ablation của thiết kế.
 
+Diễn giải theo tri thức KG (WORKLOG D71, nhánh `feat/kg-knowledge-explanation`): gloss 298 khái niệm, phần "kiến thức
+liên quan" dẫn [K#], cờ `explain.knowledge` cho ablation lớp 4 của V2-8. Chờ: phân xử `definitions_review.csv` (P20).
+
 ### V2-9 · Agent và UI
 
 Agent tự gọi tool (ablation, tối đa 5 lượt). UI hiển thị đường đi, diễn giải và cảnh báo; chờ `pnpm` (T5).

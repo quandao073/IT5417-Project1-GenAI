@@ -78,12 +78,18 @@ def explanation_event(result: KGResult, explanation) -> dict:
     if explanation is None:
         return {"event": "explanation", "request_id": result.request_id,
                 "status": "disabled" if result.rows else "no_results", "fallback": "path"}
-    return {"event": "explanation", "request_id": result.request_id,
-            "status": explanation.status, "summary": explanation.summary,
-            "images": [{"rank": k, "line": v} for k, v in sorted(explanation.images.items())],
-            "dropped": explanation.dropped, "first_token_ms": explanation.first_token_ms,
-            "total_ms": round(explanation.total_ms, 1), "error": explanation.error,
-            "fallback": None if explanation.status in ("ok", "partial") else "path"}
+    event = {"event": "explanation", "request_id": result.request_id,
+             "status": explanation.status, "summary": explanation.summary,
+             "images": [{"rank": k, "line": v} for k, v in sorted(explanation.images.items())],
+             "dropped": explanation.dropped, "first_token_ms": explanation.first_token_ms,
+             "total_ms": round(explanation.total_ms, 1), "error": explanation.error,
+             "fallback": None if explanation.status in ("ok", "partial") else "path"}
+    if explanation.knowledge_items is not None:          # prompt v4: the cited items go along
+        event |= {"knowledge": explanation.knowledge,
+                  "knowledge_items": [{"id": k["id"], "text": k["text"]}
+                                      for k in explanation.knowledge_items],
+                  "citations": explanation.citations}
+    return event
 
 
 def log_record(state: AppState, result: KGResult, explanation, question: str) -> dict:

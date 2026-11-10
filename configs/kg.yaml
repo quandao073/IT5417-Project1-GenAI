@@ -294,6 +294,26 @@ explain:
   diagnostic: [diagnos, confirm, suffers from, suffering from, patient has, patient with, patient is,
                is positive for, definitely has, chẩn đoán, xác nhận, bị bệnh, mắc bệnh, bệnh nhân bị,
                bệnh nhân có, chắc chắn có, kết luận]
+  # The "related knowledge" part (prompt kg_explain_v4): glosses of the concepts and the edges of the path as numbered
+  # items K1, K2…; every sentence of that part must cite one. false is the layer-4 ablation and keeps prompt v3.
+  knowledge: true
+  knowledge_max_items: 10      # items per page, to keep the first token under N2
+
+# Definitions of the concepts a search can show (src/kg/knowledge.py, `cxr kg-definitions`). Everything written lives in
+# knowledge/ beside the graph directory, data/kg/knowledge/ (UMLS definitions and the glosses made from them, T38).
+knowledge:
+  definition_sources: [MSH, NCI, HPO, CSP, MEDLINEPLUS]   # MRDEF sources preferred, among the Level 0 ones
+  definitions_per_concept: 2
+  names_per_language: 3
+  batch: 10                    # concepts per call
+  max_words: {en: 25, vi: 35}   # vi counts syllables: a Vietnamese word is one to three of them (25 words ~ 35)
+  copy_run: 6                  # a gloss repeating this many consecutive words of a definition is flagged `copied`
+  workers: 4
+  budget_usd: 4.0              # both models together, from the usage of the cache files
+  gloss: {model: claude-opus-5-5, effort: medium, max_tokens: 16000, timeout_seconds: 300,
+          prompt_file: prompts/kg_gloss_v1.txt}
+  check: {model: claude-sonnet-5-5, effort: medium, max_tokens: 16000, timeout_seconds: 300,
+          prompt_file: prompts/kg_gloss_check_v1.txt}
 
 # Neo4j (docker compose --profile kg; WORKLOG D65). PREDICTED only for the top_n best images of each scorable concept.
 neo4j:
