@@ -132,3 +132,13 @@ nào lệch thì bảng này và `docs/scope-and-non-goals.md` đúng.
 |---|---|---|
 | P5 | Đóng gói trọng số vào image API hay dựa vào volume `hf_cache` | Volume; chọn khi build image thật |
 | P8 | Người dùng duyệt gold heldout của `benchmarks/parser_queries_v1.jsonl` | Giữ như lúc đo (sha256 `8d19c619…`); đổi gold heldout thì khai báo một lần chạy mới |
+
+## Ghi nối 2026-11-10: diễn giải theo tri thức KG (nhánh `feat/kg-knowledge-explanation`, xếp chồng trên PR #18)
+
+Phiên chạy song song nên ghi nối thay vì sửa tại chỗ; gộp vào các bảng trên khi merge.
+
+| # | Quyết định / bẫy / câu hỏi | Vì sao |
+|---|---|---|
+| D70 | Diễn giải có phần "kiến thức liên quan" (prompt `kg_explain_v4`, cờ `kg.yaml: explain.knowledge`, false = v3, ablation lớp 4): mục K# = gloss của khái niệm intent, cạnh trên đường đi viết bằng template trong code (SUGGESTS kèm p, IS_A, TYPICALLY_AT, PART_OF), gloss của cột; tối đa 10 mục. Mỗi câu phần này phải dẫn [K#] có thật; khái niệm và số chỉ từ mục được dẫn; vẫn chặn từ chẩn đoán. Gloss: 298 khái niệm (`cxr kg-definitions`), Opus viết EN + VI ≤ 25 từ (VI ≤ 35 âm tiết), Sonnet kiểm; lúc chạy chỉ dùng gloss Sonnet agree và không bị cờ, hoặc chat accept. Cạnh dựng lại từ edges.parquet theo luật của expand, không sửa expand | Người dùng 2026-11-10 (RAG trên tri thức KG). Số đo ở `docs/measured-facts.md`, *Diễn giải theo tri thức KG* |
+| T43 | Haiku ở tool mode đôi khi viết `</summary><parameter name="images">` vào chuỗi summary: câu bị bỏ (markup) và trang mất dòng ảnh. Với v4 (ba trường) hay gặp hơn: 8/142 trang so với 2/142 | Chưa sửa; muốn giữ dòng ảnh thì phải tách phần rò rỉ ra trước khi kiểm |
+| P20 | Phân xử 58 gloss chưa dùng được: `data/kg/knowledge/definitions_review.csv` (54 Sonnet disagree, 4 bị cờ), cột decision accept/reject, fixed_en, fixed_vi; chạy lại `cxr kg-definitions --offline` để áp | Đang dùng 240 gloss đã agree. Template SUGGESTS nói "thường được ghi nhận cùng" trong khi nhiều p chỉ 0,001–0,01: cần xem lại câu chữ |

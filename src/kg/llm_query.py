@@ -36,9 +36,14 @@ EXPLAIN_SCHEMA = {"type": "object", "properties": {
         "rank": {"type": "integer"}, "line": {"type": "string"}},
         "required": ["rank", "line"]}}},
     "required": ["summary", "images"]}
+# prompt v4: the same plus the "related knowledge" part, every sentence citing items [K#]
+EXPLAIN_KNOWLEDGE_SCHEMA = {**EXPLAIN_SCHEMA, "properties": {
+    **EXPLAIN_SCHEMA["properties"], "knowledge": {"type": "string"}},
+    "required": ["summary", "images", "knowledge"]}
 logger = logging.getLogger("cxr.kg")
 _SENTENCE = re.compile(r"(?<=[.!?])\s+")
 _NUMBER = re.compile(r"\d+(?:[.,]\d+)?")
+_CITATION = re.compile(r"\[(K\d+)\]")
 
 
 def sha256(text: str) -> str:
@@ -135,11 +140,13 @@ def _percent(p: float) -> int:
 
 
 def build_facts(question: str, language: str, intents: list[Intent], rows: list[dict],
-                probabilities: list[dict], names: dict[str, list[str]] | None = None) -> dict:
+                probabilities: list[dict], names: dict[str, list[str]] | None = None,
+                knowledge: list[dict] | None = None) -> dict:
     """What the explanation may say. `rows` are the results (rank, view), `probabilities` the
     ScoreMatrix.probabilities of those rows. Numbers are whole percents and ranks only. `names`
     (GroundingIndex.names) gives every concept of the path its EN and VI aliases, so the text can
-    name a concept in the question's language with words the grounding check accepts."""
+    name a concept in the question's language with words the grounding check accepts.
+    `knowledge` (KnowledgeBase.items) adds the numbered items the knowledge part cites."""
     names = names or {}
 
     def called(cui: str) -> dict:
@@ -168,7 +175,10 @@ def build_facts(question: str, language: str, intents: list[Intent], rows: list[
                                         "percent": _percent(prob[i]["columns"][c.cui])}
                                        for c in it.columns]})
         results.append({"rank": row["rank"], "view": row["view"], "match": match})
-    return {"question": question, "language": language, "intents": spec, "results": results}
+    facts = {"question": question, "language": language, "intents": spec, "results": results}
+    if knowledge is not None:
+        facts["knowledge"] = [{"id": k["id"], "text": k["text"]} for k in knowledge]
+    return facts
 
 
 def facts_numbers(facts: dict) -> set[str]:
@@ -234,6 +244,31 @@ class GroundingIndex:
                     for i in range(len(words) - n + 1)}
         return cuis, phrases
 
+    def check_knowledge(self, sentence: str, items: dict[str, dict]) -> tuple[str | None, int]:
+        """(None or why the sentence is not grounded, citations): a sentence of the knowledge
+        part cites at least one item, only items that exist, and names only concepts and numbers
+        of the items it cites."""
+        cited = _CITATION.findall(sentence)
+        if not cited:
+            return "no citation", 0
+        unknown = [c for c in cited if c not in items]
+        if unknown:
+            return f"citation not in the knowledge: {unknown[0]}", 0
+        text = _CITATION.sub(" ", sentence)
+        sources = " ".join(items[c]["text"] for c in cited)
+        given = {n.replace(",", ".") for n in _NUMBER.findall(sources)}
+        for number in _NUMBER.findall(text):
+            if number.replace(",", ".") not in given:
+                return f"number not in the cited items: {number}", 0
+        cuis = {c for k in cited for c in items[k]["cuis"]}
+        phrases = {p for c in cuis for p in self.by_cui.get(c, ())}
+        words = normalize(sources).split()
+        phrases |= {" ".join(words[i:i + n]) for n in range(1, 5)
+                    for i in range(len(words) - n + 1)}
+        why = self.check(text, cuis, phrases, set(re.findall(r"\d+", text)))
+        return (why.replace("in the facts", "in the cited items") if why else None,
+                0 if why else len(cited))
+
     def check(self, sentence: str, cuis: set[str], phrases: set[str],
               numbers: set[str]) -> str | None:
         """None when the sentence is grounded, else why it is not."""
@@ -271,6 +306,9 @@ class Explanation:
     first_token_ms: float | None = None
     total_ms: float = 0.0
     error: str | None = None
+    knowledge: str = ""                         # prompt v4 only: the kept sentences, with [K#]
+    knowledge_items: list[dict] | None = None   # the items given (id, text); None for prompt v3
+    citations: int = 0                          # [K#] in the kept knowledge sentences
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -278,23 +316,31 @@ class Explanation:
 
 class Explainer:
     def __init__(self, client, guard: Guard, system_prompt: str, timeout_s: float,
-                 index: GroundingIndex):
+                 index: GroundingIndex, knowledge=None):
+        """`knowledge`: a knowledge.KnowledgeBase when the prompt is v4 (explain.knowledge),
+        else None."""
         self.client, self.guard, self.timeout_s, self.index = client, guard, timeout_s, index
-        self.system_prompt = system_prompt
+        self.system_prompt, self.knowledge = system_prompt, knowledge
         self.prompt_sha256 = sha256(system_prompt)
 
-    def explain(self, facts: dict, intents: list[Intent]) -> Explanation:
+    def explain(self, facts: dict, intents: list[Intent],
+                knowledge: list[dict] | None = None) -> Explanation:
+        """Facts with a "knowledge" list are prompt v4 (summary, images and the knowledge part);
+        without it, prompt v3. `knowledge`: the items of those facts with their `cuis`."""
         started = time.perf_counter()
+        with_knowledge = "knowledge" in facts
+        schema = EXPLAIN_KNOWLEDGE_SCHEMA if with_knowledge else EXPLAIN_SCHEMA
         messages = [{"role": "system", "content": self.system_prompt},
                     {"role": "user", "content": json.dumps(facts, ensure_ascii=False,
                                                          separators=(",", ":"))}]
         meta: dict = {}
         try:
             content, _ = self.guard.call(
-                lambda: self.client.chat(messages, EXPLAIN_SCHEMA, stream=True, meta=meta),
+                lambda: self.client.chat(messages, schema, stream=True, meta=meta),
                 self.timeout_s)
             answer = json.loads(content)
             summary, images = str(answer["summary"]), list(answer["images"])
+            told = str(answer["knowledge"]) if with_knowledge else ""
         except (LLMError, LLMInvalidOutput, ValueError, KeyError, TypeError) as exc:
             return Explanation("failed", total_ms=_ms(started), error=str(exc)[:160],
                                first_token_ms=meta.get("first_token_ms"))
@@ -315,9 +361,22 @@ class Explainer:
                    else self.index.check(line, cuis, phrases, numbers))
             (dropped.append({"text": line, "why": why, "rank": rank}) if why
              else lines.__setitem__(rank, line))
+        known, citations = [], 0
+        items = {k["id"]: {"cuis": [], **k} for k in knowledge or facts.get("knowledge", [])}
+        for sentence in _SENTENCE.split(told.strip()):
+            if not sentence:
+                continue
+            why, n = self.index.check_knowledge(sentence, items)
+            if why:
+                dropped.append({"text": sentence, "why": why, "part": "knowledge"})
+            else:
+                known.append(sentence)
+                citations += n
         status = ("ungrounded" if not kept and not lines else "partial" if dropped else "ok")
         return Explanation(status, " ".join(kept), lines, dropped,
-                           meta.get("first_token_ms"), _ms(started))
+                           meta.get("first_token_ms"), _ms(started), knowledge=" ".join(known),
+                           knowledge_items=(facts["knowledge"] if with_knowledge else None),
+                           citations=citations)
 
 
 def _ms(started: float) -> float:

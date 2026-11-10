@@ -192,3 +192,8 @@ Agent tự gọi tool (ablation, tối đa 5 lượt). UI hiển thị đường
 
 Theo CLAUDE.md §6: mỗi task một nhánh tách từ `main`, đặt tên theo công việc, PR nhỏ, merge commit. Commit khi người
 dùng bảo.
+
+## Ghi nối 2026-11-10
+
+Diễn giải theo tri thức KG (WORKLOG D70, nhánh `feat/kg-knowledge-explanation`): gloss 298 khái niệm, phần "kiến thức
+liên quan" dẫn [K#], cờ `explain.knowledge` cho ablation lớp 4 của V2-8. Chờ: phân xử `definitions_review.csv` (P20).

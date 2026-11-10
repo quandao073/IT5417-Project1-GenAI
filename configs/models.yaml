@@ -111,6 +111,7 @@ llm:
   prices:
     claude-haiku-5-5: {input: 0.10, output: 0.50}
     claude-sonnet-5-5: {input: 2.00, output: 10.00}
+    claude-opus-5-5: {input: 4.00, output: 20.00}   # read 2026-11-10
   base_url_env: LLM_BASE_URL
   temperature: 0.0
   timeout_seconds: 20
@@ -163,5 +164,6 @@ kg_llm:
   select: {model: claude-haiku-5-5, timeout_seconds: 3, prompt_file: prompts/kg_choose_concept_v2.txt,
            cache_file: data/kg/cache/chooser.jsonl}   # the model's choices, kept across restarts
   explain: {model: claude-haiku-5-5, timeout_seconds: 15, max_tokens: 1500,
-            prompt_file: prompts/kg_explain_v3.txt}
+            prompt_file: prompts/kg_explain_v3.txt,
+            knowledge_prompt_file: prompts/kg_explain_v4.txt}   # kg.yaml explain.knowledge: true
   breaker: {failures: 3, cooldown_seconds: 60}
