@@ -156,10 +156,10 @@ graph:
       - [C0029408, C0011164]    # wear-and-tear joint disease, below the degenerative-change column
     suggests:             # disease: findings that suggest it, equal weights, no pool count
       C0206062: [C1849561, C5539772, C4476748]   # the diffuse interstitial disease concept <- the interstitial markings, thickening and reticular-pattern findings
-      # session C (D73): fibrosis of the lung, same sources as C0206062; chest trauma and its parent (dev broader-03/04)
+      # session C (D73): fibrosis of the lung, same sources as C0206062; harm to the rib cage by force, and its parent (dev broader-03/04)
       C0034069: [C1849561, C5539772, C4476748]   # scarring of the lung tissue <- interstitial markings, thickening, reticular pattern
-      C0039980: [C0035522, C0016655, C0032326, C0038536]   # injury of the chest <- rib fracture, multiple fractures, pneumothorax, subcutaneous emphysema
-      C3263723: [C0035522, C0016655, C0032326, C0038536]   # traumatic injury, as a chest film shows it <- the same four
+      C0039980: [C0035522, C0016655, C0032326, C0038536]   # harm to the rib-cage region by force <- rib fracture, multiple fractures, pneumothorax, subcutaneous emphysema
+      C3263723: [C0035522, C0016655, C0032326, C0038536]   # harm by an outside force, as a chest film shows it <- the same four
       C0024117: [C0013990]   # the chronic airflow-obstruction disease <- the emphysema column
       C0740451: [C0006663]   # the granuloma-forming disease <- the calcification column
       # route review of 2026-11-08: only the columns the adjudication kept (`cols=` in its note)
