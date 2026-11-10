@@ -57,8 +57,8 @@ def test_a_reply_must_answer_every_concept_of_the_batch_once():
 
 def test_flags_catch_a_long_a_copied_and_a_diagnostic_gloss():
     definition = ["Fluid that gathers in the space between the two layers around the lung."]
-    ok = {"en": "Fluid in the pleural space, seen as a blunted angle at the lung base.",
-          "vi": "Dịch trong khoang màng phổi, thấy là góc sườn hoành tù."}
+    ok = {"en": "Liquid between the pleural layers that blunts the angle at the lung base.",
+          "vi": "Chất lỏng tụ quanh phổi, góc đáy phổi mất nhọn."}
     assert knowledge.flags(ok, definition, KCFG, DIAGNOSTIC) == ""
     long = {**ok, "en": " ".join(["word"] * 26)}
     assert knowledge.flags(long, definition, KCFG, DIAGNOSTIC) == "too_long_en"
@@ -106,8 +106,8 @@ def test_the_review_csv_keeps_a_decision_and_puts_the_disagreements_first():
 
 # ---- K# items -----------------------------------------------------------------------------------
 
-GLOSSES = {"C6": {"en": "Heart pump weakness; the film may show a large heart.",
-                  "vi": "Tim bơm kém; phim có thể thấy bóng tim to."},
+GLOSSES = {"C6": {"en": "Weak heart pumping, often with a big heart shadow.",
+                  "vi": "Tim bơm yếu, trên phim bóng tim lớn."},
            "C2": {"en": "A heart shadow wider than usual.", "vi": "Bóng tim rộng hơn bình thường."}}
 
 
@@ -122,7 +122,7 @@ def test_a_disease_gives_its_gloss_the_suggests_edges_with_p_and_the_glosses_of_
     items = base().items([intent], "vi")
     texts = [k["text"] for k in items]
     assert [k["id"] for k in items] == [f"K{i}" for i in range(1, len(items) + 1)]
-    assert texts[0] == "suy tim: Tim bơm kém; phim có thể thấy bóng tim to."
+    assert texts[0] == "suy tim: Tim bơm yếu, trên phim bóng tim lớn."
     assert "tim to thường được ghi nhận cùng suy tim trong report, p = 0,30." in texts
     assert "phù phổi thường được ghi nhận cùng suy tim trong report, p = 0,10." in texts
     assert texts[-1] == "tim to: Bóng tim rộng hơn bình thường."
@@ -186,7 +186,7 @@ def _explain(knowledge_text: str):
 
 def test_a_cited_sentence_is_kept_and_its_citations_counted():
     got = _explain("Tim to thường được ghi nhận cùng suy tim, p = 0,30 [K2]. "
-                   "Suy tim là tim bơm kém [K1][K2].")
+                   "Suy tim là tim bơm yếu [K1][K2].")
     assert got.status == "ok" and got.citations == 3
     assert got.knowledge.startswith("Tim to") and got.knowledge_items[0]["id"] == "K1"
 
