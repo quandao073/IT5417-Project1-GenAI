@@ -5,6 +5,68 @@ Kế hoạch đánh giá của thiết kế: `docs/v2-kg-design.md`, *Kế hoạ
 Số đo gốc kèm cách đo ở `docs/measured-facts.md`. **Heldout đã chạy một lần (D24, D75), xem mục *Heldout*.** Phần *Dev lượt 2* là trạng thái dev hiện tại; các phần trước là lượt 1
 (36 câu dev, trước D72–D74).
 
+## Kết luận đánh giá
+
+Kết quả chính là **heldout 100 câu, chạy một lần với cấu hình đã khóa trước** (D24, D75). Chỉ số là nDCG@10. Khoảng tin
+cậy là CI 95% paired, bootstrap 10.000 lần theo câu. Các hệ được so:
+
+- **B0:** dịch thô câu hỏi sang EN rồi tìm bằng CLIP.
+- **B1:** parser LLM viết câu mẫu rồi tìm bằng CLIP.
+- **B2:** tìm qua KG UMLS và ma trận điểm 37 cột.
+- **B2 + trộn:** B2 cộng `0,2·z(cos CLIP)`. Đây là hệ chính.
+
+1. **KG giúp tìm ảnh tốt hơn hẳn.**
+   - B2 + trộn − B1: **+0,138 [+0,078; +0,198]**; thắng/thua/hòa 67/28/5. nDCG@10 tăng từ 0,359 lên 0,497.
+   - B2 − B1: +0,123 [+0,060; +0,188].
+   - Tham chiếu (đọc nhãn) − B2 + trộn: +0,040 [−0,028; +0,107], chưa tách khỏi 0.
+2. **Phần lợi đến từ KG và ma trận điểm.** Ablation có ý nghĩa trên heldout (hiệu so với B2):
+
+   | Thành phần bị tắt | Hiệu nDCG@10 [CI 95%] |
+   |---|---|
+   | Ma trận probe (`probe_off`, chấm trên ma trận zero-shot) | −0,071 [−0,118; −0,027] |
+   | Route vị trí | −0,032 [−0,058; −0,011] |
+   | Route bệnh (SUGGESTS) | −0,029 [−0,055; −0,007] |
+   | Route hẹp hơn | −0,026 [−0,053; −0,005] |
+   | Chọn khái niệm bằng LLM (thay bằng lookup tất định) | −0,021 [−0,045; −0,002] |
+
+   Tắt SapBERT không làm kém đi.
+3. **Parser LLM không giúp hơn dịch thô:** B1 − B0 = +0,004 [−0,046; +0,055]. Viết câu mẫu cho CLIP gần như không có giá
+   trị riêng. Mức hơn của B2 không đến từ parser.
+4. **Trộn điểm không tái lập.** Trộn hơn B2 +0,033 [+0,006; +0,062] trên dev, nhưng chỉ +0,015 [−0,018; +0,045] trên
+   heldout, CI chứa 0. Vẫn triển khai vì đó là cấu hình đã khóa và đã đánh giá, và trộn không làm hại.
+5. **Lớp 2, hiểu câu hỏi (B2, heldout):**
+   - CUI đúng 0,654, F1 tập cột 0,713, đủ cảnh báo kỳ vọng 0,660.
+   - Nhóm control 1,000. Yếu nhất là broader (CUI 0,412) và anatomy (F1 0,500).
+6. **Lớp 4, diễn giải:**
+   - Trên heldout: 99,44% câu qua kiểm căn cứ (v4, có knowledge). Nhưng bộ kiểm lúc đó chưa bắt ba loại lỗi: mô tả sai cách
+     gộp điểm, khoảng số không có trong facts, và câu nói chắc hơn mục [K#].
+   - Khi Opus so cặp mù trên dev, bản v4 hữu ích hơn bản không-knowledge (61/63 cặp) nhưng kém trung thực hơn: −0,254
+     [−0,413; −0,095].
+   - Sau sửa (prompt v5 cùng ba kiểm mới), v5 hữu ích hơn ở 61/61 cặp, và trung thực ngang bản không-knowledge: −0,016
+     [−0,180; +0,148]. Vì vậy giữ phần kiến thức, với v5 làm mặc định.
+
+**Giới hạn**
+
+- **Không có người chấm.** Kappa giữa Opus và Sonnet là 0,708 trên heldout (kappa bậc hai 0,852). Hai máy cùng họ model,
+  nên con số này chỉ cho biết cách chấm ổn định, không thay được người. Mẫu 100 cặp mỗi split đã rút sẵn:
+  `data/eval/human_sample_{dev,heldout}.csv` (P9).
+- **Không có ablation SNOMED CT.** KG chỉ dùng UMLS Level 0. Muốn dùng SNOMED CT thì phải khai báo MLDS (D48).
+- **Không so các kiểu câu sinh logit (P13).** Việc này đã bỏ, vì phần lớn cột của ma trận giờ là probe tuyến tính (D72),
+  không phải câu.
+- **Parser LLM không tái lập được** (T18). Ví dụ: B1 trên 36 câu dev cũ được 0,512 ở lượt 1 và 0,482 ở lượt 2. Mọi hiệu
+  vì thế còn mang phương sai của parser.
+- **Dev đã dùng để chọn cấu hình:** vá KG, đường văn bản, λ của probe, lưới trộn. Vì vậy số dev lạc quan; số báo cáo là
+  heldout.
+- **Tham chiếu chỉ là trần ở nhóm control.** Với khái niệm ngoài 14 nhãn CheXpert, Tham chiếu không lọc gì: nó chỉ lọc ở
+  2/21 câu new_column, 7/22 câu disease, 10/22 câu anatomy.
+- **Số heldout là ước lượng thận trọng.** Hệ đo lúc đó còn lỗi T44 (đường văn bản mã hóa `""`). Trên dev, sửa lỗi này nâng
+  B2 thêm 0,036. Có thêm một chỗ lệch nhỏ với API: lượt heldout có trộn 2 câu đi đường văn bản (narrower-17, broader-08),
+  còn API không trộn ở loại câu này.
+- **So cặp lớp 4 chỉ mù một phần.** Không gắn nhãn A/B, nhưng bản có knowledge lộ ra vì có thêm đoạn [K#]. Phép so chỉ
+  làm trên dev.
+- **Encoder FT6 đã thấy pool-train**, nên probe dùng embedding của dữ liệu mà encoder đã fine-tune; λ và cổng chọn probe
+  cùng chọn trên pool-val (D72).
+
 ## Bộ câu và gold
 
 `benchmarks/kg_queries_v1.jsonl`: 72 câu, 8 nhóm × 9, nửa EN nửa VI. Nhóm: control (14 nhãn chấm trực tiếp) · synonym_vi
@@ -47,8 +109,8 @@ Cosine trên vector shard bằng đúng phép Qdrant tính (vector chuẩn hóa)
   theo study id); cache theo (câu, study, model, sha prompt), nên một cặp chỉ chấm một lần dù xuất hiện ở hệ thống nào.
   Thang 2 / 1 / 0 và cờ `violates_exclusion`.
 - Chấm chéo `claude-sonnet-5-5`, cùng prompt, 10 % cặp chọn theo seed → tỉ lệ đồng thuận, kappa Cohen (thường và trọng số
-  bậc hai) giữa hai máy. `data/eval/human_sample.csv`: 100 cặp cân theo điểm judge, đáp án tách ở
-  `human_sample_key.csv`, để người chấm sau.
+  bậc hai) giữa hai máy. `data/eval/human_sample_<split>.csv`: 100 cặp cân theo điểm judge, đáp án tách ở
+  `human_sample_<split>_key.csv`, để người chấm sau.
 - Luật view (khai báo trước khi chạy): câu có view thì study khác view tính 0 điểm (report không ghi view).
 
 ## Metric
@@ -72,7 +134,7 @@ Số máy ghi ở `data/eval/metrics_dev.json`, bảng thô `data/eval/report_de
 
 Pool 1.000 cặp (36 câu), judge chấm đủ: điểm 0 / 1 / 2 = 367 / 252 / 381. Chấm chéo Sonnet trên 99 cặp (10 % theo seed;
 1 cặp Sonnet không trả): đồng thuận 0,798, kappa 0,702, kappa trọng số bậc hai 0,833; đồng thuận "điểm 2 hay không" 0,838.
-Hai máy cùng họ, nên đây là độ ổn định của cách chấm, không thay được người chấm: `human_sample.csv` (100 cặp, 34 / 33 / 33
+Hai máy cùng họ, nên đây là độ ổn định của cách chấm, không thay được người chấm: `human_sample_dev.csv` (100 cặp, 34 / 33 / 33
 theo điểm judge) chờ người.
 
 ### Lớp 3: end-to-end
@@ -392,6 +454,9 @@ Toàn bộ: CUI đúng 0,654, tập cột đúng 0,510, F1 tập cột 0,713, đ
   nào bị loại vì từ chẩn đoán.
 - Ở v3: 2 câu bị loại vì từ chẩn đoán, 1 vì con số.
 - Knowledge không làm tăng tỉ lệ có căn cứ: hai bản chênh 0,3 điểm, trên ~1.060 câu, nên chưa phân biệt được.
+- Bộ kiểm lúc chạy heldout chưa bắt ba loại lỗi: sai cách gộp điểm, khoảng số tự tóm tắt, và câu nói chắc
+  hơn mục [K#]. Vì vậy 99,44 % ở đây cao hơn mức trung thực thật của v4; xem *Lớp 4 sau sửa (P22)*.
+  Heldout không chạy lại.
 
 ### Chi phí và độ trễ (heldout)
 
@@ -463,7 +528,7 @@ chỗ hổng này đúng như đã biết.
    parser, ngoài phương sai bootstrap đã báo.
 3. Hai giới hạn của probe (D72): encoder FT6 đã thấy pool-train; λ và cổng cùng chọn trên pool-val.
 4. Judge là LLM. Kappa với Sonnet là 0,708, nhưng chưa có mẫu người chấm (P9; mẫu 100 cặp đã rút ở
-   `data/eval/human_sample.csv`).
+   `data/eval/human_sample_heldout.csv`).
 
 ## Sau heldout (phiên D, 2026-11-11): sửa T44, trộn điểm trong API, lớp 4 so cặp
 
@@ -482,8 +547,10 @@ chỗ hổng này đúng như đã biết.
 - `KGSearch` trộn điểm đúng cấu hình đã khóa: `z(KG) + 0,2 · z(cos CLIP của bản EN)` (`kg.yaml: query.fusion.weight`).
   - Hàm trộn `text_fallback.fuse` dùng chung với eval, có test cho thấy hai bên ra cùng thứ hạng.
   - Lượt dịch Haiku chạy song song với parser. Dịch hỏng thì không trộn và không gây lỗi.
-  - Câu đi đường văn bản thì giữ đường văn bản, không trộn. Eval cũng theo đúng luật này. Ở heldout, lượt chạy chính còn
-    trộn cả 2 câu đi đường văn bản chỉ có loại trừ (narrower-17, broader-08).
+  - Câu đi đường văn bản thì giữ đường văn bản, không trộn. Eval cũng theo đúng luật này.
+  - **Hành vi lệch nhỏ:** API không trộn ở câu đi đường văn bản, nhưng lượt heldout (hệ chính
+    `fuse_b0_w0.2`) đã trộn 2 câu đi đường văn bản chỉ có loại trừ: narrower-17 và broader-08. Số heldout
+    giữ như đã đo.
 - Eval chạy B2 với `weight 0` (= `fusion_off`), và tính lưới trộn từ B2 như trước. Bản dịch lấy từ cache dịch của B0, nên
   giống hệt văn bản B0.
 
@@ -570,6 +637,58 @@ Cách đo: `cxr eval-kg-explain` (`src/evaluation/kg_explain_pairs.py`).
   - Bản có knowledge lộ ra vì có thêm đoạn K#, nên "mù" chỉ ở chỗ không gắn nhãn.
   - Judge là LLM, chưa có người chấm.
   - Chỉ chấm trên dev.
+
+### Lớp 4 sau sửa (P22): prompt v5 và ba kiểm mới
+
+**Prompt `kg_explain_v5`** (v4 giữ nguyên để so) thêm ba quy định:
+
+- Cách gộp điểm chỉ được nói cho intent có `combine` khác `single`, và chỉ bằng đúng giá trị đó.
+- Không tự viết khoảng số, min, max, trung bình hay tổng hợp số nào mà JSON không ghi nguyên văn.
+- Câu kiến thức không được nói chắc hơn mục [K#]: mục có từ rào đón thì câu cũng phải có.
+
+**Kiểm mới trong `Explainer`** (`llm_query.combine_problem`, `range_problem`, `hedge_problem`; bảng từ ở
+`kg.yaml: explain.combine_words, hedge_words`). Các kiểm này chạy thêm, không thay kiểm cũ:
+
+- Một từ chỉ cách gộp (EN/VI) mà không intent nào có `combine` tương ứng thì câu bị bỏ.
+- Một khoảng "X–Y %" phải là đúng min và max của một chuỗi phần trăm trong facts: của một intent, hay của một khái niệm
+  trong intent, qua các kết quả. Luật này chặt hơn luật "hai đầu đều có trong facts". Luật kia không bắt được lỗi
+  "74 % đến 87 %" của disease-14, vì cả 74 và 87 đều có mặt trong facts, nhưng các hạng 5 và 7 lại ở 71 % và 73 %.
+- Câu dẫn một [K#] có từ rào đón ("usually", "thường"…) mà bản thân câu không rào đón thì câu bị bỏ. Chữ "bất thường"
+  không tính là từ rào đón.
+- Test: `tests/kg/test_explain_checks.py` lấy ví dụ từ các câu thua: control-02, anatomy-13, new_column-14, disease-14,
+  anatomy-03, negation_broad-03 và negation_broad-04.
+
+**Áp ba kiểm mới, offline, lên chính 63 bản v4 cũ.** Chúng bắt câu sai ở 21 trong 24 câu từng thua về trung thực: 21 câu
+sai cách gộp, 10 khoảng số, 6 thiếu rào đón, trên 868 câu.
+
+**Đo lại.** Cách đo: `cxr eval-kg-explain --prompt prompts/kg_explain_v5.txt --also prompts/kg_explain_v4.txt --tag v5`.
+
+- Cùng quy trình với lượt trước: mỗi câu dev qua search một lần; trên cùng kết quả viết v5, v3 và (để đếm câu bị bỏ) v4.
+- Opus so v5 với v3: cùng prompt `kg_explain_judge_v1`, cùng hai tiêu chí, thứ tự xáo theo seed 20261111 (v5 là B ở 23 / 61
+  cặp).
+- 61 cặp; 11 câu đi đường văn bản. Lượt này search parse lại, nên có 2 câu đi đường văn bản nhiều hơn lượt trước.
+- Chi phí 1,58 USD.
+
+| | trung thực (thắng / thua / hòa; trung bình) | hữu ích |
+|---|---|---|
+| v4 so với không-knowledge (phiên D) | 8 / 24 / 31; −0,254 [−0,413; −0,095] | 61 / 2 / 0; +0,937 [+0,841; +1,000] |
+| **v5 so với không-knowledge** | **12 / 13 / 36; −0,016 [−0,180; +0,148]** | **61 / 0 / 0; +1,000 [+1,000; +1,000]** |
+
+**Đạt mục tiêu:** trung thực không còn thua (CI chứa 0), hữu ích vẫn thắng. Vì vậy giữ `explain.knowledge: true` với v5 làm
+mặc định (`models.yaml: kg_llm.explain.knowledge_prompt_file`).
+
+**Tỉ lệ câu bị ba luật mới bỏ, trên cùng kết quả:**
+
+| bản | câu | sai cách gộp | khoảng số | thiếu rào đón | tổng ba luật |
+|---|---|---|---|---|---|
+| v5 | 853 | 0 | 0,59 % | 0,47 % | 1,06 % |
+| v4 | 846 | 2,36 % | 1,06 % | 1,06 % | 4,49 % |
+| v3 (không knowledge) | 732 | 0,96 % | 0,68 % | — | 1,64 % |
+
+- Bản v5 có nhiều diễn giải `partial` hơn (14 / 61), vì luật bỏ câu. Không bản nào thành `ungrounded`.
+- Ở 13 câu v5 vẫn thua, Opus nêu lỗi diễn đạt: nói như có lọc view PA, gọi hạng 3 là "đầu", nói "khớp mạnh" với 49–67 %,
+  hay ngụ ý một khái niệm được chấm riêng. Các lỗi này các luật hiện có không bắt được.
+- Lớp 4 của heldout (mục *Heldout*) đo bằng v4 với bộ kiểm cũ, khi bộ kiểm chưa bắt ba lỗi này. Heldout không chạy lại.
 
 ### Đọc kết quả
 

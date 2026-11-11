@@ -203,6 +203,56 @@ def facts_numbers(facts: dict) -> set[str]:
     return set(re.findall(r"\d+", json.dumps(facts)))
 
 
+_RANGE = re.compile(r"(\d+)\s*%?\s*(?:–|—|-|\bto\b|đến|tới)\s*(\d+)\s*%")
+_COMBINE_OF = {"any_of": {"any_of"}, "any_of_weighted": {"any_of", "weighted"},
+               "weighted": {"weighted"}, "single": set()}
+
+
+def _has_word(text: str, word: str) -> bool:
+    return re.search(rf"(?<!\w){re.escape(word)}(?!\w)", text) is not None
+
+
+def combine_problem(sentence: str, facts: dict, words: dict[str, list[str]]) -> str | None:
+    """A way of combining scores the sentence names that no intent of the facts has (P22)."""
+    low = sentence.casefold()
+    allowed = set().union(*[_COMBINE_OF.get(i.get("combine"), set())
+                            for i in facts.get("intents", [])])
+    for mode, forms in words.items():
+        if mode not in allowed and any(f.casefold() in low for f in forms):
+            return f"combine not in the facts: {mode}"
+    return None
+
+
+def range_problem(sentence: str, facts: dict) -> str | None:
+    """A range "X–Y %" that is not the lowest and highest of one series of percentages of the
+    facts: one intent's, or one concept's within an intent, over the results (P22)."""
+    found = _RANGE.findall(sentence)
+    if not found:
+        return None
+    series: dict[tuple, list[int]] = {}
+    for result in facts.get("results", []):
+        for m in result["match"]:
+            series.setdefault((m["intent"],), []).append(m["percent"])
+            for c in m["concepts"]:
+                series.setdefault((m["intent"], c["concept"]), []).append(c["percent"])
+    ends = {(min(v), max(v)) for v in series.values() if v}
+    for lo, hi in found:
+        if (int(lo), int(hi)) not in ends:
+            return f"range not in the facts: {lo}-{hi}%"
+    return None
+
+
+def hedge_problem(sentence: str, cited: list[str], hedges: list[str]) -> str | None:
+    """A sentence citing an item that hedges ("usually", "thường"…) without hedging (P22)."""
+    def hedged(text: str) -> bool:
+        low = text.casefold().replace("bất thường", " ")
+        return any(_has_word(low, h.casefold()) for h in hedges)
+
+    if any(hedged(t) for t in cited) and not hedged(sentence):
+        return "hedge of the cited item missing"
+    return None
+
+
 class GroundingIndex:
     """Aliases of the Finding and Disease concepts of the graph, to spot a mention of a concept
     that is not in the facts. Built once at startup from aliases.parquet and nodes.parquet."""
@@ -370,9 +420,15 @@ class Explainer:
                                first_token_ms=meta.get("first_token_ms"))
         cuis, phrases = self.index.allowed(facts, intents)
         numbers = facts_numbers(facts)
+        words = self.index.cfg.get("combine_words", {})
+
+        def checked(text: str) -> str | None:
+            return (self.index.check(text, cuis, phrases, numbers)
+                    or combine_problem(text, facts, words) or range_problem(text, facts))
+
         dropped, kept = [], []
         for sentence in _SENTENCE.split(summary.strip()):
-            why = self.index.check(sentence, cuis, phrases, numbers) if sentence else None
+            why = checked(sentence) if sentence else None
             (dropped.append({"text": sentence, "why": why}) if why else kept.append(sentence))
         ranks = {r["rank"] for r in facts["results"]}
         lines: dict[int, str] = {}
@@ -381,8 +437,7 @@ class Explainer:
                 rank, line = int(item["rank"]), str(item["line"]).strip()
             except (KeyError, TypeError, ValueError):
                 continue
-            why = ("rank not in the results" if rank not in ranks
-                   else self.index.check(line, cuis, phrases, numbers))
+            why = "rank not in the results" if rank not in ranks else checked(line)
             (dropped.append({"text": line, "why": why, "rank": rank}) if why
              else lines.__setitem__(rank, line))
         known, citations = [], 0
@@ -391,6 +446,10 @@ class Explainer:
             if not sentence:
                 continue
             why, n = self.index.check_knowledge(sentence, items)
+            if not why:
+                why = combine_problem(sentence, facts, words) or hedge_problem(
+                    sentence, [items[k]["text"] for k in _CITATION.findall(sentence)],
+                    self.index.cfg.get("hedge_words", []))
             if why:
                 dropped.append({"text": sentence, "why": why, "part": "knowledge"})
             else:

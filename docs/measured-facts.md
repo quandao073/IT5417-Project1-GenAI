@@ -1274,3 +1274,32 @@ kg_32e035ed37b0, ma trận `..._ext1_probe1@e878b151d823`, gold heldout sha256 `
 
 **Chi phí:** 2,30 USD trong ledger. Gồm: B2 chạy lại 0,08; judge 0,31; chấm chéo 0,32; cặp diễn giải 0,08; Opus so cặp
 1,50. Smoke ngoài ledger ước ≈ 0,05 USD. Ledger 28,845 → 31,140.
+
+## Lớp 4 sau sửa: prompt v5 và ba kiểm mới (đo 2026-11-11, phiên E)
+
+**Cách đo:** `uv run cxr eval-kg-explain --prompt prompts/kg_explain_v5.txt --also prompts/kg_explain_v4.txt --tag v5`.
+
+- Mỗi câu dev qua search một lần. Trên cùng kết quả viết ba bản: v5, v3 và v4 (bản v4 chỉ để đếm câu bị bỏ).
+- Opus `kg_explain_judge_v1` so v5 với v3, thứ tự xáo theo seed 20261111, bootstrap 10.000 lần.
+- `data/eval/explain_pairs_dev_v5_verdicts.json` sha256 `9ec87b754f8fffc46060a9cc661aeafe6eaa559396db5097a7626aefb66507bd`.
+- Offline: áp ba kiểm mới lên 63 bản v4 cũ của `explain_pairs_dev.json`.
+
+**Kết quả so cặp** (61 cặp; 11 câu đi đường văn bản; v5 là B ở 23 cặp):
+
+| tiêu chí | thắng / thua / hòa | trung bình [CI 95%] |
+|---|---|---|
+| trung thực | 12 / 13 / 36 | −0,016 [−0,180; +0,148] |
+| hữu ích | 61 / 0 / 0 | +1,000 |
+
+**Câu bị ba luật mới bỏ:**
+
+| bản | câu | sai cách gộp | khoảng số | thiếu rào đón |
+|---|---|---|---|---|
+| v5 | 853 | 0 | 5 (0,59 %) | 4 (0,47 %) |
+| v4 | 846 | 20 (2,36 %) | 9 (1,06 %) | 9 (1,06 %) |
+| v3 | 732 | 7 (0,96 %) | 5 (0,68 %) | — |
+
+- Trạng thái diễn giải v5: 47 ok, 14 partial.
+- Offline trên v4 cũ: ba luật bắt câu ở 21 / 24 câu từng thua về trung thực (combine 21, khoảng 10, rào đón 6 câu, trên 868
+  câu).
+- Chi phí 1,58 USD (Opus 1,47; pipeline 0,11). Ledger 31,14 → 32,72. Dựng lại mẫu người chấm hai split từ cache: 0,01 USD (chấm chéo chưa có trong cache).

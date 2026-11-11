@@ -186,7 +186,7 @@ def _explain(knowledge_text: str):
 
 def test_a_cited_sentence_is_kept_and_its_citations_counted():
     got = _explain("Tim to thường được ghi nhận cùng suy tim, p = 0,30 [K2]. "
-                   "Suy tim là tim bơm yếu [K1][K2].")
+                   "Suy tim là tim bơm yếu, thường kèm tim to [K1][K2].")
     assert got.status == "ok" and got.citations == 3
     assert got.knowledge.startswith("Tim to") and got.knowledge_items[0]["id"] == "K1"
 
@@ -234,3 +234,16 @@ def test_the_search_sends_the_items_of_its_path_and_the_event_carries_them():
     assert event["knowledge_items"] == sent["knowledge"]
     search.explainer.knowledge = None                       # explain.knowledge: false (v3)
     assert "knowledge" not in explanation_event(result, search.explain(result))
+
+
+def test_the_p22_checks_run_in_the_explainer():
+    intents, items, facts = _page()                      # one weighted intent
+    reply = {"summary": "Câu hỏi tìm suy tim. Điểm lấy mức khớp tốt nhất, any_of.",
+             "images": [{"rank": 1, "line": "Khớp 80%."}],
+             "knowledge": "Tim to được ghi nhận cùng suy tim, p = 0,30 [K2]. "
+                          "Suy tim là tim bơm yếu [K1]."}
+    got = Explainer(Chat(reply), Guard(3, 60), "explain", 1.0, index()).explain(facts, intents,
+                                                                                items)
+    whys = {d["why"] for d in got.dropped}
+    assert whys == {"combine not in the facts: any_of", "hedge of the cited item missing"}
+    assert got.summary == "Câu hỏi tìm suy tim." and got.knowledge.startswith("Suy tim")
