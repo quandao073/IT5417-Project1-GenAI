@@ -273,6 +273,7 @@ def cmd_eval_kg(args: argparse.Namespace) -> int:
     sample), score (layers 2-4, cost, latency, ablations, error analysis)."""
     from src.evaluation import kg_eval as ke
     from src.evaluation import kg_eval_run as kr
+    from src.kg.translate import Translator
 
     sys.stdout.reconfigure(encoding="utf-8")
     if args.split == "heldout" and not args.heldout_declared:
@@ -300,6 +301,12 @@ def cmd_eval_kg(args: argparse.Namespace) -> int:
         if "run" in phases:
             parts = _components(ecfg, ledger, key)
             t_text, t_sha = _prompt(ecfg, "translate_prompt")
+            search, caller = parts["search"], parts["translator"]
+            # B2 is the search without fusion (fusion_off; the fused runs are the grid), and its
+            # English is B0's, from the same cache (T44)
+            search.cfg["query"]["fusion"]["weight"] = 0
+            search.translator = Translator(lambda q: caller.call(
+                "b0_translate", t_text, t_sha, {"question": q}, q, kr.TRANSLATE_SCHEMA)["text"])
             runner = kr.Runner(rows=rows, split=args.split, ecfg=ecfg, work=work,
                                ledger=ledger, t_text=t_text, t_sha=t_sha,
                                **{k: parts[k] for k in (
@@ -360,6 +367,104 @@ def cmd_eval_kg(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_eval_kg_explain(args: argparse.Namespace) -> int:
+    """Layer 4, the value of the knowledge part (src/evaluation/kg_explain_pairs.py): each dev
+    question through the search as served (one search, two explanations on its results: with
+    knowledge, v4, and without, v3), then Opus compares the two blind on two criteria. The pairs
+    are kept in data/eval/explain_pairs_<split>.json and the verdicts cached, so a rerun only pays
+    for what is missing; the step stops at --max-usd."""
+    from src.api.routes.kg import explanation_event
+    from src.evaluation import kg_eval_run as kr
+    from src.evaluation import kg_explain_pairs as kp
+    from src.kg.llm_query import Explainer
+    from src.kg.translate import Translator
+
+    sys.stdout.reconfigure(encoding="utf-8")
+    ecfg = load_config("eval_kg")
+    lcfg, pcfg = ecfg["llm"], ecfg["eval"]["explain_pairs"]
+    work = Path(ecfg["benchmark"]["work_dir"])
+    key = Settings().anthropic_api_key
+    key = key.get_secret_value() if key else ""
+    if not key:
+        print("STOP: ANTHROPIC_API_KEY is not set", file=sys.stderr)
+        return 1
+    ledger = _ledger(ecfg)
+    start = ledger.total
+    rows = [r for r in kb.read_jsonl(Path(ecfg["benchmark"]["file"])) if r["split"] == args.split]
+    path = work / f"explain_pairs_{args.split}.json"
+    pairs = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    todo = [r for r in rows if r["id"] not in pairs]
+    if todo:
+        parts = _components(ecfg, ledger, key)
+        search, caller = parts["search"], parts["translator"]
+        t_text, t_sha = _prompt(ecfg, "translate_prompt")
+        search.translator = Translator(lambda q: caller.call(
+            "b0_translate", t_text, t_sha, {"question": q}, q, kr.TRANSLATE_SCHEMA)["text"])
+        e = search.explainer
+        if e is None or e.knowledge is None:
+            raise SystemExit("STOP: the search does not explain with knowledge (kg.yaml explain)")
+        v3_text = (default_config_dir() / load_config("models")["kg_llm"]["explain"]
+                   ["prompt_file"]).read_text(encoding="utf-8")
+        v3 = Explainer(e.client, e.guard, v3_text, e.timeout_s, e.index, None)
+        clients = {"b2_parse": getattr(search.parser.llm, "inner", search.parser.llm),
+                   "b2_choose": search.chooser.client, "b2_explain": e.client}
+        for row in todo:
+            before = {k: dict(c.usage) for k, c in clients.items()}
+            result = search.search(row["question"], top_k=ecfg["eval"]["top_k"])
+            record = {"question": row["question"], "group": row["group"],
+                      "studies": [r["study_id"] for r in result.rows]}
+            if result.rows and "fallback" not in result.trace:
+                facts, items = search.facts(result)
+                record["facts"] = facts
+                record["with"] = explanation_event(result, e.explain(facts, result.intents,
+                                                                     items))
+                plain = {k: v for k, v in facts.items() if k != "knowledge"}
+                record["without"] = explanation_event(result, v3.explain(plain, result.intents))
+            for name, client in clients.items():
+                ledger.add_client_delta(f"explain_pairs:{name}", client, before[name])
+            pairs[row["id"]] = record
+            path.write_text(json.dumps(pairs, ensure_ascii=False, indent=1), encoding="utf-8")
+            print(f"  {row['id']}: {record.get('with', {}).get('status')} / "
+                  f"{record.get('without', {}).get('status')}; {ledger.total - start:.2f} USD")
+    j_text, j_sha = _prompt(ecfg, "explain_judge_prompt")
+    judge = kg_llm.CachedCaller("explain_judge", lcfg["judge"], key,
+                                work / "llm_cache_explain_judge.jsonl", ledger)
+    verdicts = {}
+    for qid, rec in pairs.items():
+        ok = ("with" in rec and rec["with"]["status"] in ("ok", "partial")
+              and rec["without"]["status"] in ("ok", "partial"))
+        if not ok:
+            continue
+        if ledger.total - start > args.max_usd:
+            print(f"STOP: {args.max_usd} USD reached for this step", file=sys.stderr)
+            break
+        knowledge_is_b = kp.swapped(qid, pcfg["seed"])
+        a, b = kp.render(rec["without"]), kp.render(rec["with"])
+        if knowledge_is_b is False:
+            a, b = b, a
+        user = kp.user_message(rec["facts"], a, b)
+        answer = judge.call("explain_judge", j_text, j_sha,
+                            {"id": qid, "user": user}, user, kp.SCHEMA)
+        verdicts[qid] = {"knowledge_is_b": knowledge_is_b, "answer": answer,
+                         **{c: kp.outcome(answer, c, knowledge_is_b) for c in kp.CRITERIA}}
+    out = {"split": args.split, "prompt_sha256": j_sha, "judge": lcfg["judge"]["model"],
+           "pairs": len(pairs), "compared": len(verdicts),
+           "skipped": {qid: (rec.get("with") or {}).get("status", "text route or no result")
+                       for qid, rec in pairs.items() if qid not in verdicts},
+           "knowledge_is_b": sum(v["knowledge_is_b"] for v in verdicts.values()),
+           **{c: kp.tally([v[c] for v in verdicts.values()], pcfg["n_boot"], pcfg["seed"])
+              for c in kp.CRITERIA},
+           "verdicts": verdicts, "spent_usd": round(ledger.total - start, 4)}
+    (work / f"explain_pairs_{args.split}_verdicts.json").write_text(
+        json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
+    for c in kp.CRITERIA:
+        t = out[c]
+        print(f"{c}: with knowledge {t['wins']} wins / {t['losses']} losses / {t['ties']} ties; "
+              f"mean {t['mean']:+.3f} [{t['ci95'][0]:+.3f}; {t['ci95'][1]:+.3f}]")
+    print(f"spent {out['spent_usd']:.2f} USD this step; ledger {ledger.total:.2f}")
+    return 0
+
+
 def register(sub) -> None:
     e = sub.add_parser("eval-kg", help="V2-7: run, judge and score the KG benchmark on a split")
     e.add_argument("--split", choices=["dev", "heldout"], default="dev")
@@ -371,6 +476,12 @@ def register(sub) -> None:
     e.add_argument("--rerun", action="store_true", help="run again systems already on disk")
     e.add_argument("--limit", type=int, default=None, help="only the first N questions (a trial)")
     e.set_defaults(func=cmd_eval_kg)
+
+    x = sub.add_parser("eval-kg-explain",
+                       help="layer 4: explanations with and without knowledge, compared by Opus")
+    x.add_argument("--split", choices=["dev"], default="dev")
+    x.add_argument("--max-usd", type=float, default=3.0, help="stop this step at this spend")
+    x.set_defaults(func=cmd_eval_kg_explain)
 
     b = sub.add_parser("kg-bench-build", help="V2-7: write the KG benchmark and its gold")
     b.add_argument("--out", default=None)

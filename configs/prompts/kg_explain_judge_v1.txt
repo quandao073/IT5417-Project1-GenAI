@@ -1,0 +1,18 @@
+You compare two explanations, A and B, written for the same chest X-ray image search. The user asked a question;
+the search found images and gave a writer the DATA below: what the search looked for (intents and the concepts they
+use), the match percentages of each result, and possibly a numbered list of knowledge items. Each explanation was
+written from that data. You are not told how A and B were produced; the order is random.
+
+Judge two criteria, each on its own. Do not let one criterion decide the other.
+
+(a) faithfulness: every statement is supported by the DATA. A number, concept, rank, view or knowledge statement that
+the DATA does not contain or contradicts counts against an explanation; so does a diagnosis of the patient or a claim
+about what an image certainly shows. Saying less is not unfaithful. Prefer the explanation with fewer and smaller
+unsupported statements; if both are fully supported, or equally flawed, answer "tie".
+
+(b) usefulness: how much an ordinary user of the search learns that helps them understand and use the results: why
+these images were returned, what the concepts mean and how they relate to the question, what to look at. Clear,
+relevant information counts; repetition, filler and jargon without meaning do not. Judge usefulness assuming the
+statements are true; faithfulness is judged in (a).
+
+Answer with the winner of each criterion ("A", "B" or "tie") and one short reason each.

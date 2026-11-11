@@ -189,7 +189,86 @@ def test_a_question_the_graph_does_not_understand_is_ranked_by_text():
     assert "text_fallback" in codes(got) and "unrecognized" in codes(got)
     assert got.rows and got.rows[0]["row"] == len(matrix().study_ids) - 1
     assert got.trace["fallback"]["route"] == "text"
-    assert fb.encoder.texts == [got.query.semantic_query]       # no label: the free text
+    assert fb.encoder.texts == ["xyz qwerty"]       # no label: an English question as written
+
+
+def test_the_text_route_never_encodes_a_blank_or_quoted_empty_free_text():
+    """T44: the parser's free text was `""` (two quote marks) and that string was encoded."""
+    from src.kg.translate import Translator
+    from tests.kg.search_kit import matrix
+
+    for findings in ("", '""', "  "):
+        reply = parse_reply(terms=[("xyz qwerty", "PRESENT")], findings=findings)
+        fb = _fallback(matrix())                    # an English question: its own English
+        make_search(parser_chat=Chat(reply), text_fallback=fb).search("xyz qwerty")
+        assert fb.encoder.texts == ["xyz qwerty"]
+        fb = _fallback(matrix())                    # Vietnamese: the translation (B0's text)
+        got = make_search(parser_chat=Chat(reply), text_fallback=fb,
+                          translator=Translator(lambda q: "a mass in the lung")
+                          ).search("khối mờ ở phổi")
+        assert fb.encoder.texts == ["a mass in the lung"]
+        assert got.trace["fallback"]["text"] == "a mass in the lung"
+        for bad in ("", '""', "“”"):                 # an empty translation: the question
+            fb = _fallback(matrix())
+            make_search(parser_chat=Chat(reply), text_fallback=fb,
+                        translator=Translator(lambda q, b=bad: b)).search("khối mờ ở phổi")
+            assert fb.encoder.texts == ["khối mờ ở phổi"]
+
+
+def test_a_failed_translation_leaves_the_question_and_no_fusion():
+    from src.kg.translate import Translator
+    from tests.kg.search_kit import matrix
+
+    def boom(q):
+        raise LLMError("down")
+
+    fb = _fallback(matrix())
+    reply = parse_reply(include=["Cardiomegaly"])
+    got = make_search(parser_chat=Chat(reply), text_fallback=fb,
+                      translator=Translator(boom)).search("bóng tim to")
+    assert got.rows and "fusion" not in got.trace and fb.encoder.texts == []
+    assert got.trace["translation"]["error"].startswith("LLMError")
+
+
+def test_fusion_is_the_evaluated_one_and_weight_zero_is_the_kg_score():
+    import numpy as np
+
+    from src.evaluation import kg_eval as ke
+    from src.kg.translate import Translator
+    from tests.kg.search_kit import matrix
+
+    m = matrix()
+    reply = parse_reply(include=["Cardiomegaly"])
+    plain = make_search(parser_chat=Chat(reply), text_fallback=_fallback(m),
+                        fusion_weight=0).search("cardiomegaly", top_k=5)
+    assert "fusion" not in plain.trace
+    fb = _fallback(m)
+    got = make_search(parser_chat=Chat(reply), text_fallback=fb, fusion_weight=0.2,
+                      translator=Translator(lambda q: "big heart")).search("bóng tim to", top_k=5)
+    assert got.trace["fusion"] == {"weight": 0.2, "text": "big heart"}
+    vec = np.eye(len(m.study_ids), dtype="float32")[-1]
+    assert [r["study_id"] for r in got.rows] == ke.fuse(m, got.intents, fb.vectors, vec, 0.2, 5,
+                                                        ())
+
+
+def test_the_translation_runs_beside_the_parser():
+    from src.kg.translate import Translator
+    from tests.kg.search_kit import matrix
+
+    def slow(q):
+        time.sleep(0.3)
+        return "big heart"
+
+    class SlowChat(Chat):
+        def chat(self, *args, **kwargs):
+            time.sleep(0.3)
+            return super().chat(*args, **kwargs)
+
+    reply = parse_reply(include=["Cardiomegaly"])
+    started = time.perf_counter()
+    got = make_search(parser_chat=SlowChat(reply), text_fallback=_fallback(matrix()),
+                      translator=Translator(slow)).search("bóng tim to")
+    assert time.perf_counter() - started < 0.55 and got.timings["translate_ms"] >= 300
 
 
 def test_the_text_route_is_not_taken_when_something_wanted_was_scored_or_only_negated():

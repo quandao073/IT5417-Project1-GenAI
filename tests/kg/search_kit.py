@@ -59,8 +59,8 @@ class DownStore(FakeStore):
         return super().__getattribute__(name)
 
 
-def parse_reply(include=(), exclude=(), terms=(), views=()):
-    return {"findings": "", "include": [{"concept": c, "status": "PRESENT"} for c in include],
+def parse_reply(include=(), exclude=(), terms=(), views=(), findings=""):
+    return {"findings": findings, "include": [{"concept": c, "status": "PRESENT"} for c in include],
             "exclude": list(exclude), "views": list(views), "language": "vi",
             "terms": [{"text": t, "polarity": p} for t, p in terms]}
 
@@ -78,7 +78,8 @@ def index() -> GroundingIndex:
 
 
 def make_search(*, parser_chat=None, choose_chat=None, explain_chat=None, store="fake",
-                guard=None, timeout=1.0, text_fallback=None) -> KGSearch:
+                guard=None, timeout=1.0, text_fallback=None, translator=None,
+                fusion_weight=None) -> KGSearch:
     guard = guard or Guard(3, 60.0)
     rule = RuleParser(load_config("concepts"))
     pclient = GuardedClient(parser_chat, guard, timeout) if parser_chat else None
@@ -89,10 +90,13 @@ def make_search(*, parser_chat=None, choose_chat=None, explain_chat=None, store=
                  if explain_chat else None)
     store = FakeStore() if store == "fake" else store
     nodes = tiny_kg.nodes()
-    return KGSearch(cfg=load_config("kg"), matrix=matrix(), parser=parser, store=store,
+    cfg = load_config("kg")
+    if fusion_weight is not None:
+        cfg["query"]["fusion"]["weight"] = fusion_weight
+    return KGSearch(cfg=cfg, matrix=matrix(), parser=parser, store=store,
                     quality=tiny_kg.quality(), label_ids=LABEL_IDS,
                     names=dict(nodes.select("cui", "name").iter_rows()), chooser=chooser,
                     explainer=explainer, versions={"kg_build_id": "kg_test",
                                                    "matrix_version": "m@0", "build_id": "b"},
-                    text_fallback=text_fallback)
+                    text_fallback=text_fallback, translator=translator)
 

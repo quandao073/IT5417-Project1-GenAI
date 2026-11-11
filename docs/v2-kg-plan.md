@@ -61,7 +61,7 @@ Cả hai thư mục nằm dưới `data/` (gitignored). Không commit, không đ
 | Ma trận điểm | `data/indexes/image_scores/<build_id>_ext1/`: 37 cột (14 nhãn + 23 cột mở rộng, D62), hiệu chỉnh trên pool-val; `cxr kg-quality` → `quality.json` (6 cột yếu, D55) | Cột vòng hai (X-1) |
 | KG | `cxr kg-build-graph` → `data/kg/graph/`, `kg_build_id` **kg_1637d5c0ee06** (băm năm bảng KG; bảng ghi theo thứ tự cố định nên dựng lại hay sửa chú thích config không đổi id): 9.632 nút (lõi 595), IS_A 10.234, PART_OF 3.826, SUGGESTS 69, TYPICALLY_AT 579; độ nối D59 theo lượt nhắc 0,948; cạnh tay ở `graph.manual_edges` | 48 Disease lõi có lượt nhắc vẫn chưa có đường (`docs/v2-6-smoke.md`) |
 | Neo4j | service `neo4j` (profile `kg`), `cxr kg-load-neo4j`, `validate-indexes --kg` (D65) | — |
-| Truy vấn B2 | `cxr kg-query`, `POST /api/v1/search/kg` (D66–D69); parser, chooser, diễn giải đều dùng `claude-haiku-5-5`; smoke 24 câu ở `docs/v2-6-smoke.md` | Lỗi văn bản rỗng của fallback (T44, P21); N2 dao động quanh 1,5 s; CI (V2-11); UI chờ `pnpm` (T5) |
+| Truy vấn B2 | `cxr kg-query`, `POST /api/v1/search/kg` (D66–D69); parser, chooser, diễn giải đều dùng `claude-haiku-5-5`; smoke 24 câu ở `docs/v2-6-smoke.md` | Diễn giải v4 kém trung thực khi so cặp (P22); N2 dao động quanh 1,5 s; CI (V2-11); UI chờ `pnpm` (T5) |
 
 ## Các task
 

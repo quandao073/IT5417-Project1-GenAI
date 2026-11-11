@@ -418,8 +418,8 @@ Lượt heldout tốn ≈ 14,3 USD (run 0,14; judge 13,45; chấm chéo 0,70).
 | B1 | parse | 1.673 | 2.387 |
 | B0 | dịch | 1.049 | 1.933 |
 
-Muốn dùng cấu hình khóa trong API, phải thêm lượt dịch B0 cho câu VI và chạy nó song song với parser của B2. Code trong
-API hiện chưa trộn điểm.
+Muốn dùng cấu hình khóa trong API, phải thêm lượt dịch B0 cho câu VI và chạy nó song song với parser của B2. Việc này
+đã làm ở phiên D (mục *Sau heldout*).
 
 ### Error analysis heldout: 30 câu B2 thua B1 (không sửa gì theo phần này)
 
@@ -433,7 +433,7 @@ API hiện chưa trộn điểm.
 **Ba câu synonym_vi trả nDCG 0:** B2 không có intent nào. Alias VI chỉ được quét trên 63 bệnh có trong pool (D73), nên
 chỗ hổng này đúng như đã biết.
 
-**Lỗi tìm thấy sau lượt chạy (chưa sửa): đường văn bản mã hóa chuỗi `""`.**
+**Lỗi tìm thấy sau lượt chạy: đường văn bản mã hóa chuỗi `""`** (T44; đã sửa ở phiên D, mục *Sau heldout*; heldout không chạy lại).
 
 - Khi parser không nhận ra khái niệm nào, nó trả `semantic_query` là chuỗi `""`, tức đúng hai dấu nháy.
 - `TextFallback.text` mã hóa nguyên chuỗi đó. Kết quả đường văn bản vì vậy gần như ngẫu nhiên theo câu hỏi.
@@ -464,3 +464,124 @@ chỗ hổng này đúng như đã biết.
 3. Hai giới hạn của probe (D72): encoder FT6 đã thấy pool-train; λ và cổng cùng chọn trên pool-val.
 4. Judge là LLM. Kappa với Sonnet là 0,708, nhưng chưa có mẫu người chấm (P9; mẫu 100 cặp đã rút ở
    `data/eval/human_sample.csv`).
+
+## Sau heldout (phiên D, 2026-11-11): sửa T44, trộn điểm trong API, lớp 4 so cặp
+
+**Số chính thức vẫn là số heldout ở trên** (một lần, D24, D75), và không chạy lại heldout. Hệ đo ở heldout còn lỗi T44
+(đường văn bản mã hóa `""`), nên số heldout là **ước lượng thận trọng**: lỗi chỉ làm kém đi. Trên dev, sửa lỗi chỉ làm tăng
+điểm (xem dưới), nhưng điều này chưa được đo trên heldout.
+
+### Sửa T44 và trộn điểm trong API
+
+- Khi parser không nhận ra khái niệm nào, đường văn bản (D73) mã hóa **bản dịch EN của câu hỏi**, giống văn bản của B0
+  (`src/kg/translate.py`, prompt `kg_b0_translate_v1`).
+  - Câu EN thì dùng chính câu đó; chỉ câu có chữ riêng của tiếng Việt mới được dịch (luật của rule parser, khớp ngôn ngữ
+    của cả 172 câu).
+  - Bản dịch rỗng, chỉ có dấu nháy, hay lượt dịch hỏng thì dùng câu hỏi như người dùng viết.
+  - Không bao giờ mã hóa chuỗi rỗng hay `""`: `tests/kg/test_pipeline.py` kiểm cả hai trường hợp.
+- `KGSearch` trộn điểm đúng cấu hình đã khóa: `z(KG) + 0,2 · z(cos CLIP của bản EN)` (`kg.yaml: query.fusion.weight`).
+  - Hàm trộn `text_fallback.fuse` dùng chung với eval, có test cho thấy hai bên ra cùng thứ hạng.
+  - Lượt dịch Haiku chạy song song với parser. Dịch hỏng thì không trộn và không gây lỗi.
+  - Câu đi đường văn bản thì giữ đường văn bản, không trộn. Eval cũng theo đúng luật này. Ở heldout, lượt chạy chính còn
+    trộn cả 2 câu đi đường văn bản chỉ có loại trừ (narrower-17, broader-08).
+- Eval chạy B2 với `weight 0` (= `fusion_off`), và tính lưới trộn từ B2 như trước. Bản dịch lấy từ cache dịch của B0, nên
+  giống hệt văn bản B0.
+
+### N1 trên smoke 24 câu (`docs/v2-6-smoke.txt`)
+
+Cách đo: `cxr kg-query`, mỗi câu một lượt tuần tự, Neo4j local, có trộn và có encoder. Trước khi đo, một lượt đã bị loại
+vì Neo4j chưa chạy.
+
+| bước | p50 (ms) | p95 (ms) | max (ms) |
+|---|---|---|---|
+| parse | 1.760 | 2.327 | 2.426 |
+| dịch (11 câu VI, chạy song song) | 1.339 | 1.738 | 1.787 |
+| chờ dịch sau parse | 0 | 0 | 431 |
+| labels | 5 | 17 | 22 |
+| terms | 181 | 2.232 | 2.414 |
+| chấm + trộn | 32 | 42 | 46 |
+| **N1 tổng (chưa tính diễn giải)** | **2.221** | **4.018** | 4.186 |
+| diễn giải, token đầu (N2) | 1.311 | 1.736 | 1.822 |
+| diễn giải, toàn bộ | 3.436 | 4.567 | 4.998 |
+
+- Cả 24 câu đều được trộn. Không câu nào đi đường văn bản, không lượt dịch nào lỗi. Diễn giải: 22 ok, 2 partial.
+- Phần trộn thêm vào đường găng: chờ dịch p95 0 ms (tối đa 431 ms, ở 1 câu) và khoảng 30 ms để mã hóa và trộn.
+- N1 vẫn dưới 5 s. Nó cao hơn lượt smoke i (p50 1,45 s, p95 2,94 s); phần chênh chủ yếu đến từ độ trễ mạng của parser và
+  chooser, không đến từ trộn.
+
+### Dev sau T44 (72 câu)
+
+Cách đo:
+
+- `cxr eval-kg --split dev --phase run --systems B2 --rerun`: chạy lại B2 và hai ablation tìm kiếm; B0, B1, Tham chiếu giữ
+  nguyên.
+- Rồi pha judge và pha score. Cùng judge Opus `kg_judge_v1`, cùng cache, chỉ chấm cặp mới: 103 cặp.
+- Pool đổi, nên mẫu chấm chéo được rút lại: 281 cặp, kappa 0,683.
+- Số trước khi sửa ở `data/eval/*.before_t44.*`.
+
+| nhóm | n | B0 | B1 | B2 | **B2 + trộn** | Tham chiếu |
+|---|---|---|---|---|---|---|
+| tất cả | 72 | 0,400 | 0,420 | 0,506 | **0,524** | 0,631 |
+| control | 9 | 0,448 | 0,735 | 0,766 | 0,774 | 0,867 |
+| synonym_vi | 9 | 0,391 | 0,371 | 0,477 | 0,450 | 0,430 |
+| narrower | 9 | 0,590 | 0,466 | 0,514 | 0,588 | 0,709 |
+| broader | 9 | 0,327 | 0,266 | 0,326 | 0,347 | 0,707 |
+| disease | 9 | 0,320 | 0,443 | 0,351 | 0,335 | 0,512 |
+| negation_broad | 9 | 0,287 | 0,485 | 0,615 | 0,582 | 0,740 |
+| anatomy | 9 | 0,499 | 0,256 | 0,390 | 0,472 | 0,664 |
+| new_column | 9 | 0,336 | 0,341 | 0,608 | 0,647 | 0,420 |
+
+- Trước khi sửa: B2 0,470, B2 + trộn 0,503.
+- **Hiệu:** B2 + trộn − B1 +0,104 [+0,040; +0,169]; B2 − B1 +0,086 [+0,023; +0,150]; trộn − B2 +0,018 [−0,008; +0,045].
+- `probe_off` − B2: −0,003 [−0,033; +0,024].
+- **Mức tăng đến từ đâu.** B2 tăng +0,036 trên trung bình 72 câu. Phần này chia ra:
+  - 9 câu đi đường văn bản: +0,029.
+  - 5 câu parser cho intents khác: +0,002 (T18).
+  - 58 câu còn lại: +0,004, vì pool lý tưởng đổi khi có cặp mới. Cùng lý do đó, B0 0,396 → 0,400 và B1 0,419 → 0,420.
+- Cả 9 câu đường văn bản giờ mã hóa câu EN thật, ví dụ synonym_vi-05 "PA chest film with scars in the lungs"; trước đó 5 câu
+  mã hóa `""`.
+- Dev vẫn lạc quan vì đã dùng để chỉnh (giới hạn 1).
+- Lớp 2 B2: CUI đúng 0,712, F1 cột 0,731. Lớp 4 kiểm căn cứ: v4 99,34 % câu có căn cứ, v3 99,60 %.
+
+### Lớp 4: phần kiến thức có đáng giá không (so cặp, dev)
+
+Cách đo: `cxr eval-kg-explain` (`src/evaluation/kg_explain_pairs.py`).
+
+- Mỗi câu dev qua search đúng như khi phục vụ, một lần. Trên cùng kết quả, viết hai diễn giải: có knowledge (v4) và không
+  (v3).
+- Opus (cùng model và tham số với judge, prompt `kg_explain_judge_v1`) xem facts mà bên viết nhận được (bản có các mục
+  knowledge) và hai bản A / B. Thứ tự xáo theo câu (seed 20261111); bản có knowledge là B ở 25 / 63 cặp.
+- Hai tiêu chí chấm riêng trong cùng một lượt gọi: (a) trung thực với dữ liệu được cung cấp, (b) hữu ích cho người dùng.
+- 63 cặp; 9 câu đi đường văn bản không có diễn giải.
+- Bootstrap 10.000 lần theo câu. Chi phí 1,58 USD (Opus 1,50, pipeline 0,08).
+
+| tiêu chí | thắng / thua / hòa (bản có knowledge) | trung bình (+1 / 0 / −1) | tỉ lệ thắng (hòa tính nửa) |
+|---|---|---|---|
+| (a) trung thực | 8 / 24 / 31 | −0,254 [−0,413; −0,095] | 0,37 [0,29; 0,45] |
+| (b) hữu ích | 61 / 2 / 0 | +0,937 [+0,841; +1,000] | 0,97 [0,92; 1,00] |
+
+- **Phần kiến thức làm diễn giải hữu ích hơn hẳn** (61 / 63), **nhưng kém trung thực hơn**: CI không chứa 0, ở mọi nhóm.
+- Lý do Opus nêu ở 24 câu thua: bản v4 hay mô tả sai cách chấm điểm ("any_of", "weighted", "best fit" khi facts ghi
+  `single`), cho khoảng phần trăm hở (bỏ sót kết quả ngoài khoảng), hoặc nói chắc hơn mục K# (bỏ chữ "thường").
+- Bộ kiểm căn cứ (D71) không bắt các lỗi này. Nó chỉ kiểm con số có trong facts, khái niệm có trong facts, và trích dẫn;
+  không kiểm cách chấm, khoảng số hay độ chắc chắn. Vì vậy tỉ lệ "có căn cứ" 99 % không đo được loại lỗi này.
+- Hướng sửa (chưa làm): kiểm khoảng số theo facts, cấm nhắc `combine` trong prompt v4, rồi đo lại bằng chính lệnh này.
+- Giới hạn của phép so:
+  - Bản có knowledge lộ ra vì có thêm đoạn K#, nên "mù" chỉ ở chỗ không gắn nhãn.
+  - Judge là LLM, chưa có người chấm.
+  - Chỉ chấm trên dev.
+
+### Đọc kết quả
+
+- **Tham chiếu chỉ là trần thật ở nhóm control.** Tham chiếu lọc study theo nhãn CheXpert của gold. Với khái niệm ngoài 14
+  nhãn, nó không lọc gì và chỉ xếp bằng cosine của `query_en`.
+  - Trên 172 câu, Tham chiếu có lọc ở 22 / 22 câu control và 19 / 21 câu negation_broad, nhưng chỉ ở 2 / 21 câu new_column,
+    7 / 22 câu disease và 10 / 22 câu anatomy.
+  - Ở new_column, anatomy và disease, nó không phải trần. Vì vậy B2 vượt Tham chiếu ở new_column (dev 0,647 so với 0,420) và
+    anatomy (heldout 0,538 so với 0,441).
+- **Trộn điểm.** Lợi trên dev lượt 2 (+0,033 [+0,006; +0,062]) **không tái lập trên heldout**: +0,015 [−0,018; +0,045], CI
+  chứa 0. Sau T44, trên dev cũng chỉ còn +0,018 [−0,008; +0,045]. Vẫn triển khai trộn trong API, vì đó là cấu hình đã khóa và
+  đã được đánh giá (D75), và trộn không làm hại.
+- **B1 − B0 ≈ 0 trên heldout** (+0,004 [−0,046; +0,055]; dev +0,021 [−0,073; +0,112]). Parser cùng câu mẫu không giúp hơn
+  dịch thô. Mức hơn của B2 so với B1 (heldout +0,123) đến từ KG và ma trận điểm, không từ parser: `probe_off` −0,071 và các
+  route KG đều có lợi trên heldout.

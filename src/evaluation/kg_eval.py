@@ -293,21 +293,17 @@ def rescore(matrix, intents, k: int, views: Sequence[str], fallback=None,
     return [matrix.study_ids[r] for r in matrix.top_k(scores, k, tuple(views))]
 
 
-def zscore(x: np.ndarray) -> np.ndarray:
-    x = np.asarray(x, dtype=np.float64)
-    sd = x.std()
-    return (x - x.mean()) / (sd if sd > 0 else 1.0)
-
-
 def fuse(matrix, intents, vectors: np.ndarray, text_vec: np.ndarray, w: float, k: int,
          views: Sequence[str]) -> list[str] | None:
     """z(KG score) + w z(cosine with the text), each over the whole corpus for this question,
-    top k after the view filter; None when the KG scores nothing (the run keeps its studies)."""
+    top k after the view filter; None when the KG scores nothing (the run keeps its studies).
+    The search fuses with the same `text_fallback.fuse` (D75)."""
+    from src.kg.text_fallback import fuse as fused
+
     if not any(i.columns for i in intents):
         return None
-    kg = zscore(score_with_max(matrix, intents))
     cos = vectors @ (text_vec / (np.linalg.norm(text_vec) or 1.0)).astype(np.float32)
-    total = (kg + w * zscore(cos)).astype(np.float32)
+    total = fused(score_with_max(matrix, intents), cos, w)
     return [matrix.study_ids[r] for r in matrix.top_k(total, k, tuple(views))]
 
 

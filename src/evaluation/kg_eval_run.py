@@ -158,12 +158,13 @@ class Runner:
                "labels": [c.concept for c in result.query.include] + list(result.query.exclude),
                "fallback": result.trace.get("fallback")}
         if self.search.text_fallback is not None:     # what the text route would encode (D73)
-            out["fallback_text"] = self.search.text_fallback.text(result.query)
+            out["fallback_text"] = self.search.text_fallback.text(
+                result.query, result.trace.get("english"), row["question"])
         if explain:
             from src.api.routes.kg import explanation_event
 
-            keys = ("status", "summary", "images", "dropped", "first_token_ms", "total_ms",
-                    "error")
+            keys = ("status", "summary", "images", "knowledge", "citations", "dropped",
+                    "first_token_ms", "total_ms", "error")
             t = time.perf_counter()
             event = explanation_event(result, self.search.explain(result))
             out["explanation"] = {k: event.get(k) for k in keys}
@@ -263,8 +264,9 @@ class Runner:
 
     def run_fusion(self) -> None:
         """The declared grid (eval.fusion): B2's KG score fused with the CLIP cosine of B1's
-        caption or of B0's English text; a question the KG scores nothing keeps B2's studies, a
-        question without that text keeps them too (w = 0)."""
+        caption or of B0's English text; a question the KG scores nothing, or that B2 ranked by
+        text (the search's rule), keeps B2's studies, a question without that text keeps them
+        too (w = 0)."""
         fcfg = self.ecfg["eval"]["fusion"]
         matrix, vectors = self.search.matrix, self.search.text_fallback.vectors
         for source in fcfg["sources"]:
@@ -275,7 +277,7 @@ class Runner:
                     b2 = self.runs["B2"][row["id"]]
                     text = self.runs[{"b1": "B1", "b0": "B0"}[source]][row["id"]].get("text")
                     got = None
-                    if text:
+                    if text and not b2.get("fallback"):
                         got = ke.fuse(matrix, [intent_from_dict(d) for d in b2["intents"]],
                                       vectors, self._vec(text), w, self.k, b2["views"])
                     self.runs[name][row["id"]] = {

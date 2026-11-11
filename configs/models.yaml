@@ -166,4 +166,8 @@ kg_llm:
   explain: {model: claude-haiku-5-5, timeout_seconds: 15, max_tokens: 1500,
             prompt_file: prompts/kg_explain_v3.txt,
             knowledge_prompt_file: prompts/kg_explain_v4.txt}   # kg.yaml explain.knowledge: true
+  # The English of a Vietnamese question for the text route and score fusion (kg.yaml query.fusion; WORKLOG D74, T44):
+  # B0's prompt, run beside the parser.
+  translate: {model: claude-haiku-5-5, timeout_seconds: 3, max_tokens: 1024,
+              prompt_file: prompts/kg_b0_translate_v1.txt}
   breaker: {failures: 3, cooldown_seconds: 60}
