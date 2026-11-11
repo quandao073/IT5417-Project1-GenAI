@@ -1041,6 +1041,32 @@ sai lẽ ra nên bị loại.
   kg_1637d5c0ee06; thêm một cạnh `manual` thử thì ra kg_4329bbb527ae; khôi phục config thì về kg_1637d5c0ee06. Neo4j đã nạp
   kg_1637d5c0ee06, cạnh và độ nối như lượt i (IS_A 10.234, SUGGESTS 69, D59 0,948).
 
+## Đánh giá KG trên dev (đo 2026-11-10, V2-7; bảng đầy đủ ở `docs/kg-evaluation.md`)
+
+**Cách đo:** `uv run cxr kg-bench-build` (72 câu, gold `claude-opus-5-5`, duyệt `claude-sonnet-5-5`, kiểm bằng
+`expand_concepts` trên Neo4j `kg_1637d5c0ee06`), rồi `uv run cxr eval-kg --phase run|judge|score` trên 36 câu dev. B0/B1/Tham
+chiếu là cosine in-process trên vector shard của build `20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1`; B2 là `KGSearch`
+in-process. Judge `claude-opus-5-5` (prompt `kg_judge_v1.txt`) chỉ đọc câu hỏi, `query_en`, findings/impression; luật view
+khai báo trước. Bootstrap 10.000 lần theo câu, seed 20261110. Chi phí cộng từ `usage` theo bảng giá `configs/eval_kg.yaml`.
+
+- Bộ câu: 72 câu (36 EN / 36 VI), dev 36 (19 EN / 17 VI); `gold_disputed` 1 (ở heldout); kiểm tự động: graph lệch gold ở 31 / 72
+  câu (14 / 36 dev). sha256 file `bbdc7095…`, dòng heldout `6b7b47468cf52fa24a5d041c4d62bc65fe7f41241e8c93a9656dfefd02d0eef0`.
+- Judge: 1.000 cặp, điểm 0 / 1 / 2 = 367 / 252 / 381. Chấm chéo Sonnet 99 cặp: đồng thuận 0,798, kappa 0,702, kappa bậc hai 0,833.
+- **nDCG@10:** B0 0,396 · B1 0,512 · **B2 0,541** · Tham chiếu (đọc nhãn) 0,663. P@10: 0,250 · 0,328 · 0,369 · 0,436.
+  excl-viol@10: 0,088 · 0,025 · 0,000 · 0,000. Không kết quả: B2 4 / 36, các hệ khác 0.
+- **B2 − B1** nDCG@10 +0,029 [−0,065; +0,114] (18 thắng / 9 thua / 9 hòa); P@10 +0,042 [−0,019; +0,103]. **B1 − B0** nDCG@10
+  +0,116 [−0,009; +0,245]. Tham chiếu − B2 +0,122 [0,000; +0,242].
+- Lớp 2 (B2): CUI đúng 0,588, tập cột khớp hoàn toàn 0,472, F1 tập cột 0,676, đủ cảnh báo kỳ vọng 0,389.
+- Lớp 4 (`kg_explain_v3`): 30 ok, 2 partial, 4 no_results; 384 câu diễn giải, 99,48 % có căn cứ, 2 câu bị loại (cả 2 vì ngôn ngữ
+  chẩn đoán).
+- Ablation (hiệu nDCG@10 với B2): tắt hẹp hơn −0,054 [−0,111; −0,008]; tắt rộng hơn −0,053 [−0,126; −0,003]; tắt bệnh −0,015
+  [−0,044; 0]; tắt vị trí 0; SUGGESTS đều 0; gộp max +0,006 [0; +0,019]; lookup tất định +0,030 [−0,017; +0,093]; SapBERT tắt
+  −0,008 [−0,037; +0,012].
+- B2 thua B1 ở 9 / 36 câu: mở rộng 5, parse/lookup 4 (cụm bệnh tiếng Việt không có alias: 2 câu trả trắng).
+- Độ trễ B2 (tìm, chưa diễn giải): p50 3,08 s, p95 4,25 s; diễn giải p50 2,63 s, p95 4,20 s. B1 parse p50 1,46 s, p95 2,05 s.
+- Chi phí mỗi 1.000 câu: B0 0,02 USD, B1 0,15, B2 tìm 0,28 (1,75 lượt LLM mỗi câu), B2 diễn giải 0,40. Chi phí phiên đo (gồm soạn
+  gold 1,66, duyệt 0,13, judge 2,84, chấm chéo 0,18): 4,85 USD.
+
 ## Diễn giải theo tri thức KG (đo 2026-11-10, nhánh `feat/kg-knowledge-explanation`)
 
 - **Tập khái niệm** (`knowledge.concept_set`, kg_1637d5c0ee06): 298 = 37 cột scorable, 20 Disease có cột bên dưới

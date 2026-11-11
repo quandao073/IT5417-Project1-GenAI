@@ -17,8 +17,8 @@ ghi vào `docs/measured-facts.md`, quyết định vào `WORKLOG.md`. Ngưỡng 
 | V2-4 | Mở rộng có kiểm soát; trọng số `SUGGESTS`, `TYPICALLY_AT` trên pool | V2-3 | ✅ |
 | V2-5c | Mở rộng ma trận điểm ngoài 14 nhãn (khái niệm lõi có lượt nhắc lớn) | V2-4 | ✅ |
 | V2-6 | Neo4j, bốn tool, LLM chọn khái niệm và diễn giải; B2 chạy end-to-end | V2-4, V2-5 | ✅ 2026-11-05 (D65, D66) |
-| V2-7 | Benchmark và pooling | V2-6, V2-5b | ⏳ |
-| V2-8 | Đánh giá chính thức, heldout một lần | V2-7 | ⏳ |
+| V2-7 | Benchmark và pooling | V2-6, V2-5b | 🔄 dev xong 2026-11-10 (D70); heldout chờ duyệt gold (P9) |
+| V2-8 | Đánh giá chính thức, heldout một lần | V2-7 | 🔄 ablation, error analysis trên dev xong; heldout chưa chạy |
 | V2-9 | Agent (ablation) và UI | V2-8; UI chờ `pnpm` (T5) | ⏳ |
 | V2-10 | Thêm ảnh không dựng lại KG: embed rồi nối logit vào ma trận bằng probe đã có (N6) | V2-6 | ⏳ |
 | V2-11 | CI: pytest + ruff mỗi lần push (N12) | — | ⏳ |
@@ -35,7 +35,7 @@ Ngoài V2 (chưa xếp lịch):
 38 Disease lõi chưa có đường và có dưới 50 lượt nhắc trên pool (danh sách ở `data/kg/graph/diseases_without_route.json`;
 sau khi thêm cạnh của lượt rà đường còn 37): không chấm được, không phân xử thêm trong V2.
 
-**TIẾP THEO:** V2-7. B2 chạy end-to-end (`cxr kg-query`, `POST /api/v1/search/kg`; D66); ma trận 37 cột (D62); parser dùng `claude-haiku-5-5` (D61). TIP nằm ở `notes/tip-*.md` (gitignored).
+**TIẾP THEO:** duyệt gold heldout (P9), rồi chạy heldout một lần (`docs/kg-evaluation.md`, *Chạy heldout*); song song: alias tiếng Việt cho bệnh, cạnh graph của xơ phổi và chấn thương (error analysis). B2 chạy end-to-end (`cxr kg-query`, `POST /api/v1/search/kg`; D66); ma trận 37 cột (D62); parser dùng `claude-haiku-5-5` (D61). TIP nằm ở `notes/tip-*.md` (gitignored).
 
 ## Dữ liệu
 
@@ -61,7 +61,7 @@ Cả hai thư mục nằm dưới `data/` (gitignored). Không commit, không đ
 | Ma trận điểm | `data/indexes/image_scores/<build_id>_ext1/`: 37 cột (14 nhãn + 23 cột mở rộng, D62), hiệu chỉnh trên pool-val; `cxr kg-quality` → `quality.json` (6 cột yếu, D55) | Cột vòng hai (X-1) |
 | KG | `cxr kg-build-graph` → `data/kg/graph/`, `kg_build_id` **kg_1637d5c0ee06** (băm năm bảng KG; bảng ghi theo thứ tự cố định nên dựng lại hay sửa chú thích config không đổi id): 9.632 nút (lõi 595), IS_A 10.234, PART_OF 3.826, SUGGESTS 69, TYPICALLY_AT 579; độ nối D59 theo lượt nhắc 0,948; cạnh tay ở `graph.manual_edges` | 48 Disease lõi có lượt nhắc vẫn chưa có đường (`docs/v2-6-smoke.md`) |
 | Neo4j | service `neo4j` (profile `kg`), `cxr kg-load-neo4j`, `validate-indexes --kg` (D65) | — |
-| Truy vấn B2 | `cxr kg-query`, `POST /api/v1/search/kg` (D66–D69); parser, chooser, diễn giải đều dùng `claude-haiku-5-5`; smoke 24 câu ở `docs/v2-6-smoke.md` | Benchmark V2-7; N2 dao động quanh 1,5 s; CI (V2-11); UI chờ `pnpm` (T5) |
+| Truy vấn B2 | `cxr kg-query`, `POST /api/v1/search/kg` (D66–D69); parser, chooser, diễn giải đều dùng `claude-haiku-5-5`; smoke 24 câu ở `docs/v2-6-smoke.md` | Heldout V2-8 (chờ duyệt gold); N2 dao động quanh 1,5 s; CI (V2-11); UI chờ `pnpm` (T5) |
 
 ## Các task
 
@@ -175,6 +175,9 @@ Disease chờ phân xử, 4 là ứng viên cột vòng hai; N2 p95 1,51 s.
 
 ### V2-7 · Benchmark và pooling
 
+- **Dev xong 2026-11-10** (D70, `docs/kg-evaluation.md`): 72 câu, gold Opus + duyệt Sonnet; pool 1.000 cặp, judge Opus,
+  kappa với Sonnet 0,702; nDCG@10 B0 0,396 · B1 0,512 · B2 0,541 · Tham chiếu 0,663; B2 − B1 +0,029 [−0,065; +0,114].
+
 60–80 câu EN/VI, chia dev và heldout. Các nhóm: đồng nghĩa và tiếng Việt, khái niệm hẹp hơn, rộng hơn, bệnh không thấy
 trực tiếp, phủ định khái niệm rộng, vị trí giải phẫu, cộng nhóm đối chứng. Pooling: hợp top-10 của B0–B3, LLM chấm trên
 chữ report, người chấm một mẫu để báo Cohen's kappa.
@@ -184,6 +187,9 @@ chữ report, người chấm một mẫu để báo Cohen's kappa.
 Bốn lớp của thiết kế (chất lượng KG, hiểu câu hỏi, end-to-end, diễn giải). Heldout chạy một lần, có khai báo (D24);
 error analysis theo nhóm câu; các ablation của thiết kế.
 
+Diễn giải theo tri thức KG (WORKLOG D71, nhánh `feat/kg-knowledge-explanation`): gloss 298 khái niệm, phần "kiến thức
+liên quan" dẫn [K#], cờ `explain.knowledge` cho ablation lớp 4 của V2-8. Chờ: phân xử `definitions_review.csv` (P20).
+
 ### V2-9 · Agent và UI
 
 Agent tự gọi tool (ablation, tối đa 5 lượt). UI hiển thị đường đi, diễn giải và cảnh báo; chờ `pnpm` (T5).
@@ -192,8 +198,3 @@ Agent tự gọi tool (ablation, tối đa 5 lượt). UI hiển thị đường
 
 Theo CLAUDE.md §6: mỗi task một nhánh tách từ `main`, đặt tên theo công việc, PR nhỏ, merge commit. Commit khi người
 dùng bảo.
-
-## Ghi nối 2026-11-10
-
-Diễn giải theo tri thức KG (WORKLOG D70, nhánh `feat/kg-knowledge-explanation`): gloss 298 khái niệm, phần "kiến thức
-liên quan" dẫn [K#], cờ `explain.knowledge` cho ablation lớp 4 của V2-8. Chờ: phân xử `definitions_review.csv` (P20).

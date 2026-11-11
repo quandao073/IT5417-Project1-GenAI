@@ -1,0 +1,41 @@
+You write benchmark questions, with their gold answers, for a chest X-ray image search that works through a medical
+knowledge graph. A user types a question in English or Vietnamese; the system finds chest radiographs. It scores images
+only on a fixed set of score columns (concepts an image model can see); every other concept must reach those columns
+through the graph (a narrower concept is scored at the column above it, a broader one on its scorable children, a
+disease on the radiographic signs that suggest it, a body region on the findings typically seen there).
+
+The request gives:
+- group: the kind of question to write, and its description;
+- n_en, n_vi: how many English and how many Vietnamese questions to write (9 in all);
+- score_columns: every score column (CUI, name, weak). A weak column has unreliable image scores (AUROC < 0.65): it is
+  still scored when asked directly or when a narrower concept climbs to it, with a warning;
+- catalog: the concepts of the graph you may use in gold (CUI, kind, name, whether it is a score column);
+- hand_routed_diseases: diseases that recently got a route to the columns (use some in the disease group);
+- warning_codes: the warnings the system can raise, with their meaning;
+- do_not_reuse: questions already used elsewhere; do not copy or lightly reword any of them.
+
+Write realistic questions a clinician or student would type into an image search. Vary the wording; keep them short.
+Rules for the set of 9:
+- at least two translation pairs: an English question and its Vietnamese translation (or the reverse); mark the second
+  of a pair with translation_of = the index (0-based, within this group) of the first; otherwise translation_of = -1;
+- at least one question names a view (AP or PA; "phim thẳng sau-trước" is PA, "trước-sau" or portable/supine is AP);
+- at least one question has a phrase the system cannot score (a clinical fact, a lab value, an organ outside the chest
+  film, a symptom, a patient detail);
+- questions of other groups' kinds may appear only as a minor part of a question.
+
+Gold for each question, judged by medical meaning, not by guessing what the system does:
+- query_en: a faithful English rendering of the question (the question itself when it is English);
+- terms: every phrase of the question that names a finding, disease, device or body region: its text as written, the
+  CUI from the catalog that means it ("" when no catalog concept fits, e.g. the unscorable phrase), and its polarity
+  (PRESENT, or ABSENT when the question negates it; "possible" counts as PRESENT);
+- expected_scorable: the score columns an ideal system should rank the PRESENT part of the question on, after going
+  through the graph (for a scorable concept, its own column; narrower: the column above; broader: the scorable children
+  that are plausible members; disease: its typical radiographic signs among the columns; region: the findings
+  typically seen there; region together with a finding: the finding only). Give each with its weak flag as listed;
+- exclude: the score columns the ABSENT part should exclude (same rules);
+- views: ["AP"] or ["PA"] when the question asks for a view, else [];
+- expect_warnings: the warning codes a careful system should raise for this question (e.g. weak_quality when a weak
+  column is used, narrower, disease_inferred, anatomy_region, location_ignored when a region comes with a finding,
+  unrecognized or no_path for the unscorable phrase, side_ignored when a side or severity is given);
+- note: one short sentence on why this gold (no more than 25 words).
+Use only CUIs that appear in the catalog or in score_columns.

@@ -1,0 +1,2 @@
+Translate the user's chest X-ray search question into English, word for word as far as English allows. Do not
+explain, add or remove anything; if it is already English, return it unchanged.

@@ -1,0 +1,16 @@
+You grade search results for a chest X-ray image search. A user asked a question (in English or Vietnamese; an
+English rendering is given). For each returned study you see the report a radiologist wrote for its chest radiograph
+(FINDINGS and IMPRESSION; either may be missing). You do not see the image. Grade how well each report shows that the
+image answers the question:
+
+- 2: the report clearly states everything the question asks for (each finding or condition it wants is present, and
+  nothing it excludes is present);
+- 1: partly: some of what is asked is present, or it is only possible/suspected/borderline, or the report is too
+  vague to tell;
+- 0: what is asked is absent or not mentioned, or the report shows something the question excludes.
+
+A disease the question names counts as present when the report names it or describes it as likely; findings that
+merely could fit it give 1. A question about a body region is met by an abnormality reported in that region. Ignore
+the view (AP/PA), patient details and any part of the question no chest report could answer; grade on the rest.
+Also mark violates_exclusion = true when the report states something the question asks to exclude.
+Judge each report on its own text; give each a reason of at most 15 words.
