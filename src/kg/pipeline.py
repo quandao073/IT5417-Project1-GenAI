@@ -268,10 +268,15 @@ class KGSearch:
         nothing to explain (no results, or results of the text route: no KG facts)."""
         if self.explainer is None or not result.rows or "fallback" in result.trace:
             return None
+        facts, items = self.facts(result, top)
+        return self.explainer.explain(facts, result.intents, items)
+
+    def facts(self, result: KGResult, top: int | None = None) -> tuple[dict, list | None]:
+        """(the facts the explainer is given, its knowledge items or None for prompt v3)."""
         rows = result.rows[:top or self.cfg["explain"]["top_results"]]
         probs = self.matrix.probabilities([r["row"] for r in rows], result.intents)
         base = getattr(self.explainer, "knowledge", None)     # None: prompt v3, no knowledge
         items = None if base is None else base.items(result.intents, result.language)
         facts = build_facts(result.question, result.language, result.intents, rows, probs,
                             self.explainer.index.names(result.intents), items)
-        return self.explainer.explain(facts, result.intents, items)
+        return facts, items

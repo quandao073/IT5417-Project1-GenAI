@@ -163,8 +163,8 @@ class Runner:
         if explain:
             from src.api.routes.kg import explanation_event
 
-            keys = ("status", "summary", "images", "dropped", "first_token_ms", "total_ms",
-                    "error")
+            keys = ("status", "summary", "images", "knowledge", "citations", "dropped",
+                    "first_token_ms", "total_ms", "error")
             t = time.perf_counter()
             event = explanation_event(result, self.search.explain(result))
             out["explanation"] = {k: event.get(k) for k in keys}

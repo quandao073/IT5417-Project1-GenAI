@@ -1235,3 +1235,42 @@ kg_32e035ed37b0, ma trận `..._ext1_probe1@e878b151d823`, gold heldout sha256 `
   99,72 %.
 - Độ trễ B2 (tìm): p50 2,47 s, p95 4,47 s; diễn giải p50 3,48 s, p95 4,70 s; dịch B0 p50 1,05 s.
 - Chi phí lượt heldout 14,29 USD (judge 13,45, chấm chéo 0,70, pipeline 0,14). Ledger 14,552 → 28,845.
+
+## Sau heldout: T44, trộn trong API, lớp 4 so cặp (đo 2026-11-11, phiên D)
+
+**Cách đo:**
+
+- **N1:** `uv run cxr kg-query --file docs/v2-6-smoke.txt --out data/kg/smoke/v2-6j.jsonl`, có encoder (đường văn bản và
+  trộn), Neo4j local kg_32e035ed37b0, mỗi câu tuần tự.
+- **Dev:** `uv run cxr eval-kg --split dev --phase run --systems B2 --rerun`, rồi `--phase judge` và `--phase score`
+  (judge Opus `kg_judge_v1`, cache dùng chung). `data/eval/metrics_dev.json` sha256
+  `bb7ddec5c3ea72dd423471c01934e1c4b790892bc80b824ee0615e11290792a6`.
+- **Lớp 4:** `uv run cxr eval-kg-explain` (prompt `kg_explain_judge_v1`, Opus, seed 20261111, bootstrap 10.000).
+  `data/eval/explain_pairs_dev_verdicts.json` sha256 `dbb64e3ee4d7bc16b018930eaa1562232663dc6fbac19d24e4900ac6a3b386e7`.
+
+**N1 (24 câu):**
+
+- Tổng p50 2.221 ms, p95 4.018 ms, max 4.186 ms.
+- Theo bước: parse p50 1.760 / p95 2.327 ms; dịch (11 câu VI, song song) p50 1.339 / p95 1.738 ms; chờ dịch sau parse
+  p95 0 ms, max 431 ms; terms p95 2.232 ms; chấm + trộn p95 42 ms.
+- N2 token đầu p50 1.311 ms, p95 1.736 ms.
+- 24 / 24 câu được trộn, 0 lỗi dịch, 0 câu đi đường văn bản. Diễn giải: 22 ok, 2 partial.
+
+**Dev sau T44 (72 câu):**
+
+- Judge 103 cặp mới. Chấm chéo rút lại 281 cặp: đồng thuận 0,790, kappa 0,683.
+- nDCG@10: B0 0,400 · B1 0,420 · B2 0,506 · B2 + trộn 0,524 · Tham chiếu 0,631.
+- Hiệu: trộn − B1 +0,104 [+0,040; +0,169]; B2 − B1 +0,086 [+0,023; +0,150]; trộn − B2 +0,018 [−0,008; +0,045];
+  `probe_off` − B2 −0,003 [−0,033; +0,024].
+- Phần tăng của B2 (+0,036 trên trung bình): 9 câu đi đường văn bản +0,029; 5 câu parse đổi +0,002; 58 câu còn lại +0,004
+  (pool lý tưởng đổi).
+- Lớp 2: CUI đúng 0,712, F1 cột 0,731.
+
+**Lớp 4 so cặp (63 câu dev có diễn giải; bản có knowledge so với bản không):**
+
+- Trung thực: 8 thắng / 24 thua / 31 hòa, trung bình −0,254 [−0,413; −0,095].
+- Hữu ích: 61 / 2 / 0, trung bình +0,937 [+0,841; +1,000].
+- Bản có knowledge đứng ở vị trí B trong 25 / 63 cặp.
+
+**Chi phí:** 2,30 USD trong ledger. Gồm: B2 chạy lại 0,08; judge 0,31; chấm chéo 0,32; cặp diễn giải 0,08; Opus so cặp
+1,50. Smoke ngoài ledger ước ≈ 0,05 USD. Ledger 28,845 → 31,140.
