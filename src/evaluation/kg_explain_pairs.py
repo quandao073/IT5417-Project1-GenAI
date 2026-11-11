@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import json
 import random
+import re
 
 import numpy as np
 
 CRITERIA = ("faithfulness", "usefulness")
+_SENT = re.compile(r"(?<=[.!?])\s+")
 _VERDICT = {"type": "object", "additionalProperties": False, "required": ["winner", "reason"],
             "properties": {"winner": {"type": "string", "enum": ["A", "B", "tie"]},
                            "reason": {"type": "string"}}}
@@ -58,3 +60,26 @@ def tally(outcomes: list[int], n_boot: int, seed: int) -> dict:
             "ties": int((x == 0).sum()), "mean": float(x.mean()), "ci95": [float(lo), float(hi)],
             "win_share": float((x.mean() + 1) / 2),
             "win_share_ci95": [float((lo + 1) / 2), float((hi + 1) / 2)]}
+
+
+def dropped_shares(pairs: dict) -> dict:
+    """Per explanation side: sentences written, and the share dropped by each reason (the reason
+    up to its colon), over the pairs that have that side."""
+    out = {}
+    for side in ("with", "without", "also"):
+        written, reasons = 0, {}
+        for rec in pairs.values():
+            event = rec.get(side)
+            if not event or event.get("status") not in ("ok", "partial", "ungrounded"):
+                continue
+            kept = len(event.get("images") or []) + sum(
+                1 for part in ("summary", "knowledge") for s in _SENT.split(event.get(part) or "")
+                if s.strip())
+            written += kept + len(event.get("dropped") or [])
+            for d in event.get("dropped") or []:
+                why = d["why"].split(":")[0]
+                reasons[why] = reasons.get(why, 0) + 1
+        if written:
+            out[side] = {"sentences": written, **{k: {"n": v, "share": v / written}
+                                                  for k, v in sorted(reasons.items())}}
+    return out

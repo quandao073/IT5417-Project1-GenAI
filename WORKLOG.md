@@ -17,7 +17,7 @@ thì xóa (git giữ lịch sử); không có nhật ký; mã D/T/P không đán
 
 ## Trạng thái hiện tại
 
-**Cập nhật:** 2026-11-11, nhánh `feat/text-fallback-and-fusion-in-api` (từ `main` sau #20, #21).
+**Cập nhật:** 2026-11-11, nhánh `feat/faithful-knowledge-explanation` (từ `main` sau #22). **V2-7, V2-8 đóng.**
 
 - **Hệ thống đang chạy:** câu hỏi EN/VI → parser (`claude-haiku-5-5`, rule dự phòng; D61) → câu mẫu `render(include, exclude)` →
   text encoder CXR-CLIP FT6 → cosine trên Qdrant, chỉ lọc view → top-k → trích câu report sau xếp hạng (D38–D40,
@@ -39,8 +39,8 @@ thì xóa (git giữ lịch sử); không có nhật ký; mã D/T/P không đán
   B2 0,482 · B2 + trộn (khóa) 0,497 · Tham chiếu 0,537; trộn − B1 +0,138 [+0,078; +0,198], B2 − B1 +0,123 [+0,060; +0,188],
   trộn − B2 +0,015 [−0,018; +0,045]; `probe_off` −0,071. Không sửa gì theo heldout; số heldout là ước lượng thận trọng (còn T44).
   Phiên D (`notes/run-log-D.md`, D76): sửa T44, API trộn b0 w 0,2; dev sau T44 B2 0,506 · trộn 0,524; N1 smoke p95 4,02 s;
-  lớp 4 so cặp: phần kiến thức hữu ích hơn (61/63) nhưng kém trung thực (P22). Phần vận hành V2-10 – V2-14; N1–N12 ở thiết kế.
-  TIP và log chạy nằm ở `notes/` (gitignored, chỉ có trên máy). Bảng trạng thái và các task sau: `docs/v2-kg-plan.md`.
+  lớp 4: v4 kém trung thực khi so cặp, sửa bằng prompt v5 + ba kiểm (D77) thì ngang. Kết luận: `docs/kg-evaluation.md` đầu file.
+  Việc còn lại theo thứ tự: *TIẾP THEO* của `docs/v2-kg-plan.md` (N1–N12 ở thiết kế). TIP, log chạy: `notes/` (gitignored).
 - **Chặn:** web UI chờ `pnpm` (T5).
 
 Dữ liệu, chỉ mục, artifact đều gitignored; lệnh dựng lại ở README. README không nói:
@@ -57,7 +57,7 @@ Dữ liệu, chỉ mục, artifact đều gitignored; lệnh dựng lại ở RE
 Kiểm tra sau mỗi thay đổi:
 
 ```bash
-uv run pytest -q                 # 1096 passed; model/integration/llm bị bỏ chọn mặc định
+uv run pytest -q                 # 1103 passed; model/integration/llm bị bỏ chọn mặc định
 uv run pytest -m model           # bắt buộc khi đổi configs/models.yaml hoặc src/embeddings/ (T37)
 uv run pytest -m integration     # cần `docker compose up -d qdrant` và Docker (Neo4j tạm tự dựng)
 uv run pytest -m llm             # parse thật qua LLM, đọc .env
@@ -91,6 +91,7 @@ nào lệch thì bảng này và `docs/scope-and-non-goals.md` đúng.
 | D38, D51, D54 | Encoder mặc định CXR-CLIP SwinT bản fine-tune FT6 (`cxrclip_ft6_lr1e-04`, từ 2026-10-29; sha256 ghim trong `models.yaml`, CC BY-NC 4.0), chọn theo luật V2-5b ghi trước khi đo (D54: FT6 ≥ zero-shot về nDCG@10 nhị phân trên dev, cả hai đo bằng `eval-retrieval --parsers gold`, cùng code; zero-shot phải tái lập đúng 0,482): FT6 0,539 so với 0,482. Bản M zero-shot và BiomedCLIP vẫn là candidate, build vẫn đăng ký. Trọng số FT6 chỉ có trên máy (`runs/`, sinh bằng code fine-tune của nhánh V1.1). Trong đánh giá V2, **B1 dùng FT6** (build `20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1`), cùng encoder với ma trận điểm của B2; B1 zero-shot là dòng phụ (D51) | CXR-CLIP hòa BiomedCLIP zero-shot trên dev và nhanh hơn 2,4 lần (luật hòa Phase 2). Parser gold cho cả hai build vì parse LLM không tái lập (T18). Người dùng 2026-10-27: hiệu B2 − B1 phải là đóng góp riêng của KG, không lẫn đóng góp của fine-tune |
 | D40 | Sổ đăng ký build: manifest riêng mỗi build ghi encoder; `config_hash` chỉ phủ `data.yaml` + candidate của encoder + `normalize`; mọi lệnh encode text nạp encoder qua `index.build_encoder` (từ chối revision khác build) | Hai encoder so được trên cùng pipeline mà không làm hỏng build của nhau |
 | D65 | Neo4j: service `neo4j` (Community 5.26, profile `kg`) trong compose; Community không có role nên "user chỉ đọc" là giao dịch `READ` (server từ chối ghi, đã test) cộng Cypher chỉ từ template trong code; `db.transaction.timeout` 10 s. `cxr kg-load-neo4j` xóa rồi nạp bảng KG + `PREDICTED` chỉ top-N (N = 100) mỗi khái niệm scorable; `quality` (AUROC lenient, CI, `weak` < 0,65, `borderline`) từ `cxr kg-quality`; `KGBuild` node ghi `kg_build_id`, phiên bản ma trận. `validate-indexes --kg` thêm bốn check. Chấm điểm đọc ma trận trong RAM, không đọc Neo4j (N4) | Người dùng 2026-11-05; đo `docs/measured-facts.md` |
+| D77 | Diễn giải có knowledge dùng prompt `kg_explain_v5` (v4 giữ để so): nói cách gộp chỉ cho intent khác `single` và đúng giá trị, không tự tóm tắt số, giữ từ rào đón của [K#]; `Explainer` thêm ba kiểm (từ chỉ cách gộp khớp `combine`; khoảng "X–Y %" là min–max của một chuỗi trong facts, chặt hơn "hai đầu có mặt" vì luật đó không bắt lỗi disease-14; câu dẫn [K#] rào đón thì phải rào đón). Dev, Opus so cặp mù với v3: trung thực −0,016 [−0,180; +0,148], hữu ích 61/0/0 (v4: −0,254, 61/2/0), nên `explain.knowledge` giữ true. Lớp 4 heldout là v4 với kiểm cũ, không chạy lại | Người dùng 2026-11-11 (P22) |
 | D76 | Sau heldout (phiên D): đường văn bản mã hóa bản dịch EN của câu (văn bản của B0; câu EN giữ nguyên, câu có chữ riêng tiếng Việt mới dịch, dịch hỏng hay rỗng thì dùng câu như viết; không bao giờ `""`, T44 cũ); `KGSearch` trộn `z(KG) + 0,2 z(cos)` như cấu hình khóa (`kg.yaml: query.fusion`), dịch Haiku song song với parser; câu đi đường văn bản không trộn. Eval chạy B2 với weight 0 (= `fusion_off`), dịch từ cache B0. Heldout không chạy lại | Người dùng 2026-11-11 (P21) |
 | D75 | **Khai báo heldout (D24), khóa trước khi chạy** (người dùng 2026-11-10, mốc 3): hệ chính = B2 (ma trận `..._ext1_probe1`, graph kg_32e035ed37b0, fallback văn bản) + trộn b0, w = 0,2 (`eval_kg.yaml: eval.fusion.locked`), `explain.knowledge` bật (v4); cùng lượt B0, B1, Tham chiếu, `fusion_off` (= B2), `probe_off`, mọi ablation, lưới 10 ô trộn điểm **chỉ là phân tích độ nhạy** (kết quả chính luôn là cấu hình khóa), lớp 4 có và không có knowledge. Chạy một lần; sau đó không sửa gì theo heldout. sha256: dòng heldout `b9e7eccbefecfda8371f6041e7d18a3097c2c8ce63655eea07337f8853518348` (100 câu); file benchmark `b3ce4dce…`; `eval_kg.yaml` `6afff350…`, `kg.yaml` `47e87f86…`, `models.yaml` `1e91735d…`, `concepts.yaml` `e0cacc2c…` (đủ 64 ký tự và các prompt ở `docs/kg-evaluation.md`, *Heldout*) | Người dùng 2026-11-10 |
 | D74 | Khai báo trước khi đo dev lượt 2 (phiên C): ablation `probe_off` = intents của B2 chấm lại trên ma trận zero-shot `..._ext1` (đường đi KG giữ nguyên, chỉ đo đóng góp của ma trận); ablation làm mất cột của mọi khái niệm muốn tìm thì đi đường văn bản như search (D73). Trộn điểm `score = z(KG) + w·z(cos CLIP)`, z theo từng câu trên toàn corpus, lọc view sau; văn bản (a) câu mẫu của B1, (b) bản dịch EN thô của B0; w ∈ {0; 0,1; 0,2; 0,3; 0,5; 1} (`eval_kg.yaml: eval.fusion`); câu KG không chấm được hay không có văn bản giữ kết quả B2. Chọn theo nDCG@10 trên dev; giữ w > 0 chỉ khi hơn w = 0 ≥ 0,005 VÀ CI 95% paired không chứa 0; `fusion_off` = B2 không trộn | Người dùng 2026-11-10 (phiên C) |
@@ -145,6 +146,5 @@ nào lệch thì bảng này và `docs/scope-and-non-goals.md` đúng.
 | # | Câu hỏi | Đang làm theo |
 |---|---|---|
 | P5 | Đóng gói trọng số vào image API hay dựa vào volume `hf_cache` | Volume; chọn khi build image thật |
-| P9 | Người chấm mẫu 100 cặp để báo kappa người–máy; `data/eval/human_sample.csv` hiện là mẫu dev (pha judge ghi đè; mẫu heldout dựng lại từ cache bằng pha judge heldout, 0 USD) | Kappa hiện chỉ giữa hai máy (heldout 0,708) |
-| P22 | Diễn giải v4 (có knowledge) kém trung thực hơn v3 khi Opus so cặp (8/24/31; mô tả sai `combine`, khoảng số hở) mà kiểm căn cứ không bắt; sửa prompt hay thêm kiểm khoảng số? | Giữ v4 (hữu ích 61/63); đo lại bằng `cxr eval-kg-explain` |
+| P9 | Người chấm mẫu 100 cặp mỗi split (`data/eval/human_sample_{dev,heldout}.csv`, đáp án ở `*_key.csv`; pha judge của split nào ghi bản của split đó, dựng lại từ cache) để báo kappa người–máy | Kappa hiện chỉ giữa hai máy (heldout 0,708) |
 | P8 | Người dùng duyệt gold heldout của `benchmarks/parser_queries_v1.jsonl` | Giữ như lúc đo (sha256 `8d19c619…`); đổi gold heldout thì khai báo một lần chạy mới |

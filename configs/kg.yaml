@@ -321,6 +321,15 @@ explain:
   # items K1, K2…; every sentence of that part must cite one. false is the layer-4 ablation and keeps prompt v3.
   knowledge: true
   knowledge_max_items: 10      # items per page, to keep the first token under N2
+  # Checks added for the knowledge prompt after the layer-4 pair comparison (WORKLOG P22), on top of the ones above.
+  # A sentence naming a way of combining scores is dropped unless an intent of the facts has that `combine`; a range
+  # "X–Y %" must be the lowest and highest of one series of percentages in the facts; a sentence citing a [K#] whose
+  # text hedges ("usually", "thường"…) must hedge too. Words match case-folded as whole words ("bất thường" is not a hedge).
+  combine_words:
+    any_of: [any_of, any of, best fit, best match, best-fit, khớp tốt nhất, mức khớp cao nhất trong]
+    weighted: [weighted, weighting, weight mix, trọng số]
+  hedge_words: [often, usually, may, might, can, typically, commonly, sometimes, frequently, generally, mostly,
+                thường, có thể, đôi khi, hay gặp]
 
 # Definitions of the concepts a search can show (src/kg/knowledge.py, `cxr kg-definitions`). Everything written lives in
 # knowledge/ beside the graph directory, data/kg/knowledge/ (UMLS definitions and the glosses made from them, T38).

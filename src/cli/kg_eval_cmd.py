@@ -345,7 +345,8 @@ def cmd_eval_kg(args: argparse.Namespace) -> int:
                 cross.grade(qid, by_id[qid]["question"], by_id[qid]["query_en"], studies,
                             reports)
             print(f"cross-judged {len(sample)} pairs; spent {ledger.total:.2f} USD")
-            per = kr.write_human_sample(work / "human_sample.csv", work / "human_sample_key.csv",
+            per = kr.write_human_sample(work / f"human_sample_{args.split}.csv",
+                                        work / f"human_sample_{args.split}_key.csv",
                                         rows, judge, pooled, reports, vcfg["human_sample"],
                                         bcfg["seed"])
             print(f"human sample by judge grade: {per}")
@@ -391,7 +392,8 @@ def cmd_eval_kg_explain(args: argparse.Namespace) -> int:
     ledger = _ledger(ecfg)
     start = ledger.total
     rows = [r for r in kb.read_jsonl(Path(ecfg["benchmark"]["file"])) if r["split"] == args.split]
-    path = work / f"explain_pairs_{args.split}.json"
+    suffix = f"_{args.tag}" if args.tag else ""
+    path = work / f"explain_pairs_{args.split}{suffix}.json"
     pairs = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
     todo = [r for r in rows if r["id"] not in pairs]
     if todo:
@@ -403,6 +405,12 @@ def cmd_eval_kg_explain(args: argparse.Namespace) -> int:
         e = search.explainer
         if e is None or e.knowledge is None:
             raise SystemExit("STOP: the search does not explain with knowledge (kg.yaml explain)")
+        if args.prompt:                 # another knowledge prompt, same client and checks
+            e = Explainer(e.client, e.guard, (default_config_dir() / args.prompt).read_text(
+                encoding="utf-8"), e.timeout_s, e.index, e.knowledge)
+        also = None if not args.also else Explainer(
+            e.client, e.guard, (default_config_dir() / args.also).read_text(encoding="utf-8"),
+            e.timeout_s, e.index, e.knowledge)
         v3_text = (default_config_dir() / load_config("models")["kg_llm"]["explain"]
                    ["prompt_file"]).read_text(encoding="utf-8")
         v3 = Explainer(e.client, e.guard, v3_text, e.timeout_s, e.index, None)
@@ -420,6 +428,9 @@ def cmd_eval_kg_explain(args: argparse.Namespace) -> int:
                                                                      items))
                 plain = {k: v for k, v in facts.items() if k != "knowledge"}
                 record["without"] = explanation_event(result, v3.explain(plain, result.intents))
+                if also is not None:    # not compared: what the checks drop of that prompt
+                    record["also"] = explanation_event(result, also.explain(facts, result.intents,
+                                                                            items))
             for name, client in clients.items():
                 ledger.add_client_delta(f"explain_pairs:{name}", client, before[name])
             pairs[row["id"]] = record
@@ -455,7 +466,8 @@ def cmd_eval_kg_explain(args: argparse.Namespace) -> int:
            **{c: kp.tally([v[c] for v in verdicts.values()], pcfg["n_boot"], pcfg["seed"])
               for c in kp.CRITERIA},
            "verdicts": verdicts, "spent_usd": round(ledger.total - start, 4)}
-    (work / f"explain_pairs_{args.split}_verdicts.json").write_text(
+    out["prompt"], out["dropped"] = args.prompt or "default", kp.dropped_shares(pairs)
+    (work / f"explain_pairs_{args.split}{suffix}_verdicts.json").write_text(
         json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
     for c in kp.CRITERIA:
         t = out[c]
@@ -481,6 +493,11 @@ def register(sub) -> None:
                        help="layer 4: explanations with and without knowledge, compared by Opus")
     x.add_argument("--split", choices=["dev"], default="dev")
     x.add_argument("--max-usd", type=float, default=3.0, help="stop this step at this spend")
+    x.add_argument("--prompt", default=None,
+                   help="knowledge prompt under configs/ (default: models.yaml)")
+    x.add_argument("--also", default=None,
+                   help="another knowledge prompt written on the same results, not compared")
+    x.add_argument("--tag", default="", help="suffix of the files of this comparison")
     x.set_defaults(func=cmd_eval_kg_explain)
 
     b = sub.add_parser("kg-bench-build", help="V2-7: write the KG benchmark and its gold")
