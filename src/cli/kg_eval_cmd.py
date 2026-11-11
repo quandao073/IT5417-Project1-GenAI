@@ -273,6 +273,7 @@ def cmd_eval_kg(args: argparse.Namespace) -> int:
     sample), score (layers 2-4, cost, latency, ablations, error analysis)."""
     from src.evaluation import kg_eval as ke
     from src.evaluation import kg_eval_run as kr
+    from src.kg.translate import Translator
 
     sys.stdout.reconfigure(encoding="utf-8")
     if args.split == "heldout" and not args.heldout_declared:
@@ -300,6 +301,12 @@ def cmd_eval_kg(args: argparse.Namespace) -> int:
         if "run" in phases:
             parts = _components(ecfg, ledger, key)
             t_text, t_sha = _prompt(ecfg, "translate_prompt")
+            search, caller = parts["search"], parts["translator"]
+            # B2 is the search without fusion (fusion_off; the fused runs are the grid), and its
+            # English is B0's, from the same cache (T44)
+            search.cfg["query"]["fusion"]["weight"] = 0
+            search.translator = Translator(lambda q: caller.call(
+                "b0_translate", t_text, t_sha, {"question": q}, q, kr.TRANSLATE_SCHEMA)["text"])
             runner = kr.Runner(rows=rows, split=args.split, ecfg=ecfg, work=work,
                                ledger=ledger, t_text=t_text, t_sha=t_sha,
                                **{k: parts[k] for k in (

@@ -290,6 +290,10 @@ query:
     anatomy_top: 3         # findings kept for a region, by p (a region asked for alone, WORKLOG D67)
     min_n: 20              # same cut as graph.min_n
     weak_or_children: []   # weak labels that D63 scores noisy-OR with their scorable children; Fracture left with the probe matrix (D72)
+  # Score fusion (WORKLOG D74, locked before heldout as D75): score = z(KG) + weight z(cosine of the question's English
+  # with the image), z over the whole corpus per question; the English is B0's (src/kg/translate.py), asked beside the
+  # parser for a Vietnamese question. 0: KG score only (the `fusion_off` of the evaluation).
+  fusion: {weight: 0.2}
   # Forms of concepts.yaml that mean two things: left out of the KG parser's concept list so that the question's
   # words reach lookup_concept and the language model chooses with the whole question (WORKLOG D64), and the forms
   # that also name a scorable concept below the label, which has its own, better scored column (WORKLOG D67; the

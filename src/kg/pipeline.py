@@ -6,7 +6,9 @@ score columns -> images -> explanation.
     labels       each label of include/exclude is expanded like any concept (D55, D63)
     terms        lookup_concept, the model chooses a candidate with the whole question as context,
                  expand_concepts; the terms run in parallel
-    score        ScoreMatrix in RAM, top-k, view filter
+    translate    the English of a Vietnamese question (src/kg/translate.py), beside the parser
+    score        ScoreMatrix in RAM fused with the cosine of the English (D74, D75), top-k, view
+                 filter; nothing wanted understood: the text route (D73, T44)
     explain      one call for the page; separate from `search`, so the results can be sent first
 
 When Neo4j fails the labels are scored directly from the matrix and the terms are dropped with a
@@ -28,6 +30,8 @@ from src.kg.llm_query import Choice, build_facts
 from src.kg.messages import Warn, render_all
 from src.kg.scoring import ScoreMatrix
 from src.kg.store import StoreError
+from src.kg.text_fallback import fuse
+from src.kg.translate import is_vietnamese
 from src.query.schema import SearchQuery
 
 logger = logging.getLogger("cxr.kg")
@@ -55,12 +59,13 @@ class KGSearch:
     def __init__(self, *, cfg: dict, matrix: ScoreMatrix, parser, store, quality: dict,
                  label_ids: dict[str, str], names: dict[str, str], chooser=None,
                  explainer=None, versions: dict | None = None, semantic=None,
-                 text_fallback=None):
+                 text_fallback=None, translator=None):
         self.cfg, self.matrix, self.parser, self.store = cfg, matrix, parser, store
         self.quality, self.label_ids, self.names = quality, label_ids, names
         self.chooser, self.explainer, self.versions = chooser, explainer, versions or {}
         self.semantic = semantic        # sapbert.AliasIndex or None
         self.text_fallback = text_fallback  # text_fallback.TextFallback or None (D73)
+        self.translator = translator        # translate.Translator or None: the question as written
         self._terms_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="kg-terms")
 
     # -- intents ---------------------------------------------------------------------------
@@ -129,6 +134,8 @@ class KGSearch:
         degraded: list[str] = []
         qcfg = self.cfg["query"]
 
+        english = (self._terms_pool.submit(self.translator.english, question)
+                   if self.translator is not None and self.text_fallback is not None else None)
         t = time.perf_counter()
         parsed = self.parser.parse(question)
         timings["parse_ms"] = (time.perf_counter() - t) * 1000
@@ -214,10 +221,26 @@ class KGSearch:
         intents = unique
         trace["intents"] = [i.to_dict() for i in intents]
 
+        if english is not None:
+            t = time.perf_counter()
+            translation = english.result()
+            timings["translate_wait_ms"] = (time.perf_counter() - t) * 1000
+            timings["translate_ms"] = translation.ms
+            trace["translation"] = {"text": translation.text, "called": translation.called,
+                                    "error": translation.error}
+            english = translation.text
+        else:                               # no translator: only an English question has one
+            english = None if is_vietnamese(question) else question
+        trace["english"] = english
+
         t = time.perf_counter()
         rows: list[dict] = []
+        weight = qcfg["fusion"]["weight"]
         if any(i.columns for i in intents):
             scores = self.matrix.score(intents)
+            if weight and self.text_fallback is not None and english:
+                scores = fuse(scores, self.text_fallback.cosine(english), weight)
+                trace["fusion"] = {"weight": weight, "text": english}
             top = self.matrix.top_k(scores, top_k, tuple(views or query.views))
             rows = [{"rank": r, "row": int(row), "study_id": self.matrix.study_ids[row],
                      "image_id": self.matrix.image_ids[row], "view": str(self.matrix.views[row]),
@@ -227,7 +250,7 @@ class KGSearch:
         wanted = [i for i in intents if i.polarity == PRESENT]
         if (self.text_fallback is not None and not any(i.columns for i in wanted)
                 and (wanted or not rows)):
-            text = self.text_fallback.text(query)
+            text = self.text_fallback.text(query, english, question)
             top = self.text_fallback.top(text, top_k, tuple(views or query.views))
             rows = [{"rank": r, "row": row, "study_id": self.matrix.study_ids[row],
                      "image_id": self.matrix.image_ids[row], "view": str(self.matrix.views[row]),

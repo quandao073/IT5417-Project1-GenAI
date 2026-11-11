@@ -745,9 +745,15 @@ def _cmd_kg_query(args: argparse.Namespace) -> int:
     meta = json.loads((matrix / "probe.json").read_text(encoding="utf-8"))
     images = pl.read_parquet(Path(settings.canonical_dir) / "images.parquet",
                              columns=["image_id", "projection"])
+    from src.embeddings import index
+
+    manifest = json.loads((Path(settings.indexes_dir) / "builds" / meta["build_id"]
+                           / "manifest.json").read_text(encoding="utf-8"))
+    encoder = index.build_encoder(manifest, load_config("models")["image_encoder"]["candidates"],
+                                  settings.embedding_device)    # the text route and fusion
     search, notes = runtime.build_kg_search(
         settings.model_copy(update={"kg_matrix_dir": matrix}), {"build_id": meta["build_id"]},
-        images)
+        images, encoder=encoder)
     questions = list(args.questions)
     if args.file:
         questions += [ln.strip() for ln in Path(args.file).read_text(encoding="utf-8")

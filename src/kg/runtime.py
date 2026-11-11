@@ -24,6 +24,7 @@ from src.kg.llm_query import ConceptChooser, Explainer, GroundingIndex, sha256
 from src.kg.pipeline import KGSearch
 from src.kg.scoring import ScoreMatrix
 from src.kg.store import Neo4jStore, StoreError
+from src.kg.translate import Translator, model_ask
 from src.query import llm_parser as llm
 from src.query.parser import QueryParser
 from src.query.rule_parser import RuleParser
@@ -62,7 +63,8 @@ MATRIX_SUFFIX = "_ext1_probe1"      # the served score matrix: extended columns,
 def build_kg_search(settings: Settings, manifest: dict, images: pl.DataFrame, *,
                     warm_up: bool = False, encoder=None) -> tuple[KGSearch, list[str]]:
     """(the search, notes on what is degraded at startup). With the build's text `encoder`,
-    a question the KG did not understand is ranked by text like B1 (D73)."""
+    a question the KG did not understand is ranked by text like B1 (D73), and the KG score is
+    fused with the cosine of the question's English (D74, D75); without it, neither."""
     cfg, models, concepts = load_config("kg"), load_config("models"), load_config("concepts")
     cfg["query"]["modifiers"] = lookup.modifier_words(cfg, _yaml("linker_overrides.yaml"))
     graph_dir = Path(settings.kg_graph_dir)
@@ -99,7 +101,7 @@ def build_kg_search(settings: Settings, manifest: dict, images: pl.DataFrame, *,
         notes.append("language model disabled" if settings.llm_disabled
                      else "no ANTHROPIC_API_KEY: rule parser only")
         parser = QueryParser(rule, template=template, with_terms=True)
-        chooser = explainer = None
+        chooser = explainer = translator = None
     else:
         kl, breaker = models["kg_llm"], models["kg_llm"]["breaker"]
         guard = Guard(breaker["failures"], breaker["cooldown_seconds"])
@@ -144,6 +146,12 @@ def build_kg_search(settings: Settings, manifest: dict, images: pl.DataFrame, *,
         explainer = Explainer(client("explain", ("write_explanation", "Write the summary and "
                                                  "one line per image.")), guard, explain_text,
                               kl["explain"]["timeout_seconds"], index, base)
+        translate_text = _text(kl["translate"]["prompt_file"])
+        translator = Translator(model_ask(client("translate"), guard, translate_text,
+                                          kl["translate"]["timeout_seconds"]))
+        versions |= {"translate_model": kl["translate"]["model"],
+                     "translate_prompt_sha256": sha256(translate_text),
+                     "fusion_weight": cfg["query"]["fusion"]["weight"]}
         versions |= {"parser_model": kl["parser"]["model"], "parser_prompt_sha256":
                      parser.prompt_sha256, "select_model": kl["select"]["model"],
                      "select_prompt_sha256": chooser.prompt_sha256,
@@ -173,7 +181,7 @@ def build_kg_search(settings: Settings, manifest: dict, images: pl.DataFrame, *,
     search = KGSearch(cfg=cfg, matrix=matrix, parser=parser, store=store, quality=quality,
                       label_ids=label_ids, names=dict(nodes.select("cui", "name").iter_rows()),
                       chooser=chooser, explainer=explainer, versions=versions, semantic=semantic,
-                      text_fallback=fallback)
+                      text_fallback=fallback, translator=translator)
     if warm_up and parser.llm is not None:
         # a TLS handshake and the prompt cache are paid off the request path
         threading.Thread(target=parser.parse, args=("cardiomegaly",), daemon=True).start()

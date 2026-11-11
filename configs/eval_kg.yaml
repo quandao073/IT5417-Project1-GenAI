@@ -40,7 +40,7 @@ pricing:
   claude-opus-5-5: {input: 4.0, output: 20.0, cache_read: 0.20, cache_write: 5.0}
   claude-sonnet-5-5: {input: 2.0, output: 10.0, cache_read: 0.20, cache_write: 2.5}
   claude-haiku-5-5: {input: 0.10, output: 0.50, cache_read: 0.01, cache_write: 0.125}
-budget_usd: 30.25                   # the ledger holds 4.85 of the first session; session C may spend 26 in all (0.60 outside it)
+budget_usd: 33.75                   # the ledger holds 28.85 of sessions up to C; session D may spend 5 (0.10 kept for the smoke, outside it)
 
 eval:
   top_k: 10
