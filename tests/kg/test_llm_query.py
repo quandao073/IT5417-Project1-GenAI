@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 
 import polars as pl
@@ -174,12 +175,19 @@ def test_a_failed_call_is_reported_as_failed(reply):
     assert got.status == "failed" and got.error
 
 
-def test_markup_that_leaked_into_the_text_is_not_an_explanation():
+def test_a_field_that_leaked_into_the_summary_is_cut_out_and_recovered():
+    # T43: the summary string closes itself and carries the image lines
     intents, facts = page()
-    reply = {"summary": "Câu hỏi tìm tràn dịch màng phổi.</summary><parameter name=\"images\">[]",
-             "images": []}
+    lines = json.dumps(GOOD["images"], ensure_ascii=False)
+    reply = {"summary": "Câu hỏi tìm tràn dịch màng phổi.</summary>\n<parameter name=\"images\">"
+                        f"{lines}</parameter>", "images": []}
     got = explainer(reply).explain(facts, intents)
-    assert got.status == "ungrounded" and got.dropped[0]["why"] == "markup in the text"
+    assert got.status == "ok" and got.summary == "Câu hỏi tìm tràn dịch màng phổi."
+    assert set(got.images) == {1, 2}
+    # images the model did write are kept; a stray tag is removed before the check
+    reply = {"summary": "Câu hỏi tìm <b>tràn dịch màng phổi</b>.", "images": GOOD["images"]}
+    got = explainer(reply).explain(facts, intents)
+    assert got.status == "ok" and got.summary == "Câu hỏi tìm tràn dịch màng phổi ."
 
 
 def test_a_generic_phrase_of_two_words_is_not_a_mention_of_a_concept():

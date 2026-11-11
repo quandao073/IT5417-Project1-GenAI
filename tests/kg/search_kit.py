@@ -78,7 +78,7 @@ def index() -> GroundingIndex:
 
 
 def make_search(*, parser_chat=None, choose_chat=None, explain_chat=None, store="fake",
-                guard=None, timeout=1.0) -> KGSearch:
+                guard=None, timeout=1.0, text_fallback=None) -> KGSearch:
     guard = guard or Guard(3, 60.0)
     rule = RuleParser(load_config("concepts"))
     pclient = GuardedClient(parser_chat, guard, timeout) if parser_chat else None
@@ -93,5 +93,6 @@ def make_search(*, parser_chat=None, choose_chat=None, explain_chat=None, store=
                     quality=tiny_kg.quality(), label_ids=LABEL_IDS,
                     names=dict(nodes.select("cui", "name").iter_rows()), chooser=chooser,
                     explainer=explainer, versions={"kg_build_id": "kg_test",
-                                                   "matrix_version": "m@0", "build_id": "b"})
+                                                   "matrix_version": "m@0", "build_id": "b"},
+                    text_fallback=text_fallback)
 

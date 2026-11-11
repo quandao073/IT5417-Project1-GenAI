@@ -1100,3 +1100,138 @@ khai báo trước. Bootstrap 10.000 lần theo câu, seed 20261110. Chi phí c�
 - Lượt thử trần 5 mục (max5, một lượt, 24 trang): mục trung bình 2,2; N2 p50 / p95 1.224 / 1.768 ms (v4) so với 958 /
   1.505 ms (v3): không tốt hơn trần 10, nên giữ 10 (`explain.knowledge_max_items`).
 
+
+## Cột probe tuyến tính của ma trận điểm (đo 2026-11-10, D72)
+
+**Cách đo:** `uv run cxr embed --images data/probe_pool/pool_train_images.parquet --out data/probe_pool/embeddings
+--build-id 20261110_pooltrain80k_cxrclip_ft6_lr1e-04_v1` (79.816 ảnh pool-train, FT6, CPU 0,035 s/ảnh, 0 bỏ qua), rồi
+`uv run cxr build-image-scores-probe` (config `kg.yaml: scores_probe`). Mỗi cột: logistic L2 trên vector pool-train; λ
+chọn riêng từng cột theo AUROC lenient trên pool-val (9.037 ảnh) trong lưới cố định {0,01; 0,1; 1; 10; 100; 1000}; logit
+hiệu chỉnh Platt trên pool-val. Nhãn: 14 cột theo CheXpert đã resolve, 23 cột mở rộng theo nhãn bạc RadGraph (luật D62,
+hậu duệ IS_A theo `edges.parquet` hiện tại). Cổng: bootstrap paired 1.000 lần (seed 20260101) của chênh AUROC lenient
+probe − zero-shot trên pool-val, CI 95% nằm hẳn trên 0. `quality` tính lại bằng `cxr kg-quality --matrix ..._probe1
+--out data/kg/graph/quality_probe1.json`. Kết quả: `artifacts/metrics/image_scores_probe.json` (sha256
+`136ea747179a603d088be93202d1432db64768d64cf70c3a96acb0104dd16aa7`), ma trận
+`data/indexes/image_scores/20261024_chexpert25k_cxrclip_ft6_lr1e-04_v1_ext1_probe1` (`probe.npz` sha256
+`c238a43a3b127f7f79724b42265a175db57ad13e719c0daf474ae75885f1250b`).
+
+- **FT6 đã fine-tune trên pool-train** (79.115 dòng train, pool-val 9.037 là tập chọn epoch; `runs/FT6_lr1e-04/train.log`):
+  probe học trên vector encoder đã thấy, nên phần lợi có thể lẫn khớp tập train của FT6; pool-val thì FT6 chỉ dùng để chọn
+  epoch. λ và cổng cùng đo trên pool-val, nên chênh lạc quan nhẹ (lấy max trên 6 λ).
+- Zero-shot của 14 cột tái lập đúng `quality.json` cũ; 6 cột mở rộng lệch ≤ 0,017 vì tập hậu duệ IS_A đã lớn thêm từ cạnh
+  `manual` sau ext1 (hai phía của phép so dùng cùng nhãn hiện tại).
+- Probe được chọn ở **32 / 37 cột**; giữ zero-shot: Pneumothorax, C0035522, C4476748, C4086623, C0038536 (CI chứa 0).
+- Cờ weak (< 0,65) cũ: Enlarged Cardiomediastinum, Lung Lesion, Pneumonia, Atelectasis, Pleural Other, Fracture; **mới**:
+  Enlarged Cardiomediastinum, Lung Lesion, Atelectasis, Fracture (Pneumonia 0,672 và Pleural Other 0,6503 qua ngưỡng).
+  Borderline mới: 4 cột weak + Pneumonia, Pleural Other (C0028259, C0264545, C5539772 hết borderline).
+- D63 đo lại trên ma trận mới (`artifacts/metrics/scores_ext_combine_probe1.py`): Fracture noisy-OR cha + con 0,634 so với
+  cột cha 0,632, chênh CI [−0,00002; +0,0046], cận dưới không còn trên 0; Atelectasis cha 0,648, gộp CI [−0,0002; +0,0013].
+
+| Cột | id | zero-shot | probe | chênh [CI 95%] | λ | chọn | AUROC cột mới [CI] | weak | borderline |
+|---|---|---:|---:|---|---:|---|---|---|---|
+| No Finding | PRJ:no_finding | 0,742 | 0,759 | +0,017 [+0,010; +0,024] | 1 | probe | 0,759 [0,745; 0,773] |  |  |
+| Enlarged Cardiomediastinum | PRJ:enlarged_cardiomediastinum | 0,604 | 0,633 | +0,029 [+0,017; +0,042] | 10 | probe | 0,633 [0,613; 0,651] | x | x |
+| Cardiomegaly | C0018800 | 0,711 | 0,721 | +0,010 [+0,006; +0,015] | 100 | probe | 0,721 [0,708; 0,734] |  |  |
+| Lung Opacity | C4531104 | 0,684 | 0,693 | +0,010 [+0,006; +0,014] | 1 | probe | 0,693 [0,682; 0,706] |  |  |
+| Lung Lesion | C0577916 | 0,607 | 0,625 | +0,018 [+0,007; +0,028] | 1 | probe | 0,625 [0,603; 0,644] | x | x |
+| Edema | C0034063 | 0,733 | 0,737 | +0,004 [+0,001; +0,008] | 1 | probe | 0,737 [0,726; 0,747] |  |  |
+| Consolidation | C0521530 | 0,670 | 0,686 | +0,016 [+0,009; +0,023] | 1 | probe | 0,686 [0,668; 0,703] |  |  |
+| Pneumonia | C0032285 | 0,629 | 0,672 | +0,042 [+0,028; +0,055] | 10 | probe | 0,672 [0,644; 0,698] |  | x |
+| Atelectasis | C0004144 | 0,638 | 0,648 | +0,010 [+0,004; +0,016] | 1 | probe | 0,648 [0,636; 0,662] | x | x |
+| Pneumothorax | C0032326 | 0,707 | 0,712 | +0,005 [-0,002; +0,013] | 1 | zero_shot | 0,707 [0,687; 0,726] |  |  |
+| Pleural Effusion | C0032227 | 0,829 | 0,835 | +0,005 [+0,003; +0,008] | 1 | probe | 0,835 [0,826; 0,843] |  |  |
+| Pleural Other | PRJ:pleural_other | 0,583 | 0,650 | +0,067 [+0,041; +0,093] | 1 | probe | 0,650 [0,625; 0,680] |  | x |
+| Fracture | C0016658 | 0,616 | 0,632 | +0,016 [+0,003; +0,028] | 1 | probe | 0,632 [0,610; 0,653] | x | x |
+| Support Devices | PRJ:support_devices | 0,784 | 0,795 | +0,011 [+0,006; +0,016] | 1 | probe | 0,795 [0,785; 0,805] |  |  |
+|  | C5563137 | 0,790 | 0,829 | +0,039 [+0,031; +0,046] | 1 | probe | 0,829 [0,819; 0,840] |  |  |
+|  | C3714514 | 0,769 | 0,819 | +0,050 [+0,017; +0,081] | 0.1 | probe | 0,819 [0,776; 0,855] |  |  |
+|  | C0011164 | 0,685 | 0,830 | +0,145 [+0,122; +0,169] | 0.1 | probe | 0,830 [0,813; 0,847] |  |  |
+|  | C0239015 | 0,811 | 0,900 | +0,089 [+0,066; +0,112] | 0.1 | probe | 0,900 [0,880; 0,918] |  |  |
+|  | C2004491 | 0,769 | 0,829 | +0,060 [+0,028; +0,089] | 0.1 | probe | 0,829 [0,789; 0,864] |  |  |
+|  | C0264545 | 0,675 | 0,789 | +0,115 [+0,073; +0,157] | 0.1 | probe | 0,789 [0,749; 0,824] |  |  |
+|  | C0035522 | 0,735 | 0,757 | +0,021 [-0,026; +0,070] | 1 | zero_shot | 0,735 [0,677; 0,790] |  |  |
+|  | C0264495 | 0,745 | 0,779 | +0,034 [+0,006; +0,059] | 0.1 | probe | 0,779 [0,740; 0,817] |  |  |
+|  | C4476748 | 0,721 | 0,752 | +0,031 [-0,004; +0,065] | 0.1 | zero_shot | 0,721 [0,681; 0,761] |  |  |
+|  | C0013990 | 0,855 | 0,904 | +0,050 [+0,032; +0,069] | 0.1 | probe | 0,904 [0,882; 0,926] |  |  |
+|  | C0741171 | 0,810 | 0,874 | +0,064 [+0,039; +0,093] | 0.1 | probe | 0,874 [0,845; 0,899] |  |  |
+|  | C0577559 | 0,810 | 0,853 | +0,043 [+0,008; +0,077] | 0.01 | probe | 0,853 [0,811; 0,891] |  |  |
+|  | C1849561 | 0,748 | 0,792 | +0,044 [+0,005; +0,080] | 0.1 | probe | 0,792 [0,750; 0,830] |  |  |
+|  | C0029453 | 0,815 | 0,902 | +0,088 [+0,061; +0,116] | 1 | probe | 0,902 [0,885; 0,917] |  |  |
+|  | C4086623 | 0,706 | 0,732 | +0,025 [-0,009; +0,062] | 10 | zero_shot | 0,706 [0,658; 0,751] |  |  |
+|  | C0034079 | 0,762 | 0,824 | +0,062 [+0,006; +0,117] | 0.1 | probe | 0,824 [0,772; 0,870] |  |  |
+|  | C0038536 | 0,936 | 0,944 | +0,008 [-0,011; +0,027] | 0.1 | zero_shot | 0,936 [0,911; 0,959] |  |  |
+|  | C0746459 | 0,768 | 0,847 | +0,079 [+0,030; +0,120] | 10 | probe | 0,847 [0,805; 0,889] |  |  |
+|  | C0006663 | 0,734 | 0,802 | +0,068 [+0,041; +0,096] | 10 | probe | 0,802 [0,771; 0,832] |  |  |
+|  | C0016655 | 0,741 | 0,821 | +0,079 [+0,044; +0,114] | 0.1 | probe | 0,821 [0,777; 0,861] |  |  |
+|  | C5539772 | 0,692 | 0,754 | +0,062 [+0,021; +0,107] | 1 | probe | 0,754 [0,706; 0,798] |  |  |
+|  | C0028259 | 0,709 | 0,743 | +0,034 [+0,002; +0,068] | 10 | probe | 0,743 [0,680; 0,799] |  |  |
+|  | C0746216 | 0,768 | 0,835 | +0,067 [+0,032; +0,103] | 0.1 | probe | 0,835 [0,789; 0,877] |  |  |
+
+## Vá KG theo error analysis dev (đo 2026-11-10, D73)
+
+**Cách đo:** `uv run cxr kg-build-graph` (ma trận `..._ext1_probe1`), `uv run cxr kg-graph-llm --task alias --all --cuis <66 CUI>`,
+`uv run cxr kg-graph-llm --task alias-check --all --cuis <66 CUI>`, dựng lại graph, `uv run cxr kg-quality`, `uv run cxr
+kg-load-neo4j`, `uv run cxr validate-indexes --kg`. Chi phí từ `usage` của cache theo bảng giá `configs/eval_kg.yaml`.
+
+- Chọn khái niệm cho alias: Disease có đường tới cột và thiếu alias VI 2.273, trong đó có lượt nhắc pool 63 (2.210 chỉ đến từ
+  mở rộng UMLS); cột thiếu alias 1 (C0028259, ba đề xuất cũ đã bị loại khi phân xử, giữ nguyên); khái niệm chấn thương 1 → 66
+  CUI, 65 nhận đề xuất mới.
+- Opus: 65 khái niệm, 172 alias đề xuất, 51.337 / 7.156 token vào / ra, 0,35 USD. Sonnet kiểm: 57.738 / 13.146 token, 0,25 USD.
+  124 dòng `keep` (cả hai agree, không cờ); 48 chờ phân xử (36 Sonnet disagree, 12 agree nhưng bị cờ); 6 khái niệm chưa có
+  alias nào được giữ. Alias VI nguồn `llm` 473 → 597.
+- Graph: IS_A 10.234 → 10.233 (bỏ Fibrosis → PRJ:pleural_other), SUGGESTS 69 → 80 (11 cạnh manual); D59 theo lượt nhắc 0,950.
+  `kg_build_id` kg_c49f488911e6, ma trận `..._ext1_probe1@e878b151d823`; `validate-indexes --kg` bốn check KG PASS.
+- `cxr kg-query` (Haiku): "xơ phổi" → C0034069 đường disease 3 cột; "bóc tách động mạch chủ" → C0340643 disease 1 cột;
+  "chấn thương ngực" → C0039980 disease 4 cột; "traumatic injuries after a fall from a ladder" lượt này parser giữ cả câu làm
+  một term, lookup không có ứng viên (T18; trong eval có fallback văn bản).
+
+## Benchmark KG mở rộng (đo 2026-11-10, phiên C)
+
+**Cách đo:** `uv run cxr kg-bench-build --extend --attempts 3` (prompt `kg_bench_author_v1`, `kg_bench_review_v1` như lượt
+đầu; graph kg_c49f488911e6; `do_not_reuse` thêm 72 câu cũ), rồi `uv run python scripts/kg_bench_apply_review.py --edits`.
+
+- 100 câu mới: dev 36, heldout 64; mỗi nhóm qua kiểm cấu trúc ở lượt soạn đầu; 24 cặp dịch mới, không cặp nào tách split.
+  Toàn bộ: 172 câu, dev 72 (37 EN / 35 VI), heldout 100 (49 EN / 51 VI); 72 câu cũ giữ nguyên từng byte trước khi áp luật.
+- Sonnet phản đối 7 / 100 câu mới (tổng `gold_disputed` 7 sau khi bỏ cờ của kg-broader-07). Trùng chữ (Jaccard token ≥ 0,6)
+  với câu cũ, parser_queries_v1, smoke: 10 cặp, đều cùng khuôn câu khác khái niệm.
+- `general_rule` (cột yếu mới): đổi 16 câu dev và 16 câu heldout (bỏ cột yếu không phải hỏi trực tiếp hay tổ tiên của luật hẹp
+  hơn, sửa cờ weak của Pneumonia và Pleural Other, bỏ `weak_quality` khi hết cột yếu); 4 `heldout_edits` áp đủ.
+- `auto_check` tính lại trên graph hiện tại: graph lệch gold ở 54 / 172 câu (21 / 64 câu heldout mới).
+- Chi phí: 2,00 USD (ledger `data/eval/cost_ledger.jsonl` 4,853 → 6,856).
+
+## Đánh giá KG trên dev, lượt 2 (đo 2026-11-10, phiên C; bảng đầy đủ ở `docs/kg-evaluation.md`, *Dev lượt 2*)
+
+**Cách đo:** `uv run cxr eval-kg --split dev --phase run --rerun`, `--phase judge`, `--phase score` trên 72 câu dev (gold
+sha256 dòng dev `cae72e6418075a9a37ac488cb6d9ab705b31e3c19e3259f6d9c08d7c22f6e156`), ma trận `..._ext1_probe1`, graph
+kg_32e035ed37b0, judge `claude-opus-5-5` + `kg_judge_v1` (cache dùng chung với lượt 1), khai báo D74 trước khi đo. Bootstrap
+10.000 lần theo câu, seed 20261110. `data/eval/metrics_dev.json` sha256 `c9572a861a2d762e36a7add5edbeba3829a08f1fe6615c19d721fbb137ced244`. Dev đã dùng để chỉnh: lạc quan.
+
+- Pool 2.986 cặp, điểm 0 / 1 / 2 = 1.271 / 788 / 927; chấm chéo Sonnet 299 cặp: đồng thuận 0,789, kappa 0,680, bậc hai 0,838.
+- nDCG@10: B0 0,396 · B1 0,419 · B2 0,470 · B2 + trộn (b0, w 0,2) 0,503 · Tham chiếu 0,625. B2 − B1 +0,051 [−0,010; +0,112];
+  B2 + trộn − B1 +0,083 [+0,017; +0,149]; trộn − B2 +0,033 [+0,006; +0,062] (giữ theo luật D74). B2 đi đường văn bản ở 8 / 72.
+- 36 câu dev cũ: B2 0,544 (lượt 1 0,541), B1 0,482 (0,512), B2 − B1 +0,063 [+0,012; +0,114].
+- Ablation (với B2): tắt bệnh −0,040 [−0,078; −0,005]; probe_off −0,004 [−0,034; +0,022]; tắt rộng hơn −0,012 [−0,031; 0].
+- Lớp 2 B2: CUI đúng 0,692, F1 cột 0,723, đủ cảnh báo 0,704. Lớp 4: 759 câu, 98,95 % có căn cứ, 0 câu bị loại vì markup.
+- Độ trễ B2 (tìm): p50 2,17 s, p95 4,01 s; diễn giải p50 3,46 s, p95 4,91 s.
+- Chi phí lượt 2: judge 2.316 cặp mới 6,73 USD, chấm chéo 0,83 USD (hai mẫu vì pool đổi sau lần chạy lại), pipeline 0,12 USD.
+  Ledger `data/eval/cost_ledger.jsonl` 6,856 → 14,552.
+
+## Đánh giá KG trên heldout (đo 2026-11-10, phiên C, một lần theo D75)
+
+**Cách đo:** `uv run cxr eval-kg --split heldout --heldout-declared` (pha run, judge, score) tại commit `3d9d551`; graph
+kg_32e035ed37b0, ma trận `..._ext1_probe1@e878b151d823`, gold heldout sha256 `b9e7eccb…` (D75), judge `claude-opus-5-5` +
+`kg_judge_v1`; bootstrap 10.000 lần theo câu, seed 20261110. `data/eval/metrics_heldout.json` sha256 `d3af7ea51043a6ed28b090b43ad1bfad67395247dc2ded34d4e6f738772df0dc`.
+
+- 100 câu (49 EN / 51 VI), 23 hệ; pool 4.602 cặp, điểm 0 / 1 / 2 = 2.204 / 1.154 / 1.244; chấm chéo Sonnet 458 cặp: đồng thuận
+  0,817, kappa 0,708, bậc hai 0,852.
+- nDCG@10: B0 0,355 · B1 0,359 · B2 0,482 · B2 + trộn (b0, w 0,2; khóa) 0,497 · Tham chiếu 0,537. Trộn − B1 +0,138
+  [+0,078; +0,198]; B2 − B1 +0,123 [+0,060; +0,188]; B1 − B0 +0,004 [−0,046; +0,055]; Tham chiếu − trộn +0,040 [−0,028; +0,107];
+  trộn − B2 +0,015 [−0,018; +0,045]. B2 đi đường văn bản ở 12 / 100, trong đó 9 mã hóa chuỗi `""` (T44).
+- Ablation (với B2): probe_off −0,071 [−0,118; −0,027]; tắt vị trí −0,032 [−0,058; −0,011]; tắt bệnh −0,029 [−0,055; −0,007];
+  tắt hẹp hơn −0,026 [−0,053; −0,005]; lookup tất định −0,021 [−0,045; −0,002]; SapBERT tắt +0,014 [−0,019; +0,049].
+- Lưới trộn (độ nhạy, so với w = 0): b0 w 0,1 / 0,2 / 0,3 / 0,5 / 1 = +0,009 / +0,015 / +0,006 / −0,013 / −0,048; b1 = +0,000 /
+  −0,005 / −0,018 / −0,032 / −0,062 (chỉ b1 w 1 có CI không chứa 0).
+- Lớp 2 B2: CUI đúng 0,654, F1 cột 0,713, đủ cảnh báo 0,660. Lớp 4 v4 (knowledge): 1.064 câu, 99,44 % có căn cứ; v3: 1.058 câu,
+  99,72 %.
+- Độ trễ B2 (tìm): p50 2,47 s, p95 4,47 s; diễn giải p50 3,48 s, p95 4,70 s; dịch B0 p50 1,05 s.
+- Chi phí lượt heldout 14,29 USD (judge 13,45, chấm chéo 0,70, pipeline 0,14). Ledger 14,552 → 28,845.

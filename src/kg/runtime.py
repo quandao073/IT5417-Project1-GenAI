@@ -56,14 +56,19 @@ def _neo4j_store(settings: Settings, timeout_s: float, expected: dict | None):
     return store, ""
 
 
+MATRIX_SUFFIX = "_ext1_probe1"      # the served score matrix: extended columns, probes (D72)
+
+
 def build_kg_search(settings: Settings, manifest: dict, images: pl.DataFrame, *,
-                    warm_up: bool = False) -> tuple[KGSearch, list[str]]:
-    """(the search, notes on what is degraded at startup)."""
+                    warm_up: bool = False, encoder=None) -> tuple[KGSearch, list[str]]:
+    """(the search, notes on what is degraded at startup). With the build's text `encoder`,
+    a question the KG did not understand is ranked by text like B1 (D73)."""
     cfg, models, concepts = load_config("kg"), load_config("models"), load_config("concepts")
     cfg["query"]["modifiers"] = lookup.modifier_words(cfg, _yaml("linker_overrides.yaml"))
     graph_dir = Path(settings.kg_graph_dir)
     matrix_dir = (Path(settings.kg_matrix_dir) if settings.kg_matrix_dir else
-                  Path(settings.indexes_dir) / "image_scores" / f"{manifest['build_id']}_ext1")
+                  Path(settings.indexes_dir) / "image_scores"
+                  / f"{manifest['build_id']}{MATRIX_SUFFIX}")
     quality = json.loads((graph_dir / "quality.json").read_text(encoding="utf-8"))
     meta = json.loads((matrix_dir / "probe.json").read_text(encoding="utf-8"))
     if meta["build_id"] != manifest["build_id"]:
@@ -153,9 +158,22 @@ def build_kg_search(settings: Settings, manifest: dict, images: pl.DataFrame, *,
             notes.append(f"sapbert: {type(exc).__name__}: {exc}"[:200])
     if semantic is not None:
         versions["lookup_sapbert"] = cfg["linker"]["sapbert"]["revision"]
+    fallback = None
+    if encoder is None:
+        notes.append("text fallback: no text encoder")
+    else:
+        from src.evaluation.vector_baseline import _all_vectors
+        from src.kg.text_fallback import TextFallback
+
+        vectors, image_ids = _all_vectors(Path(settings.indexes_dir) / "embeddings"
+                                          / meta["build_id"])
+        row_of = {i: r for r, i in enumerate(image_ids)}
+        fallback = TextFallback(encoder, vectors[[row_of[i] for i in matrix.image_ids]],
+                                matrix.views, concepts)
     search = KGSearch(cfg=cfg, matrix=matrix, parser=parser, store=store, quality=quality,
                       label_ids=label_ids, names=dict(nodes.select("cui", "name").iter_rows()),
-                      chooser=chooser, explainer=explainer, versions=versions, semantic=semantic)
+                      chooser=chooser, explainer=explainer, versions=versions, semantic=semantic,
+                      text_fallback=fallback)
     if warm_up and parser.llm is not None:
         # a TLS handshake and the prompt cache are paid off the request path
         threading.Thread(target=parser.parse, args=("cardiomegaly",), daemon=True).start()

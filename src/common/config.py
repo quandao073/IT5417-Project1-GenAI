@@ -106,7 +106,7 @@ class Settings(BaseSettings):
     neo4j_password: SecretStr = SecretStr("cxr-local-neo4j")   # compose.yaml default, loopback only
     kg_enabled: bool = True
     kg_graph_dir: Path = Path("data/kg/graph")          # quality.json, neo4j_load.json, aliases
-    # blank: <indexes_dir>/image_scores/<serving build id>_ext1
+    # blank: <indexes_dir>/image_scores/<serving build id>_ext1_probe1 (D72)
     kg_matrix_dir: Path | None = None
 
     image_root: Path = Path("data/raw/CheXpert-v1.0-small")

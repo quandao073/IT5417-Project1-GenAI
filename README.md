@@ -65,14 +65,14 @@ Nạp KG vào Neo4j và hỏi thử (cần `ANTHROPIC_API_KEY` trong `.env`; kh�
 docker compose --profile kg up -d neo4j        # Neo4j Community, volume neo4j_data, chỉ mở trên 127.0.0.1
 uv run cxr kg-quality                          # data/kg/graph/quality.json: AUROC lenient từng cột, cờ weak / borderline
 uv run cxr kg-load-neo4j                       # nạp bảng KG và top-N PREDICTED mỗi khái niệm (kg.yaml: neo4j.top_n)
-uv run cxr validate-indexes --kg --kg-matrix data/indexes/image_scores/<build_id>_ext1
+uv run cxr validate-indexes --kg --kg-matrix data/indexes/image_scores/<build_id>_ext1_probe1
 uv run cxr kg-query "tràn dịch màng phổi, không có tim to"              # hoặc --file câu_hỏi.txt --out x.jsonl
 uv run cxr kg-bench-scoring                    # chấm điểm + top-k trên ma trận giả 1 triệu ảnh x 37 cột
 uv run python scripts/kg_label_shadows.py    # dạng của 14 nhãn trùng alias của khái niệm con đã scorable (kg.yaml: ambiguous_forms)
 uv run cxr eval-parser --split dev --parsers llm --kg-prompt prompts/query_parser_v3.txt   # prompt parser KG, chỉ bộ dev
 ```
 
-API đọc ma trận `_ext1` và bảng KG của `data/kg/graph/` (compose mount sẵn). Mất Neo4j hay LLM thì `/search/kg` vẫn trả kết
+API đọc ma trận `_ext1_probe1` (cột probe, D72) và bảng KG của `data/kg/graph/` (compose mount sẵn). Mất Neo4j hay LLM thì `/search/kg` vẫn trả kết
 quả theo 14 nhãn kèm cảnh báo; `/health` báo `neo4j`, `kg_build_id`, `matrix_version`.
 
 Dữ liệu UMLS chỉ nằm trong `data/umls/` (gitignored), không bao giờ vào git hay Docker image. Nguồn UMLS dùng: tên tiếng

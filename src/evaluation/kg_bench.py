@@ -117,10 +117,10 @@ def structure_problems(questions: Sequence[dict], n_en: int, n_vi: int,
     return out
 
 
-def assign_ids(group: str, questions: Sequence[dict]) -> list[dict]:
+def assign_ids(group: str, questions: Sequence[dict], start: int = 1) -> list[dict]:
     """Rows of the benchmark file: id, group, pair (the id of the first of a translation pair,
-    the same on both), and the gold fields."""
-    ids = [f"kg-{group}-{i + 1:02d}" for i in range(len(questions))]
+    the same on both), and the gold fields. Ids count from `start` (after the existing ones)."""
+    ids = [f"kg-{group}-{i + start:02d}" for i in range(len(questions))]
     rows = []
     for i, q in enumerate(questions):
         j = q["translation_of"]
@@ -165,6 +165,23 @@ def split(rows: Sequence[dict], dev_per_group: Sequence[int], seed: int) -> dict
             for r in units[k]:
                 out[r["id"]] = "dev" if k in best[1] else "heldout"
     return out
+
+
+def extend_counts(old: Sequence[dict], group_index: int, dev_total: int,
+                  heldout_total: Sequence[int]) -> dict:
+    """What a group needs on top of its `old` rows: {dev, heldout, n_en, n_vi} of the new
+    questions. Heldout targets alternate by group order; the language counts bring the group as
+    a whole to half English (the odd one alternating between the languages)."""
+    dev = dev_total - sum(r["split"] == "dev" for r in old)
+    heldout = heldout_total[group_index % len(heldout_total)] - sum(
+        r["split"] == "heldout" for r in old)
+    total = len(old) + dev + heldout
+    # an odd group total gives its extra question to English every other time it happens
+    want_en = total // 2 + (total % 2 if (group_index // 2) % 2 == 0 else 0)
+    n_en = want_en - sum(r["lang"] == "en" for r in old)
+    if dev < 0 or heldout < 0 or not 0 <= n_en <= dev + heldout:
+        raise ValueError(f"group {group_index}: cannot extend to {dev_total} / {heldout_total}")
+    return {"dev": dev, "heldout": heldout, "n_en": n_en, "n_vi": dev + heldout - n_en}
 
 
 def expand_gold(store, row: dict, expand_cfg: dict, expand) -> dict:

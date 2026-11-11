@@ -262,12 +262,53 @@ def score_with_max(matrix, intents) -> np.ndarray:
     return total
 
 
-def rescore(matrix, intents, k: int, views: Sequence[str]) -> list[str]:
-    """Study ids of the top k for these intents (no intent with a column: no results)."""
+def needs_text(intents) -> bool:
+    """The search's rule for its text route (D73): nothing wanted has a column, and something
+    was wanted or nothing at all has one."""
+    wanted = [i for i in intents if i.polarity == PRESENT]
+    return not any(i.columns for i in wanted) and (
+        bool(wanted) or not any(i.columns for i in intents))
+
+
+def text_top(fallback, text_vec: np.ndarray, k: int, views: Sequence[str]) -> list[int]:
+    scores = fallback.vectors @ (text_vec / (np.linalg.norm(text_vec) or 1.0)).astype(np.float32)
+    if views:
+        scores = np.where(np.isin(fallback.views, list(views)), scores, -np.inf)
+    k = min(k, int(np.isfinite(scores).sum()))
+    if k <= 0:
+        return []
+    idx = np.argpartition(-scores, k - 1)[:k]
+    return idx[np.argsort(-scores[idx], kind="stable")].tolist()
+
+
+def rescore(matrix, intents, k: int, views: Sequence[str], fallback=None,
+            fallback_vec: np.ndarray | None = None) -> list[str]:
+    """Study ids of the top k for these intents. When the search would take its text route,
+    that route with `fallback_vec` (no fallback given: no results)."""
+    if needs_text(intents) and fallback is not None and fallback_vec is not None:
+        return [matrix.study_ids[r] for r in text_top(fallback, fallback_vec, k, views)]
     if not any(i.columns for i in intents):
         return []
     scores = score_with_max(matrix, intents)
     return [matrix.study_ids[r] for r in matrix.top_k(scores, k, tuple(views))]
+
+
+def zscore(x: np.ndarray) -> np.ndarray:
+    x = np.asarray(x, dtype=np.float64)
+    sd = x.std()
+    return (x - x.mean()) / (sd if sd > 0 else 1.0)
+
+
+def fuse(matrix, intents, vectors: np.ndarray, text_vec: np.ndarray, w: float, k: int,
+         views: Sequence[str]) -> list[str] | None:
+    """z(KG score) + w z(cosine with the text), each over the whole corpus for this question,
+    top k after the view filter; None when the KG scores nothing (the run keeps its studies)."""
+    if not any(i.columns for i in intents):
+        return None
+    kg = zscore(score_with_max(matrix, intents))
+    cos = vectors @ (text_vec / (np.linalg.norm(text_vec) or 1.0)).astype(np.float32)
+    total = (kg + w * zscore(cos)).astype(np.float32)
+    return [matrix.study_ids[r] for r in matrix.top_k(total, k, tuple(views))]
 
 
 def seeded_sample(items: Sequence, fraction: float, seed: int) -> list:

@@ -86,7 +86,8 @@ class Neo4jStore:
             "AND coalesce(s.review, 'keep') <> 'drop' "
             "WITH f, s, t ORDER BY s.p DESC "
             "RETURN f.cui AS cui, collect(s.p)[0] AS p, collect(s.n)[0] AS n, "
-            "collect(t.name)[0] AS target ORDER BY p DESC, cui", cui=cui, min_n=int(min_n))
+            "collect(t.name)[0] AS target, collect(s.source)[0] AS source "
+            "ORDER BY p DESC, cui", cui=cui, min_n=int(min_n))
 
     def anatomy_findings(self, cui: str, depth: int, min_n: int, top: int) -> list[dict]:
         """Scorable findings usually seen in the region `cui` or its parts (PART_OF), by the

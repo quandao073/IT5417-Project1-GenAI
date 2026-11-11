@@ -44,13 +44,15 @@ def warning_codes(result) -> set[str]:
 class Runner:
     def __init__(self, *, rows, split, ecfg, work: Path, ledger, corpus, encoder, b1_parser,
                  search, translator, t_text, t_sha, label_matrix, label_of_cui, labels_cfg,
-                 concepts_cfg):
+                 concepts_cfg, zero_shot_matrix=None):
         self.rows, self.split, self.ecfg, self.work, self.ledger = rows, split, ecfg, work, ledger
         self.corpus, self.encoder, self.b1_parser, self.search = corpus, encoder, b1_parser, search
         self.translator, self.t_text, self.t_sha = translator, t_text, t_sha
         self.label_matrix, self.label_of_cui = label_matrix, label_of_cui
         self.labels_cfg, self.concepts_cfg = labels_cfg, concepts_cfg
+        self.zero_shot_matrix = zero_shot_matrix       # probe_off (D72): the caption columns
         self.k = ecfg["eval"]["top_k"]
+        self._vecs: dict[str, np.ndarray] = {}
         self.path = work / f"runs_{split}.json"
         self.runs: dict = json.loads(self.path.read_text(encoding="utf-8")) if (
             self.path.is_file()) else {}
@@ -153,20 +155,45 @@ class Runner:
                           "via": (t.get("choice") or {}).get("via"),
                           "candidates": [c["cui"] for c in t.get("candidates", [])]}
                          for t in result.trace["terms"]],
-               "labels": [c.concept for c in result.query.include] + list(result.query.exclude)}
+               "labels": [c.concept for c in result.query.include] + list(result.query.exclude),
+               "fallback": result.trace.get("fallback")}
+        if self.search.text_fallback is not None:     # what the text route would encode (D73)
+            out["fallback_text"] = self.search.text_fallback.text(result.query)
         if explain:
             from src.api.routes.kg import explanation_event
 
+            keys = ("status", "summary", "images", "dropped", "first_token_ms", "total_ms",
+                    "error")
             t = time.perf_counter()
             event = explanation_event(result, self.search.explain(result))
-            out["explanation"] = {k: event.get(k) for k in (
-                "status", "summary", "images", "dropped", "first_token_ms", "total_ms",
-                "error")}
+            out["explanation"] = {k: event.get(k) for k in keys}
             out["ms"]["explain_ms"] = (time.perf_counter() - t) * 1000
+            v3 = self._explainer_v3()
+            if v3 is not None:      # layer 4 without the knowledge part, on the same results
+                v4, self.search.explainer = self.search.explainer, v3
+                try:
+                    event = explanation_event(result, self.search.explain(result))
+                finally:
+                    self.search.explainer = v4
+                out["explanation_v3"] = {k: event.get(k) for k in keys}
         for name, client in clients.items():
             step = name if tag == "b2" else f"{tag}:{name}"
             self.ledger.add_client_delta(step, client, before[name])
         return out
+
+    def _explainer_v3(self):
+        """The explainer with prompt v3 and no knowledge base, when B2 runs v4; else None."""
+        e = self.search.explainer
+        if e is None or e.knowledge is None:
+            return None
+        if not hasattr(self, "_v3"):
+            from src.common.config import default_config_dir, load_config
+            from src.kg.llm_query import Explainer
+
+            name = load_config("models")["kg_llm"]["explain"]["prompt_file"]
+            text = (default_config_dir() / name).read_text(encoding="utf-8")
+            self._v3 = Explainer(e.client, e.guard, text, e.timeout_s, e.index, None)
+        return self._v3
 
     def run_all(self, systems, rerun: bool) -> None:
         todo = [s for s in systems if rerun or s not in self.runs]
@@ -206,19 +233,54 @@ class Runner:
                                            for s in todo) + f"; {self.ledger.total:.2f} USD")
             self.save()
 
+    def _vec(self, text: str) -> np.ndarray:
+        if text not in self._vecs:
+            self._vecs[text] = self._encode(text)[0]
+        return self._vecs[text]
+
     def run_transforms(self) -> None:
-        """The ablations that only change how B2's intents are combined: rescored, no search."""
-        matrix = self.search.matrix
+        """The ablations that only change how B2's intents are combined or scored: rescored, no
+        search. One that leaves nothing wanted with a column takes the text route, as the search
+        would (D73). probe_off rescores B2's intents on the zero-shot matrix (D72)."""
+        matrix, fb = self.search.matrix, self.search.text_fallback
         for name in self.ecfg["eval"]["ablations"]:
             if name in SEARCH_ABLATIONS:
                 continue
             self.runs[name] = {}
             for row in self.rows:
                 b2 = self.runs["B2"][row["id"]]
-                intents = ke.transform([intent_from_dict(d) for d in b2["intents"]], name)
+                vec = self._vec(b2["fallback_text"]) if b2.get("fallback_text") else None
+                if name == "probe_off":
+                    intents = [intent_from_dict(d) for d in b2["intents"]]
+                    used = self.zero_shot_matrix
+                else:
+                    intents = ke.transform([intent_from_dict(d) for d in b2["intents"]], name)
+                    used = matrix
                 self.runs[name][row["id"]] = {
-                    "studies": ke.rescore(matrix, intents, self.k, b2["views"]),
+                    "studies": ke.rescore(used, intents, self.k, b2["views"], fb, vec),
                     "intents": [i.to_dict() for i in intents]}
+        self.save()
+
+    def run_fusion(self) -> None:
+        """The declared grid (eval.fusion): B2's KG score fused with the CLIP cosine of B1's
+        caption or of B0's English text; a question the KG scores nothing keeps B2's studies, a
+        question without that text keeps them too (w = 0)."""
+        fcfg = self.ecfg["eval"]["fusion"]
+        matrix, vectors = self.search.matrix, self.search.text_fallback.vectors
+        for source in fcfg["sources"]:
+            for w in fcfg["weights"]:
+                name = f"fuse_{source}_w{w:g}"
+                self.runs[name] = {}
+                for row in self.rows:
+                    b2 = self.runs["B2"][row["id"]]
+                    text = self.runs[{"b1": "B1", "b0": "B0"}[source]][row["id"]].get("text")
+                    got = None
+                    if text:
+                        got = ke.fuse(matrix, [intent_from_dict(d) for d in b2["intents"]],
+                                      vectors, self._vec(text), w, self.k, b2["views"])
+                    self.runs[name][row["id"]] = {
+                        "studies": b2["studies"] if got is None else got,
+                        "fused": got is not None, "text": text}
         self.save()
 
 

@@ -25,6 +25,16 @@ class AliasProposal(BaseModel):
     reason: str
 
 
+class AliasVerdict(BaseModel):
+    alias: str
+    verdict: Literal["agree", "disagree"]
+    reason: str
+
+
+class AliasCheck(BaseModel):
+    verdicts: list[AliasVerdict]
+
+
 class RouteProposal(BaseModel):
     decision: Literal["is_a", "suggests", "none"]
     columns: list[str]
@@ -34,9 +44,13 @@ class RouteProposal(BaseModel):
 SUGGEST_SCHEMA = llm_select._schema(SuggestReview)
 ALIAS_SCHEMA = llm_select._schema(AliasProposal)
 ROUTE_SCHEMA = llm_select._schema(RouteProposal)
+ALIAS_CHECK_SCHEMA = {"type": "object", "properties": {"verdicts": {
+    "type": "array", "items": llm_select._schema(AliasVerdict)}}, "required": ["verdicts"],
+    "additionalProperties": False}
 REFUSED_REVIEW = {"decision": "refused", "reason": "refused"}
 REFUSED_ALIASES = {"aliases": [], "reason": "refused"}
 REFUSED_ROUTE = {"decision": "refused", "columns": [], "reason": "refused"}
+REFUSED_CHECK = {"verdicts": [], "reason": "refused"}
 
 
 def _parser(model: type[BaseModel]):
@@ -50,6 +64,27 @@ def _parser(model: type[BaseModel]):
 
 
 parse_review, parse_aliases = _parser(SuggestReview), _parser(AliasProposal)
+
+
+def parse_alias_check(content: str, item: dict) -> dict:
+    """One verdict per proposed alias, each named exactly once."""
+    answer = _parser(AliasCheck)(content, item)
+    got = [v["alias"].strip().lower() for v in answer["verdicts"]]
+    if sorted(got) != sorted(item["input"]["proposed_vietnamese_names"]):
+        raise llm_select.LLMSelectError(f"verdicts {got} do not match the proposed names")
+    return answer
+
+
+def alias_check_items(rows: Sequence[dict], info: dict,
+                      english: dict[str, list[str]]) -> list[dict]:
+    """One item per concept of `rows` (alias review rows with an alias): the concept and its
+    proposed Vietnamese names, without the proposer's reason (an independent check)."""
+    by_cui: dict[str, list[str]] = {}
+    for r in rows:
+        by_cui.setdefault(r["cui"], []).append(r["alias"])
+    return [{"kind": "alias-check", "string": cui, "input": {
+        **_concept(info, cui), "english_names": english.get(cui, [])[:8],
+        "proposed_vietnamese_names": sorted(aliases)}} for cui, aliases in sorted(by_cui.items())]
 
 
 def parse_route(content: str, item: dict) -> dict:

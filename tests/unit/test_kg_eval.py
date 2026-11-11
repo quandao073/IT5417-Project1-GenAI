@@ -93,3 +93,42 @@ def test_the_corpus_top_honours_views_and_an_allow_list():
     assert c.top(np.array([1, 0.5, 0.2]), 2) == [0, 1]
     assert c.top(np.array([1, 0.5, 0.2]), 2, ("PA",)) == [1, 2]
     assert c.top(np.array([1, 0.5, 0.2]), 2, (), np.array([False, False, True])) == [2]
+
+
+def test_fusion_adds_the_text_cosine_and_a_text_route_replaces_an_empty_rescore():
+    import numpy as np
+
+    from src.evaluation import kg_eval as ke
+    from src.kg.expand import Column, Intent
+
+    class M:
+        study_ids = ["s0", "s1", "s2"]
+        views = np.array(["AP", "AP", "PA"])
+
+        def score(self, intents):
+            return np.array([3.0, 2.0, 1.0], dtype=np.float32)
+
+        def top_k(self, scores, k, views=()):
+            mask = np.isin(self.views, list(views)) if views else np.ones(3, bool)
+            order = [int(i) for i in np.argsort(-scores, kind="stable") if mask[i]]
+            return order[:k]
+
+    col = Column("C1", "C1", 1.0, 0.8, False, False)
+    present = [Intent("x", "C1", "x", "PRESENT", "direct", columns=[col])]
+    vectors = np.eye(3, dtype=np.float32)
+    text = np.array([0, 0, 1], dtype=np.float32)          # points at s2
+    assert ke.fuse(M(), present, vectors, text, 0.0, 3, ()) == ["s0", "s1", "s2"]
+    assert ke.fuse(M(), present, vectors, text, 10.0, 1, ()) == ["s2"]
+    assert ke.fuse(M(), [Intent("x", "", "x", "PRESENT", "none")], vectors, text, 1, 3, ()) is None
+
+    class FB:
+        pass
+
+    fb = FB()
+    fb.vectors, fb.views = vectors, M.views
+    nothing = [Intent("x", "", "x", "PRESENT", "none")]
+    assert ke.needs_text(nothing) and not ke.needs_text(present)
+    assert ke.rescore(M(), nothing, 2, (), fb, text) == ["s2", "s0"]
+    assert ke.rescore(M(), nothing, 2, ()) == []
+    only_no = [Intent("x", "C1", "x", "ABSENT", "direct", columns=[col])]
+    assert not ke.needs_text(only_no)

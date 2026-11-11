@@ -72,7 +72,11 @@ def cmd_kg_bench_build(args: argparse.Namespace) -> int:
     ends, routed = _manual_cuis(kcfg["graph"])
     columns, catalog = kb.catalog(nodes, quality, ends)
     known = {r["cui"] for r in catalog} | {c["cui"] for c in columns}
-    reuse = _do_not_reuse()
+    out = Path(args.out or bcfg["file"])
+    # --extend: the existing questions keep their id, split and gold; only new ones are written,
+    # and none may copy an existing one
+    existing = kb.read_jsonl(out) if args.extend else []
+    reuse = _do_not_reuse() + [r["question"] for r in existing]
     used = {kb.normalize(q) for q in reuse}
     ledger = _ledger(ecfg)
     author = kg_llm.CachedCaller("author", ecfg["llm"]["author"], key,
@@ -86,12 +90,20 @@ def cmd_kg_bench_build(args: argparse.Namespace) -> int:
     catalog_text = _catalog_text(catalog)
     catalog_sha = kg_llm.sha256_text(catalog_text)
 
-    rows, log = [], {}
+    rows, log, wants = [], {}, []
     groups = list(bcfg["groups"].items())
     if args.groups:
         groups = [g for g in groups if g[0] in args.groups]
     for group, description in groups:
-        n_en, n_vi = kb.lang_counts(list(bcfg["groups"]).index(group), bcfg["per_group"])
+        gi = list(bcfg["groups"]).index(group)
+        old = [r for r in existing if r["group"] == group]
+        if args.extend:
+            need = kb.extend_counts(old, gi, bcfg["extend"]["dev_per_group"],
+                                    bcfg["extend"]["heldout_per_group"])
+            n_en, n_vi = need["n_en"], need["n_vi"]
+            wants.append(need["dev"])
+        else:
+            n_en, n_vi = kb.lang_counts(gi, bcfg["per_group"])
         problems: list[str] = []
         questions: list[dict] = []
         for attempt in range(args.attempts):
@@ -109,7 +121,7 @@ def cmd_kg_bench_build(args: argparse.Namespace) -> int:
                 break
         log[group] = {"attempts": attempt + 1, "problems": problems}
         used |= {kb.normalize(q["question"]) for q in questions}
-        rows += kb.assign_ids(group, questions)
+        rows += kb.assign_ids(group, questions, start=len(old) + 1)
 
     # (a) automatic check: every CUI is in the graph; the graph's expansion against the gold
     settings = Settings()
@@ -149,17 +161,22 @@ def cmd_kg_bench_build(args: argparse.Namespace) -> int:
         print(f"review {group}: {sum(r['gold_disputed'] for r in members)} disputed; "
               f"spent {ledger.total:.2f} USD")
 
-    assignment = kb.split(rows, bcfg["dev_per_group"], bcfg["seed"])
+    assignment = kb.split(rows, wants if args.extend else bcfg["dev_per_group"], bcfg["seed"])
     for r in rows:
         r["split"] = assignment[r["id"]]
         r["gold_by"] = {"author": author.model, "author_prompt_sha256": a_sha,
                         "reviewer_prompt_sha256": r_sha}
     # The author's note and the reviewer's reason quote concept names from the catalog (UMLS
     # content): they stay under data/, the committed file keeps codes and question text only.
-    kb.write_jsonl(work / "bench_notes.jsonl", [
+    notes_path = work / "bench_notes.jsonl"
+    old_notes = kb.read_jsonl(notes_path) if args.extend else []
+    kb.write_jsonl(notes_path, old_notes + [
         {"id": r["id"], "note": r.pop("note"), "review_reason": r["review"].pop("reason")}
         for r in rows])
-    out = Path(args.out or bcfg["file"])
+    new_ids = [r["id"] for r in rows]
+    order = list(bcfg["groups"])
+    rows = sorted(existing + rows, key=lambda r: (order.index(r["group"]),
+                                                  int(r["id"].rsplit("-", 1)[1])))
     file_sha = kb.write_jsonl(out, rows)
     summary = {"file": str(out), "sha256": file_sha, "questions": len(rows),
                "dev": sum(r["split"] == "dev" for r in rows),
@@ -168,7 +185,10 @@ def cmd_kg_bench_build(args: argparse.Namespace) -> int:
                "disputed": sum(r["gold_disputed"] for r in rows),
                "auto_mismatch": sum(not r["auto_check"]["columns_match"] for r in rows),
                "authoring": log, "spent_usd": round(ledger.total, 4)}
-    (work / "bench_build.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    if args.extend:
+        summary |= {"new_ids": new_ids, "new_dev_per_group": wants}
+    (work / ("bench_extend.json" if args.extend else "bench_build.json")).write_text(
+        json.dumps(summary, indent=2), encoding="utf-8")
     print(json.dumps(summary, indent=2))
     return 0
 
@@ -200,11 +220,11 @@ def _components(ecfg: dict, ledger, key: str):
     if status != "ok":
         raise SystemExit(f"STOP: B1 parser language model is {status}")
     matrix_dir = (Path(settings.indexes_dir) / "image_scores"
-                  / f"{manifest['build_id']}_ext1")
+                  / f"{manifest['build_id']}{runtime.MATRIX_SUFFIX}")
     search, notes = runtime.build_kg_search(
         settings.model_copy(update={"kg_matrix_dir": matrix_dir}),
         {"build_id": manifest["build_id"]},
-        images.select("image_id", "projection"))
+        images.select("image_id", "projection"), encoder=encoder)
     if search.store is None or search.chooser is None:
         raise SystemExit(f"STOP: the KG search is degraded at startup: {notes}")
     translator = kg_llm.CachedCaller("translator", ecfg["llm"]["translator"], key,
@@ -216,7 +236,13 @@ def _components(ecfg: dict, ledger, key: str):
         seed=rcfg["results"]["label_order_seed"])
     mapping = yaml_labels()
     label_of_cui = {entry["id"]: label for label, entry in mapping.items()}
+    from src.kg.scoring import ScoreMatrix
+
+    zero_shot = ScoreMatrix.load(Path(settings.indexes_dir) / "image_scores"
+                                 / f"{manifest['build_id']}_ext1",
+                                 images.select("image_id", "projection"))
     return {"corpus": corpus, "encoder": encoder, "b1_parser": b1_parser, "search": search,
+            "zero_shot_matrix": zero_shot,
             "translator": translator, "label_matrix": label_matrix,
             "label_of_cui": label_of_cui, "labels_cfg": rcfg["constraints"],
             "concepts_cfg": load_config("concepts"), "manifest": manifest, "notes": notes}
@@ -279,12 +305,13 @@ def cmd_eval_kg(args: argparse.Namespace) -> int:
                                **{k: parts[k] for k in (
                                    "corpus", "encoder", "b1_parser", "search", "translator",
                                    "label_matrix", "label_of_cui", "labels_cfg",
-                                   "concepts_cfg")})
+                                   "concepts_cfg", "zero_shot_matrix")})
             runner.runs.setdefault("_meta", {}).update(
                 {"versions": parts["search"].versions, "notes": parts["notes"],
                  "build_id": parts["manifest"]["build_id"]})
             runner.run_all([s for s in systems if s != "_meta"], args.rerun)
             runner.run_transforms()
+            runner.run_fusion()
             print(f"run done; spent {ledger.total:.2f} USD")
         runs = json.loads((work / f"runs_{args.split}.json").read_text(encoding="utf-8"))
         meta = runs.pop("_meta", {})
@@ -349,4 +376,6 @@ def register(sub) -> None:
     b.add_argument("--out", default=None)
     b.add_argument("--groups", nargs="+", default=None, help="only these groups (a trial)")
     b.add_argument("--attempts", type=int, default=2, help="author retries on rule breaks")
+    b.add_argument("--extend", action="store_true",
+                   help="keep the questions of --out and add new ones up to benchmark.extend")
     b.set_defaults(func=cmd_kg_bench_build)
