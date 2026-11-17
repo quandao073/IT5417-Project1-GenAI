@@ -25,7 +25,7 @@ from src.kg.llm_query import ConceptChooser, Explainer, GroundingIndex, sha256
 from src.kg.pipeline import KGSearch
 from src.kg.scoring import ScoreMatrix
 from src.kg.store import Neo4jStore, StoreError
-from src.kg.translate import Translator, model_ask
+from src.kg.translate import Translator, model_ask, strip_marks
 from src.query import llm_parser as llm
 from src.query.parser import QueryParser
 from src.query.rule_parser import RuleParser
@@ -148,12 +148,17 @@ def build_kg_search(settings: Settings, manifest: dict, images: pl.DataFrame, *,
                                                  "one line per image.")), guard, explain_text,
                               kl["explain"]["timeout_seconds"], index, base)
         translate_text = _text(kl["translate"]["prompt_file"])
+        unaccented_text = _text(kl["translate"]["unaccented_prompt_file"])
         translator = Translator(model_ask(client("translate"), guard, translate_text,
                                           kl["translate"]["timeout_seconds"]),
                                 vi_ascii_phrases(pl.read_parquet(graph_dir / "aliases.parquet",
-                                                                 columns=["norm", "lang"])))
+                                                                 columns=["cui", "text", "norm",
+                                                                          "lang"]), nodes),
+                                model_ask(client("translate"), guard, unaccented_text,
+                                          kl["translate"]["timeout_seconds"]))
         versions |= {"translate_model": kl["translate"]["model"],
                      "translate_prompt_sha256": sha256(translate_text),
+                     "translate_unaccented_prompt_sha256": sha256(unaccented_text),
                      "fusion_weight": cfg["query"]["fusion"]["weight"]}
         versions |= {"parser_model": kl["parser"]["model"], "parser_prompt_sha256":
                      parser.prompt_sha256, "select_model": kl["select"]["model"],
@@ -196,15 +201,28 @@ def build_kg_search(settings: Settings, manifest: dict, images: pl.DataFrame, *,
     return search, notes
 
 
-def vi_ascii_phrases(aliases: pl.DataFrame) -> frozenset[str]:
-    """Vietnamese aliases of the KG written in plain ASCII ("suy tim", "tdmp") that are no English
-    alias and hold no word that is one ("copd", "sheath catheter"): a question holding one is
-    Vietnamese though it has no Vietnamese letter, so B0 and the score fusion read its English
-    (translate.is_vietnamese)."""
+def vi_ascii_phrases(aliases: pl.DataFrame, nodes: pl.DataFrame) -> dict[str, str]:
+    """How the KG's Vietnamese aliases are typed without tone marks, each with what it means:
+    {"tran dich mang phoi": "tràn dịch màng phổi = pleural effusion"}. Kept: aliases already
+    plain ASCII ("suy tim", "tdmp") and the unmarked form of the others of two words or more (one
+    short word such as "phu" or "u" would catch English), none an English alias or holding a word
+    that is one ("copd", "sheath catheter"). A question holding one is Vietnamese though it has no
+    Vietnamese letter, and the meanings go to the translator with it (src/kg/translate.py)."""
     en = set(aliases.filter(pl.col("lang") == "en")["norm"].str.to_lowercase())
-    return frozenset(n for n in aliases.filter(pl.col("lang") == "vi")["norm"].str.to_lowercase()
-                     if re.fullmatch(r"[a-z0-9]+( [a-z0-9]+)*", n) and n not in en
-                     and not en & set(n.split()))
+    name = {c: re.sub(r"\s*\([^)]*\)$", "", n).lower()
+            for c, n in nodes.select("cui", "name").iter_rows()}
+    found: dict[str, dict[str, set[str]]] = {}
+    for cui, text, norm in (aliases.filter(pl.col("lang") == "vi")
+                            .select("cui", "text", "norm").iter_rows()):
+        plain = strip_marks(norm.lower())
+        if (re.fullmatch(r"[a-z0-9]+( [a-z0-9]+)*", plain) and plain not in en
+                and not en & set(plain.split()) and (norm.isascii() or " " in plain)
+                and cui in name):
+            entry = found.setdefault(plain, {})
+            entry.setdefault(text, set()).add(name[cui])
+    return {plain: "; ".join(f"{text} = {' / '.join(sorted(names))}"
+                             for text, names in sorted(entry.items()))
+            for plain, entry in found.items()}
 
 
 def vi_names(aliases: pl.DataFrame) -> dict[str, str]:

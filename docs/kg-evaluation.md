@@ -690,6 +690,33 @@ mặc định (`models.yaml: kg_llm.explain.knowledge_prompt_file`).
   hay ngụ ý một khái niệm được chấm riêng. Các lỗi này các luật hiện có không bắt được.
 - Lớp 4 của heldout (mục *Heldout*) đo bằng v4 với bộ kiểm cũ, khi bộ kiểm chưa bắt ba lỗi này. Heldout không chạy lại.
 
+### Phạm vi câu hỏi và câu tiếng Việt không dấu (2026-11-17, D79; không chạy lại heldout)
+
+**Câu ngoài phạm vi.** Parser KG v4 (`query_parser_v4`, sha256 `936d9e9f…`) trả thêm `scope` trong cùng lượt gọi. Câu
+`out_of_scope` mà không cụm nào khớp khái niệm của KG thì B2 không trả ảnh, không diễn giải (trước đó: 10 phim theo
+đường văn bản). Đo chỉ bằng parser, 3 lượt (`scripts/kg_scope_check.py`, kết quả ở `data/eval/scope_check_v1.json`):
+
+| Bộ | Số câu | Bị gọi out_of_scope (3 lượt) | Mục tiêu |
+|---|---|---|---|
+| Ngoài phạm vi tự viết (`benchmarks/out_of_scope_v1.txt`: 8 EN, 7 VI, 3 prompt injection) | 15 | 15 / 15 / 15 | cao |
+| Dev (`kg_queries_v1.jsonl`) | 72 | 0 / 0 / 0 | 0 |
+| Smoke (`docs/v2-6-smoke.txt`) | 24 | 0 / 0 / 0 | 0 |
+
+- Không lượt nào rơi về rule parser. Cả 15 câu ngoài phạm vi đều không có cụm nào để tra, nên search chắc chắn từ chối.
+- Giới hạn: 15 câu là bộ nhỏ và do cùng người viết prompt soạn. Prompt có 3 ví dụ ngoài phạm vi (một câu injection),
+  khác câu đo nhưng cùng kiểu. "Bị gọi nhầm" ở dev và smoke là cận trên: search còn đòi không cụm nào khớp KG.
+- Prompt v4 chỉ thêm `scope`, `scope_reason` và 3 ví dụ vào v3. Số dev và heldout ở trên là của v3; lớp 2 của v4 chưa đo.
+
+**Câu tiếng Việt không dấu.** "suy tim" có đủ chữ của tiếng Việt nhưng không có chữ có dấu riêng, nên bị nhận là tiếng
+Anh. Sau khi D78 thêm alias VI toàn ASCII, câu này được dịch, nhưng prompt dịch v1 đọc "tim" thành "tìm" và trả
+"find". Sửa: nhận diện thêm dạng bỏ dấu của alias VI có từ hai chữ trở lên (593 cụm); câu không dấu đi prompt
+`kg_translate_unaccented_v1`, kèm nghĩa EN của các cụm KG khớp trong câu. Câu có dấu vẫn dùng prompt v1 như eval.
+
+- Benchmark: 0 / 86 câu VI thiếu chữ có dấu riêng, và nhận diện mới vẫn khớp nhãn `lang` 172 / 172. Vậy B0 và B2 của eval
+  dịch đúng như trước; không số nào cần chạy lại.
+- Test thật (`tests/integration/test_translate_live.py`, 3 lượt): "suy tim" → "heart failure", "tran dich mang phoi"
+  → "pleural effusion". Bản chỉ đổi prompt mà không kèm nghĩa vẫn trả "suy tim" và "lung infiltrate".
+
 ### Đọc kết quả
 
 - **Tham chiếu chỉ là trần thật ở nhóm control.** Tham chiếu lọc study theo nhãn CheXpert của gold. Với khái niệm ngoài 14

@@ -21,6 +21,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.api.dependencies import AppState, require_ready
+from src.kg.messages import Warn
 from src.kg.pipeline import KGResult
 
 router = APIRouter()
@@ -71,6 +72,16 @@ def result_scores(state: AppState, result: KGResult) -> list[list[dict]]:
              for i, e in entry.items()] for entry in probs]
 
 
+def _scope(kg, result: KGResult) -> dict:
+    """The refusal of a request for no chest X-ray: a message and three questions to try (D79)."""
+    if result.status != "out_of_scope":
+        return {}
+    lang = result.language if result.language in ("en", "vi") else "en"
+    return {"message": Warn("out_of_scope").render(lang),
+            "examples": kg.cfg["query"]["out_of_scope_examples"][lang][:3],
+            "scope_reason": result.query.scope_reason}
+
+
 def results_event(state: AppState, result: KGResult) -> dict:
     kg = state.kg
     intents = [_intent(i, result.language, kg.names_vi) for i in result.intents]
@@ -85,6 +96,7 @@ def results_event(state: AppState, result: KGResult) -> dict:
                          "exclude": result.query.exclude, "views": result.query.views,
                          "terms": [t.model_dump() for t in result.query.terms]},
         "intents": intents, "warnings": result.warnings_text(),
+        "status": result.status, **_scope(kg, result),
         "degraded": result.degraded,
         "results": [{"rank": r["rank"], "study_id": r["study_id"], "image_id": r["image_id"],
                      "image_url": f"/api/v1/images/{r['image_id']}", "view": r["view"],
@@ -98,8 +110,10 @@ def results_event(state: AppState, result: KGResult) -> dict:
 
 def explanation_event(result: KGResult, explanation) -> dict:
     if explanation is None:
-        return {"event": "explanation", "request_id": result.request_id,
-                "status": "disabled" if result.rows else "no_results", "fallback": "path"}
+        status = ("out_of_scope" if result.status == "out_of_scope"
+                  else "disabled" if result.rows else "no_results")
+        return {"event": "explanation", "request_id": result.request_id, "status": status,
+                "fallback": None if status == "out_of_scope" else "path"}
     event = {"event": "explanation", "request_id": result.request_id,
              "status": explanation.status, "summary": explanation.summary,
              "images": [{"rank": k, "line": v} for k, v in sorted(explanation.images.items())],

@@ -125,7 +125,10 @@ class QueryParser:
                                     include=out.include, exclude=out.exclude,
                                     views=out.views, language=out.language,
                                     terms=out.terms if self.with_terms else [],
-                                    sides=out.sides if self.with_terms else [])
+                                    sides=out.sides if self.with_terms else [],
+                                    scope=out.scope if self.with_terms else "chest_xray",
+                                    scope_reason=(out.scope_reason[:200] if self.with_terms
+                                                  else ""))
             except (llm.LLMInvalidOutput, ValidationError) as exc:
                 attempts += 1
                 error = _error_text(exc)

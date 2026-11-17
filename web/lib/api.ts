@@ -64,6 +64,11 @@ export interface ResultsEvent {
   intents: Intent[];
   warnings: string[];
   degraded: string[];
+  // "out_of_scope": the request asks for no chest X-ray; no images, a message and examples (D79)
+  status: "ok" | "out_of_scope";
+  message?: string;
+  examples?: string[];
+  scope_reason?: string;
   results: KGResult[];
   timings_ms: Record<string, number>;
   trace: {
@@ -78,7 +83,7 @@ export interface ResultsEvent {
 export interface ExplanationEvent {
   event: "explanation";
   request_id: string;
-  status: "ok" | "partial" | "ungrounded" | "failed" | "disabled" | "no_results";
+  status: "ok" | "partial" | "ungrounded" | "failed" | "disabled" | "no_results" | "out_of_scope";
   summary?: string;
   images?: { rank: number; line: string }[];
   knowledge?: string;

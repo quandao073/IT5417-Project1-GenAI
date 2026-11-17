@@ -135,6 +135,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   margin: 0.35rem 0 0.2rem; padding: 0.15rem 0; cursor: help; font-variant-numeric: tabular-nums;
 }
 .weight { color: var(--accent); font-weight: 700; cursor: help; border-bottom: 1px dotted var(--accent); }
+.out-of-scope { border-left: 6px solid var(--miss-text); }
+.out-of-scope h2 { color: var(--miss-text); }
 .scale-note { font-size: 0.85rem; color: var(--muted); margin: 0 0 0.5rem; }
 .card img, .thumb {
   width: 100%; aspect-ratio: 1 / 1; object-fit: contain; background: var(--image-bg); display: block;

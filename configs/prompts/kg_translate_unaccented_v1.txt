@@ -1,0 +1,5 @@
+Translate the user's chest X-ray search question into English, word for word as far as English allows. The question
+is Vietnamese typed without tone marks. Lines "Term: <Vietnamese> = <English>" after the question give the meaning of
+phrases it contains, taken from the system's medical vocabulary: translate those phrases with that English. Read the
+other words as the Vietnamese they most likely are in a request about chest X-rays. Return only the translation of
+the question, never the Term lines. Do not explain, add or remove anything.

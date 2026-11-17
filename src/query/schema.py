@@ -21,6 +21,7 @@ Status = Literal["PRESENT", "UNCERTAIN"]
 View = Literal["AP", "PA"]
 Language = Literal["en", "vi"]
 Side = Literal["left", "right", "bilateral"]
+Scope = Literal["chest_xray", "out_of_scope"]
 ParserName = Literal["llm", "rule"]
 
 _CANONICAL = {name.casefold(): name for name in CHEXPERT_LABELS}
@@ -73,6 +74,10 @@ class SearchQuery(BaseModel):
         default_factory=list,
         description="sides the request names; kept even when nothing is ranked by them")
     language: Language
+    # KG parser prompt v4 only: a request that asks for no chest X-ray at all; the rule parser
+    # and the B1 prompt leave the default (demo review 2026-11-17)
+    scope: Scope = "chest_xray"
+    scope_reason: str = Field("", max_length=200)
 
     @field_validator("semantic_query")
     @classmethod

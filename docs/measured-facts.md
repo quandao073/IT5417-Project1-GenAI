@@ -1303,3 +1303,24 @@ kg_32e035ed37b0, ma trận `..._ext1_probe1@e878b151d823`, gold heldout sha256 `
 - Offline trên v4 cũ: ba luật bắt câu ở 21 / 24 câu từng thua về trung thực (combine 21, khoảng 10, rào đón 6 câu, trên 868
   câu).
 - Chi phí 1,58 USD (Opus 1,47; pipeline 0,11). Ledger 31,14 → 32,72. Dựng lại mẫu người chấm hai split từ cache: 0,01 USD (chấm chéo chưa có trong cache).
+
+## Phạm vi câu hỏi của parser KG v4 (đo 2026-11-17, D79)
+
+Cách đo: `uv run python scripts/kg_scope_check.py --runs 3 --out data/eval/scope_check_v1.json`. Chỉ chạy parser KG
+(`query_parser_v4`, sha256 `936d9e9fba3ee5ab90276bc00c432c7b74fcfa1b8aa1fafa8c1b2bde81088710`, `claude-haiku-5-5`, client
+của KG search, timeout 10 s, không cache), 3 lượt; heldout không đọc.
+
+| Bộ | Số câu | out_of_scope lượt 1 / 2 / 3 | rơi về rule parser |
+|---|---|---|---|
+| `benchmarks/out_of_scope_v1.txt` (8 EN, 7 VI, 3 injection) | 15 | 15 / 15 / 15 (cả 15 không có cụm nào để tra) | 0 |
+| Dev của `benchmarks/kg_queries_v1.jsonl` | 72 | 0 / 0 / 0 | 0 |
+| `docs/v2-6-smoke.txt` | 24 | 0 / 0 / 0 | 0 |
+
+## Nhận diện tiếng Việt không dấu (đo 2026-11-17, D79)
+
+Cách đo: `runtime.vi_ascii_phrases` trên `data/kg/graph/aliases.parquet` (kg_32e035ed37b0) cho 593 cụm; so
+`translate.is_vietnamese` với nhãn `lang` của `benchmarks/kg_queries_v1.jsonl`: khớp 172 / 172. Câu VI của benchmark
+không có chữ có dấu riêng: 0 / 86. Câu smoke không có chữ có dấu riêng mà được nhận là tiếng Việt: chỉ "suy tim".
+Dịch thật (`uv run pytest -m llm tests/integration/test_translate_live.py`, 3 lần, đều qua): "suy tim" → chứa "heart
+failure", "tran dich mang phoi" → chứa "pleural effusion".
+

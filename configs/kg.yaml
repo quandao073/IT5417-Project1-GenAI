@@ -294,6 +294,10 @@ query:
   # with the image), z over the whole corpus per question; the English is B0's (src/kg/translate.py), asked beside the
   # parser for a Vietnamese question. 0: KG score only (the `fusion_off` of the evaluation).
   fusion: {weight: 0.2}
+  # Shown with the refusal of a request for no chest X-ray (D79): questions of docs/v2-6-smoke.txt, not of the benchmark.
+  out_of_scope_examples:
+    en: [no pneumothorax and no pleural effusion, heart failure with small pleural effusions, pacemaker leads]
+    vi: [tràn khí màng phổi bên phải, bệnh lý màng phổi, phim có nốt phổi ở thùy trên]
   # Forms of concepts.yaml that mean two things: left out of the KG parser's concept list so that the question's
   # words reach lookup_concept and the language model chooses with the whole question (WORKLOG D64), and the forms
   # that also name a scorable concept below the label, which has its own, better scored column (WORKLOG D67; the

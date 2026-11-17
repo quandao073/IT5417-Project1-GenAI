@@ -27,7 +27,7 @@ const INTENTS: Intent[] = [
 ];
 
 const RESULTS: ResultsEvent = {
-  event: "results", request_id: "r", kg_build_id: "kg_x", matrix_version: "m", build_id: "b",
+  event: "results", status: "ok", request_id: "r", kg_build_id: "kg_x", matrix_version: "m", build_id: "b",
   versions: {}, language: "vi", intents: INTENTS,
   warnings: ["Suy từ dấu hiệu (Heart failure).", "Không chấm được \"sỏi thận\""], degraded: [],
   results: [{ rank: 1, study_id: "p/s1", image_id: "img1", image_url: "/api/v1/images/img1",
@@ -59,6 +59,19 @@ describe("presentation", () => {
 });
 
 describe("components", () => {
+  it("a refused request shows the message and the questions to try, no results", async () => {
+    const { OutOfScope } = await import("@/components/OutOfScope");
+    const tried: string[] = [];
+    render(<OutOfScope data={{ ...RESULTS, status: "out_of_scope", results: [],
+                               message: "Hệ thống chỉ tìm ảnh X-quang ngực.",
+                               examples: ["suy tim", "pacemaker leads", "bệnh lý màng phổi"],
+                               scope_reason: "pet photos" }}
+                       onTry={(q) => tried.push(q)} />);
+    expect(screen.getByRole("status").textContent).toMatch(/chỉ tìm ảnh X-quang ngực/);
+    screen.getByText("pacemaker leads").click();
+    expect(tried).toEqual(["pacemaker leads"]);
+  });
+
   it("the understanding panel shows concepts, columns with weights, warnings and misses", () => {
     render(<Understanding data={RESULTS} />);
     expect(screen.getByText("suy tim (Heart failure)")).toBeTruthy();

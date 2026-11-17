@@ -5,6 +5,7 @@ import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 
 import { Detail } from "@/components/Detail";
 import { Explanation } from "@/components/Explanation";
+import { OutOfScope } from "@/components/OutOfScope";
 import { ResultGrid } from "@/components/ResultGrid";
 import type { FormValue } from "@/components/SearchForm";
 import { SearchForm } from "@/components/SearchForm";
@@ -70,10 +71,14 @@ function SearchPage() {
   const line = open && explanation?.images?.find((x) => x.rank === open.rank)?.line;
   return (
     <>
-      <SearchForm initial={initial} busy={busy} withExplain onSubmit={submit} />
+      {/* keyed by the URL's question: an example tried from the refusal shows in the box */}
+      <SearchForm key={initial.query} initial={initial} busy={busy} withExplain onSubmit={submit} />
       {error && <p className="error" role="alert">{error}</p>}
       {busy && !results && <div className="skeleton" style={{ height: 240 }} aria-label="Đang tìm" />}
-      {results && (
+      {results?.status === "out_of_scope" && (
+        <OutOfScope data={results} onTry={(q) => submit({ ...initial, query: q })} />
+      )}
+      {results && results.status !== "out_of_scope" && (
         <div className="layout">
           <div>
             <h2>Kết quả · {results.results.length} ảnh</h2>

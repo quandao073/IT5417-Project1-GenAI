@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from src.common.config import default_config_dir
 from src.data.labels import CHEXPERT_LABELS
-from src.query.schema import Constraint, Language, Side, Term, View, canonical_concept
+from src.query.schema import Constraint, Language, Scope, Side, Term, View, canonical_concept
 
 ProbeStatus = Literal["ok", "missing_model", "unreachable"]
 _EXAMPLE = re.compile(r"^Request: (.+)$", re.MULTILINE)
@@ -46,6 +46,8 @@ class LLMOutput(BaseModel):
     terms: list[Term] = Field(default_factory=list)
     sides: list[Side] = Field(default_factory=list)
     language: Language
+    scope: Scope = "chest_xray"
+    scope_reason: str = ""
 
     @field_validator("exclude")
     @classmethod
@@ -55,7 +57,8 @@ class LLMOutput(BaseModel):
 
 def output_schema(with_terms: bool = False) -> dict:
     """Hand-built (not model_json_schema) so there are no $refs for the grammar builder.
-    `with_terms` adds the `terms` and `sides` arrays of the KG parser prompt (query_parser_v3)."""
+    `with_terms` adds the `terms` and `sides` arrays and the `scope` of the KG parser prompt
+    (query_parser_v4)."""
     concept = {"type": "string", "enum": list(CHEXPERT_LABELS)}
     schema = {
         "type": "object",
@@ -80,7 +83,10 @@ def output_schema(with_terms: bool = False) -> dict:
             "required": ["text", "polarity"]}}
         schema["properties"]["sides"] = {"type": "array", "items": {
             "type": "string", "enum": ["left", "right", "bilateral"]}}
-        schema["required"] = [*schema["required"], "terms", "sides"]
+        schema["properties"]["scope"] = {"type": "string",
+                                         "enum": ["chest_xray", "out_of_scope"]}
+        schema["properties"]["scope_reason"] = {"type": "string"}
+        schema["required"] = [*schema["required"], "terms", "sides", "scope", "scope_reason"]
     return schema
 
 

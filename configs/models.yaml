@@ -123,8 +123,9 @@ llm:
   # Relative to configs/. The rendered prompt's sha256 is part of the parse-cache
   # key and of parser_eval.json, so a prompt edit never reuses a stale parse.
   prompt_file: prompts/query_parser_v1.txt
-  # The KG search's parser: the same task plus `terms` for phrases outside the 14 labels (WORKLOG D66).
-  kg_prompt_file: prompts/query_parser_v3.txt
+  # The KG search's parser: the same task plus `terms` for phrases outside the 14 labels (WORKLOG D66),
+  # and since v4 `scope`: a request for no chest X-ray at all is refused (D79).
+  kg_prompt_file: prompts/query_parser_v4.txt
   num_predict: 300
   seed: 20260101
   # Ollama unloads after 5 min by default; a pause in a demo must not pay the reload.
@@ -169,5 +170,7 @@ kg_llm:
   # The English of a Vietnamese question for the text route and score fusion (kg.yaml query.fusion; WORKLOG D74, T44):
   # B0's prompt, run beside the parser.
   translate: {model: claude-haiku-5-5, timeout_seconds: 3, max_tokens: 1024,
-              prompt_file: prompts/kg_b0_translate_v1.txt}
+              prompt_file: prompts/kg_b0_translate_v1.txt,
+              # Vietnamese typed without tone marks (src/kg/translate.py): v1 read "suy tim" as "find"
+              unaccented_prompt_file: prompts/kg_translate_unaccented_v1.txt}
   breaker: {failures: 3, cooldown_seconds: 60}

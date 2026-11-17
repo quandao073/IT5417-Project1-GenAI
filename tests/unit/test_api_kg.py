@@ -149,7 +149,28 @@ def test_vi_ascii_phrases_keep_only_vietnamese_forms_that_are_no_english_word():
 
     from src.kg.runtime import vi_ascii_phrases
 
-    aliases = pl.DataFrame({
-        "norm": ["suy tim", "tràn dịch", "copd", "sheath catheter", "catheter", "copd", "tdmp"],
-        "lang": ["vi", "vi", "vi", "vi", "en", "en", "vi"]})
-    assert vi_ascii_phrases(aliases) == {"suy tim", "tdmp"}
+    norms = ["suy tim", "tràn dịch", "copd", "sheath catheter", "catheter", "copd", "tdmp"]
+    aliases = pl.DataFrame({"cui": ["C1", "C2", "C3", "C4", "C4", "C3", "C2"], "text": norms,
+                            "norm": norms, "lang": ["vi", "vi", "vi", "vi", "en", "en", "vi"]})
+    nodes = pl.DataFrame({"cui": ["C1", "C2", "C3", "C4"],
+                          "name": ["Heart failure", "Pleural effusion (disorder)", "COPD",
+                                   "Sheath"]})
+    assert vi_ascii_phrases(aliases, nodes) == {"suy tim": "suy tim = heart failure",
+                                                "tran dich": "tràn dịch = pleural effusion",
+                                                "tdmp": "tdmp = pleural effusion"}
+
+
+
+def test_an_out_of_scope_request_gets_a_message_examples_and_no_explanation(world):
+    from tests.kg.search_kit import parse_reply as reply
+
+    explain = Chat(EXPLANATION)
+    c, _ = kg_client(world, parser_chat=Chat(reply(scope="out_of_scope")), explain_chat=explain)
+    first, second = ndjson(c.post("/api/v1/search/kg", json={"query": "ảnh chó mèo"}))
+    assert first["status"] == "out_of_scope" and first["results"] == []
+    assert first["message"] == "Hệ thống chỉ tìm ảnh X-quang ngực."
+    assert len(first["examples"]) == 3 and first["scope_reason"]
+    assert second["status"] == "out_of_scope" and explain.calls == []
+    ok = ndjson(kg_client(world, parser_chat=Chat(parse_reply(include=["Cardiomegaly"])))[0]
+                .post("/api/v1/search/kg", json={"query": "tim to"}))[0]
+    assert ok["status"] == "ok" and "message" not in ok

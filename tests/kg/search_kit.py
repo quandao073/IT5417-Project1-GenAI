@@ -59,10 +59,15 @@ class DownStore(FakeStore):
         return super().__getattribute__(name)
 
 
-def parse_reply(include=(), exclude=(), terms=(), views=(), findings=""):
-    return {"findings": findings, "include": [{"concept": c, "status": "PRESENT"} for c in include],
-            "exclude": list(exclude), "views": list(views), "language": "vi",
-            "terms": [{"text": t, "polarity": p} for t, p in terms]}
+def parse_reply(include=(), exclude=(), terms=(), views=(), findings="", scope=None):
+    reply = {"findings": findings,
+             "include": [{"concept": c, "status": "PRESENT"} for c in include],
+             "exclude": list(exclude), "views": list(views), "language": "vi",
+             "terms": [{"text": t, "polarity": p} for t, p in terms]}
+    if scope is not None:                       # prompt v4 (D79)
+        reply |= {"scope": scope, "scope_reason": "not a chest X-ray" if scope != "chest_xray"
+                  else ""}
+    return reply
 
 
 def matrix() -> ScoreMatrix:
