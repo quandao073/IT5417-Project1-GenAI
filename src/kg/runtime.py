@@ -181,11 +181,27 @@ def build_kg_search(settings: Settings, manifest: dict, images: pl.DataFrame, *,
     search = KGSearch(cfg=cfg, matrix=matrix, parser=parser, store=store, quality=quality,
                       label_ids=label_ids, names=dict(nodes.select("cui", "name").iter_rows()),
                       chooser=chooser, explainer=explainer, versions=versions, semantic=semantic,
-                      text_fallback=fallback, translator=translator)
+                      text_fallback=fallback, translator=translator,
+                      names_vi=vi_names(pl.read_parquet(graph_dir / "aliases.parquet",
+                                                        columns=["cui", "text", "lang",
+                                                                 "source"]))
+                      | {cui: concepts["concepts"][label]["vi"][0]      # the labels' own form
+                         for label, cui in label_ids.items()})
     if warm_up and parser.llm is not None:
         # a TLS handshake and the prompt cache are paid off the request path
         threading.Thread(target=parser.parse, args=("cardiomegaly",), daemon=True).start()
     return search, notes
+
+
+def vi_names(aliases: pl.DataFrame) -> dict[str, str]:
+    """One Vietnamese alias per concept, for display: hand-made first, then concepts.yaml, then
+    the reviewed model aliases; the shortest within a source."""
+    rank = {"manual": 0, "concepts_yaml": 1}
+    vi = aliases.filter(pl.col("lang") == "vi").with_columns(
+        pl.col("source").replace_strict(rank, default=2, return_dtype=pl.Int8).alias("r"),
+        pl.col("text").str.len_chars().alias("n"))
+    first = vi.sort("cui", "r", "n", "text").unique("cui", keep="first", maintain_order=True)
+    return dict(first.select("cui", "text").iter_rows())
 
 
 def _label_mapping() -> dict:

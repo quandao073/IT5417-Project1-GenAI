@@ -10,7 +10,7 @@ PY := uv run
 .PHONY: help setup up down logs ps seed smoke test lint typecheck \
         audit-data build-corpus build-probe-pool embed index \
         build-report-index validate-indexes \
-        evaluate benchmark eval-parser eval-retrieval clean
+        evaluate benchmark eval-parser eval-retrieval demo clean
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-20s\033[0m %s\n",$$1,$$2}'
@@ -31,6 +31,10 @@ logs: ## Follow logs
 	$(COMPOSE) logs -f
 ps: ## Service status
 	$(COMPOSE) ps
+
+# --- demo ---
+demo: ## Local demo: Qdrant + Neo4j (Docker), the API (uvicorn), the web UI (pnpm dev) on :3000
+	./scripts/demo.sh
 
 # --- demo data ---
 seed: ## Load synthetic fixtures so the demo runs without the dataset

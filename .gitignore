@@ -37,7 +37,12 @@ node_modules/
 web/.next/
 web/out/
 web/.turbo/
+web/next-env.d.ts
 *.tsbuildinfo
+
+# --- Demo screenshots show CheXpert images and UMLS names: local only (docs/demo/README.md) ---
+docs/demo/*
+!docs/demo/README.md
 
 # --- Docker / local state ---
 .env

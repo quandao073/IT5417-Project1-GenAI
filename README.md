@@ -157,12 +157,36 @@ curl -s http://127.0.0.1:8000/api/v1/search -H "Content-Type: application/json" 
 | Endpoint | Chức năng |
 |---|---|
 | `POST /api/v1/search` | Nhận `query`, `top_k` (1–50), `views` (`AP`/`PA`, tùy chọn). Trả `parsed_query`, `query_text` (câu encoder đã đọc), `results` (ảnh, điểm cosine, `report_evidence`) và `warnings` |
+| `POST /api/v1/search` với `"system": "B0"` | B0 của đánh giá: bản dịch EN của câu hỏi, không parser; `parsed_query` là `null` |
+| `POST /api/v1/search/kg` | Tìm qua KG (B2); NDJSON: sự kiện `results` (mỗi ảnh kèm xác suất từng ý và từng cột) rồi `explanation` |
+| `GET /api/v1/studies/{study_id}/report` | Report của một study, chỉ để đối chiếu; trả 403 trừ khi `configs/demo.yaml: show_report: true` |
 | `POST /api/v1/query/parse` | Chỉ parse câu hỏi |
 | `GET /api/v1/images/{image_id}` | Ảnh JPEG |
 | `GET /api/v1/health` | Build, encoder, trạng thái Qdrant, chỉ mục report và LLM |
 
 `BUILD_ID=<build_id>` chọn build khác để phục vụ; không đặt thì server dùng build duy nhất của
 encoder mặc định. Thử parser riêng: `uv run cxr parse "tim to nhưng không có tràn dịch"`.
+
+## Chạy demo
+
+Giao diện web (`web/`, Next.js) cho câu hỏi EN/VI: kết quả hiện ngay, diễn giải tới sau; khung "Hệ thống hiểu câu hỏi"
+(cụm → khái niệm → cách mở rộng → cột và trọng số, cảnh báo); chi tiết một ảnh (điểm từng cột, đường đi KG, phiên bản);
+màn so sánh B1 · B2 · B0 cùng thứ hạng với `cxr eval-kg`.
+
+1. Cần: Docker Desktop đang chạy; Node ≥ 20 và `pnpm` (`corepack enable`, hoặc `npm i -g pnpm` với Node 25 không còn
+   corepack); chỉ mục đã dựng (mục *Dựng chỉ mục*), KG ở `data/kg/graph/` và ma trận điểm; `ANTHROPIC_API_KEY` trong
+   `.env` (không có thì chạy rule parser, không diễn giải).
+2. Lần đầu: `cd web && pnpm install`, và nạp KG vào Neo4j: `docker compose --profile kg up -d neo4j`, rồi
+   `uv run cxr kg-load-neo4j`.
+3. Mỗi lần: `make demo` (hoặc `./scripts/demo.sh`). Lệnh này bật Qdrant và Neo4j, chạy API ở `127.0.0.1:8000` (lần đầu
+   khoảng 1 phút để nạp encoder, SapBERT, ma trận), chờ `/health` sẵn sàng rồi chạy `pnpm dev`.
+4. Mở http://localhost:3000. Thanh trên cùng phải ghi "API sẵn sàng · KG kg_… · Neo4j ok · LLM ok". Neo4j
+   `unreachable` thì KG chỉ chấm 14 nhãn: chạy lại bước 2.
+5. Ctrl+C dừng API và web; `docker compose --profile kg stop` dừng container.
+
+Nút "Xem report gốc (chỉ để đối chiếu)" chỉ hiện khi `configs/demo.yaml` có `show_report: true` (khởi động lại API).
+Ảnh chụp màn hình: `cd web && pnpm screenshots` khi demo đang chạy (dùng Microsoft Edge có sẵn; ảnh nằm ở `docs/demo/`,
+không commit, xem `docs/demo/README.md`). Kiểm web: `cd web && pnpm test && pnpm typecheck`.
 
 ## Đánh giá
 

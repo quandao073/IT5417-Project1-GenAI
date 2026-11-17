@@ -19,7 +19,7 @@ ghi vào `docs/measured-facts.md`, quyết định vào `WORKLOG.md`. Ngưỡng 
 | V2-6 | Neo4j, bốn tool, LLM chọn khái niệm và diễn giải; B2 chạy end-to-end | V2-4, V2-5 | ✅ 2026-11-05 (D65, D66) |
 | V2-7 | Benchmark và pooling | V2-6, V2-5b | ✅ 2026-11-11: 172 câu (dev 72, heldout 100), gold đã duyệt, pool heldout 4.602 cặp (D70, D72–D74) |
 | V2-8 | Đánh giá chính thức, heldout một lần | V2-7 | ✅ 2026-11-11: heldout một lần (D75): B2 + trộn − B1 +0,138 [+0,078; +0,198]; sau heldout D76, D77; `docs/kg-evaluation.md`, *Kết luận đánh giá* |
-| V2-9 | Agent (ablation) và UI | V2-8; UI chờ `pnpm` (T5) | ⏳ |
+| V2-9 | Agent (ablation) và UI | V2-8 | 🔄 UI xong (D78, `make demo`); agent ⏳ |
 | V2-10 | Thêm ảnh không dựng lại KG: embed rồi nối logit vào ma trận bằng probe đã có (N6) | V2-6 | ⏳ |
 | V2-11 | CI: pytest + ruff mỗi lần push (N12) | — | ⏳ |
 | V2-12 | Số đo vận hành: log JSON từng request, báo cáo độ trễ, chi phí LLM, tỉ lệ fallback (N10) | V2-6 | ⏳ |
@@ -42,7 +42,7 @@ sau khi thêm cạnh của lượt rà đường còn 37): không chấm đượ
 3. V2-12: số đo vận hành: log, độ trễ, chi phí LLM, tỉ lệ fallback (N10).
 4. V2-13: runbook và chạy thử `docker compose` trên máy sạch (N12, T15).
 5. V2-14: kiểm lại hiệu chỉnh cho ảnh từ nguồn khác (N7).
-6. V2-9: agent (ablation) và UI; UI chờ `pnpm` (T5).
+6. V2-9: agent (ablation); UI demo đã xong (D78).
 7. X-1: cột vòng hai.
 8. Viết báo cáo đồ án, từ *Kết luận đánh giá* của `docs/kg-evaluation.md`.
 

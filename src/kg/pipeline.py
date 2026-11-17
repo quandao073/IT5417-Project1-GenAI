@@ -59,9 +59,10 @@ class KGSearch:
     def __init__(self, *, cfg: dict, matrix: ScoreMatrix, parser, store, quality: dict,
                  label_ids: dict[str, str], names: dict[str, str], chooser=None,
                  explainer=None, versions: dict | None = None, semantic=None,
-                 text_fallback=None, translator=None):
+                 text_fallback=None, translator=None, names_vi: dict[str, str] | None = None):
         self.cfg, self.matrix, self.parser, self.store = cfg, matrix, parser, store
         self.quality, self.label_ids, self.names = quality, label_ids, names
+        self.names_vi = names_vi or {}      # cui -> one Vietnamese alias, for display
         self.chooser, self.explainer, self.versions = chooser, explainer, versions or {}
         self.semantic = semantic        # sapbert.AliasIndex or None
         self.text_fallback = text_fallback  # text_fallback.TextFallback or None (D73)

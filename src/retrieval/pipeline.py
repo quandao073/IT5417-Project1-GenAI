@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
+from src.kg.translate import is_vietnamese
 from src.query.schema import SearchQuery
 from src.retrieval.evidence import Evidence
 from src.retrieval.image_search import search_image_embeddings
@@ -30,6 +31,9 @@ ONLY_NEGATIONS = ("only negated findings ({}): the current model tends to return
                   "that show them")
 MORE_THAN_TWO = "more than two constraints ({}) in one template"
 NO_EVIDENCE = "report index unavailable; no evidence"
+B0_NO_TRANSLATOR = ("no translator (KG search or language model off); the question is "
+                    "encoded as written")
+B0_TRANSLATION_FAILED = "translation failed ({}); the question is encoded as written"
 
 
 class VectorLegError(RuntimeError):
@@ -76,22 +80,43 @@ def query_text(query: SearchQuery, concepts_cfg: dict, warnings: list[str]) -> s
     return render(include, exclude, concepts_cfg)
 
 
+def _rank(state: AppState, text: str, views: Sequence[str], top_k: int) -> list[Hit]:
+    try:
+        candidates = search_image_embeddings(
+            text, views or None, top_k, encoder=state.encoder, client=state.client,
+            collection=state.collection, lock=state.encode_lock)
+    except Exception as exc:  # noqa: BLE001 - a dead dependency is a 503, not a traceback
+        raise VectorLegError(str(exc)) from exc
+    return [Hit(c.rank, c.study_id, c.image_id, c.score) for c in candidates]
+
+
 def run_search(state: AppState, query: SearchQuery, *, top_k: int,
                views: Sequence[str]) -> SearchOutcome:
     warnings: list[str] = []
     text = query_text(query, state.concepts_cfg, warnings)
-    hits: list[Hit] = []
-    if text is not None:
-        try:
-            candidates = search_image_embeddings(
-                text, views or None, top_k, encoder=state.encoder, client=state.client,
-                collection=state.collection, lock=state.encode_lock)
-        except Exception as exc:  # noqa: BLE001 - a dead dependency is a 503, not a traceback
-            raise VectorLegError(str(exc)) from exc
-        hits = [Hit(c.rank, c.study_id, c.image_id, c.score) for c in candidates]
+    hits = _rank(state, text, views, top_k) if text is not None else []
     quotes = _evidence(state, query, hits, warnings) if hits else {}
     hits = [replace(h, evidence=quotes.get(h.study_id, [])) for h in hits]
     return SearchOutcome(hits, text, warnings)
+
+
+def run_b0(state: AppState, question: str, *, top_k: int,
+           views: Sequence[str]) -> SearchOutcome:
+    """B0 of the KG evaluation (`kg_eval_run.Runner.run_b0`): no parser, the question's English
+    from the KG search's translator (an English question is its own English) encoded as is,
+    cosine. The evaluation filters no view; `views` here is only the user's facet. No evidence."""
+    warnings: list[str] = []
+    translator = getattr(state.kg, "translator", None)
+    if translator is None:
+        english = question
+        if is_vietnamese(question):
+            warnings.append(B0_NO_TRANSLATOR)
+    else:
+        translation = translator.english(question)
+        english = translation.text or question
+        if translation.error:
+            warnings.append(B0_TRANSLATION_FAILED.format(translation.error))
+    return SearchOutcome(_rank(state, english, views, top_k), english, warnings)
 
 
 def _evidence(state: AppState, query: SearchQuery, hits: list[Hit],

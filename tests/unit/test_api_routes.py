@@ -14,9 +14,11 @@ from src.api.main import create_app
 from src.api.schemas.search import SearchRequest
 from src.common.config import load_config
 from src.query import llm_parser as llm
+from src.retrieval import pipeline
 from tests.unit.fakes import FakeOllama
 from tests.unit.test_api_state import _state
 from tests.unit.test_api_state import world as _world_fixture
+from tests.unit.test_report_index import ROWS
 
 # Re-exported under its own name so pytest finds it here (an import would trip ruff F811).
 world = _world_fixture
@@ -56,8 +58,9 @@ class TestSearch:
         assert first["image_url"] == f"/api/v1/images/{first['image_id']}"
         assert first["study_id"] == state.images[first["image_id"]].study_id
         assert isinstance(first["score"], float) and isinstance(first["report_evidence"], list)
-        assert set(body) == {"request_id", "build_id", "parsed_query", "query_text", "results",
-                             "warnings", "latency_ms"}
+        assert set(body) == {"request_id", "build_id", "system", "parsed_query", "query_text",
+                             "results", "warnings", "latency_ms"}
+        assert body["system"] == "B1"
         assert body["warnings"] == []
         assert isinstance(body["latency_ms"], int) and len(body["request_id"]) == 32
 
@@ -256,3 +259,77 @@ class TestImages:
 
 def test_request_default_top_k_matches_retrieval_yaml():
     assert SearchRequest(query="x").top_k == load_config("retrieval")["results"]["default_top_k"]
+
+
+class TestB0:
+    """`system: B0` is the evaluation's B0: the question's English, encoded as is, no parser."""
+
+    def test_an_english_question_is_encoded_as_written_without_a_parse(self, client):
+        c, _, _ = client
+        body = _search(c, "pleural effusion", system="B0", top_k=3)
+        assert body["system"] == "B0" and body["parsed_query"] is None
+        assert body["query_text"] == "pleural effusion" and body["warnings"] == []
+        assert [r["rank"] for r in body["results"]] == [1, 2, 3]
+        assert all(r["report_evidence"] == [] for r in body["results"])
+
+    def test_b1_is_the_default(self, client):
+        c, _, _ = client
+        assert ([r["image_id"] for r in _search(c, "pleural effusion")["results"]]
+                == [r["image_id"] for r in _search(c, "pleural effusion",
+                                                   system="B1")["results"]])
+
+    def test_a_vietnamese_question_goes_through_the_kg_translator(self, client):
+        from types import SimpleNamespace
+
+        from src.kg.translate import Translator
+
+        c, state, _ = client
+        state.kg = SimpleNamespace(translator=Translator(lambda q: "pleural effusion"))
+        body = _search(c, "tràn dịch màng phổi", system="B0")
+        assert body["query_text"] == "pleural effusion" and body["warnings"] == []
+
+    def test_without_a_translator_a_vietnamese_question_is_encoded_as_written(self, client):
+        c, state, _ = client
+        assert state.kg is None
+        body = _search(c, "tràn dịch màng phổi", system="B0")
+        assert body["query_text"] == "tràn dịch màng phổi"
+        assert body["warnings"] == [pipeline.B0_NO_TRANSLATOR] and body["results"]
+
+    def test_an_unknown_system_is_422(self, client):
+        assert client[0].post("/api/v1/search",
+                              json={"query": "edema", "system": "B2"}).status_code == 422
+
+
+class TestStudyReport:
+    """D25: the report is shown only on request, only when configs/demo.yaml allows it."""
+
+    def test_off_by_default(self, client):
+        c, state, _ = client
+        study = next(iter(state.images.values())).study_id
+        r = c.get(f"/api/v1/studies/{study}/report")
+        assert r.status_code == 403 and r.json()["detail"]["status"] == "disabled"
+        assert c.get("/api/v1/health").json()["show_report"] is False
+
+    def test_on_it_returns_the_report_text(self, client):
+        c, state, _ = client
+        state.show_report = True
+        study = ROWS[0][0]
+        body = c.get(f"/api/v1/studies/{study}/report").json()
+        assert body["study_id"] == study and body["text"] and body["display_only"] is True
+        assert c.get("/api/v1/studies/nope/report").status_code == 404
+        assert c.get("/api/v1/health").json()["show_report"] is True
+
+    def test_without_the_report_index_it_is_503(self, client_without_index):
+        state = client_without_index.app.state.cxr
+        state.show_report = True
+        assert client_without_index.get("/api/v1/studies/x/report").status_code == 503
+
+
+def test_cors_allows_the_demo_web_origin(client):
+    c, _, _ = client
+    r = c.options("/api/v1/search/kg", headers={
+        "Origin": "http://localhost:3000", "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "content-type"})
+    assert r.headers["access-control-allow-origin"] == "http://localhost:3000"
+    other = c.get("/api/v1/health", headers={"Origin": "http://evil.example"})
+    assert "access-control-allow-origin" not in other.headers
