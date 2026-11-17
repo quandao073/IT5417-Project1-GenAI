@@ -1,0 +1,11 @@
+# The demo web UI (web/): what the API lets it show. Read once at startup.
+
+# GET /api/v1/studies/{id}/report answers only when true (WORKLOG D25). The report is shown
+# beside a result to compare with it, never used to rank: the search routes and the evaluation
+# do not call that endpoint. Off by default, because the system aims at images without a report.
+show_report: false
+
+# Origins of the web UI allowed to call the API from a browser (pnpm dev serves port 3000).
+cors_origins:
+  - http://localhost:3000
+  - http://127.0.0.1:3000

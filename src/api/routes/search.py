@@ -1,5 +1,8 @@
 """POST /api/v1/search - one path: template -> text encoder -> cosine (WORKLOG D38).
 
+`system: "B0"` runs the evaluation's B0 instead (the question's English, no parser), so the
+comparison screen of the demo shows the ranks the evaluation scored.
+
 A thin adapter: parse the request, run `src.retrieval.pipeline.run_search`, map its hits to
 the response. The template, the evidence and the degradation warnings live in the pipeline.
 A dead encoder or Qdrant is a 503.
@@ -25,21 +28,25 @@ def search(
     body: SearchRequest, state: Annotated[AppState, Depends(require_ready)]
 ) -> SearchResponse:
     started = time.perf_counter()
-    parsed = state.parser.parse(body.query)
-    query = parsed.query
+    parsed = state.parser.parse(body.query) if body.system == "B1" else None
     try:
-        outcome = pipeline.run_search(state, query, top_k=body.top_k,
-                                      views=body.views or query.views)
+        if parsed is None:
+            outcome = pipeline.run_b0(state, body.query, top_k=body.top_k,
+                                      views=body.views or [])
+        else:
+            outcome = pipeline.run_search(state, parsed.query, top_k=body.top_k,
+                                          views=body.views or parsed.query.views)
     except pipeline.VectorLegError as exc:
         raise HTTPException(status_code=503,
                             detail={"status": "not_ready", "reason": f"qdrant: {exc}"}) from exc
     return SearchResponse(
         request_id=uuid.uuid4().hex,
         build_id=state.manifest["build_id"],
-        parsed_query=ParsedQuery.from_result(parsed),
+        system=body.system,
+        parsed_query=ParsedQuery.from_result(parsed) if parsed else None,
         query_text=outcome.text,
         results=[_result(hit) for hit in outcome.hits],
-        warnings=[*parsed.warnings, *outcome.warnings],
+        warnings=[*(parsed.warnings if parsed else []), *outcome.warnings],
         latency_ms=int((time.perf_counter() - started) * 1000),
     )
 

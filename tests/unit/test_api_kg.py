@@ -102,3 +102,54 @@ def test_health_reports_neo4j_and_the_kg_versions(client, world):
     assert c.get("/api/v1/health").json()["neo4j"] == "unreachable"
     plain = TestClient(create_app(_state(world))).get("/api/v1/health").json()
     assert plain["neo4j"] == "disabled" and plain["kg_build_id"] is None
+
+
+def test_each_result_carries_the_probability_of_each_intent_and_column(client):
+    c, _ = client
+    first = ndjson(c.post("/api/v1/search/kg", json={"query": "tim to", "top_k": 3}))[0]
+    intent = first["intents"][0]
+    for r in first["results"]:
+        (entry,) = r["intents"]
+        assert entry["intent"] == 0 and 0 <= entry["p"] <= 1
+        assert [col["cui"] for col in entry["columns"]] == [c["cui"] for c in intent["columns"]]
+
+
+def test_intents_and_columns_carry_the_vietnamese_name_when_the_kg_has_one(client):
+    c, state = client
+    cui = ndjson(c.post("/api/v1/search/kg", json={"query": "tim to"}))[0]["intents"][0]["cui"]
+    state.kg.names_vi = {cui: "tim to"}
+    intent = ndjson(c.post("/api/v1/search/kg", json={"query": "tim to"}))[0]["intents"][0]
+    assert intent["name_vi"] == "tim to" and intent["columns"][0]["name_vi"] == "tim to"
+
+
+def test_a_page_ranked_by_text_has_no_column_numbers(client):
+    from types import SimpleNamespace
+
+    from src.api.routes.kg import result_scores
+
+    result = SimpleNamespace(trace={"fallback": {"route": "text"}}, rows=[{"row": 0}, {"row": 1}])
+    assert result_scores(None, result) == [[], []]
+
+
+def test_vi_names_prefers_hand_made_then_concepts_yaml_then_the_shortest():
+    import polars as pl
+
+    from src.kg.runtime import vi_names
+
+    aliases = pl.DataFrame({
+        "cui": ["C1", "C1", "C1", "C2", "C2", "C3"],
+        "text": ["dài hơn nữa", "ngắn", "tay", "một hai", "một", "heart"],
+        "lang": ["vi", "vi", "vi", "vi", "vi", "en"],
+        "source": ["concepts_yaml", "llm", "manual", "llm", "llm", "mrconso"]})
+    assert vi_names(aliases) == {"C1": "tay", "C2": "một"}
+
+
+def test_vi_ascii_phrases_keep_only_vietnamese_forms_that_are_no_english_word():
+    import polars as pl
+
+    from src.kg.runtime import vi_ascii_phrases
+
+    aliases = pl.DataFrame({
+        "norm": ["suy tim", "tràn dịch", "copd", "sheath catheter", "catheter", "copd", "tdmp"],
+        "lang": ["vi", "vi", "vi", "vi", "en", "en", "vi"]})
+    assert vi_ascii_phrases(aliases) == {"suy tim", "tdmp"}

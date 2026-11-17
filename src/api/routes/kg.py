@@ -52,10 +52,29 @@ class KGSearchRequest(BaseModel):
         return value
 
 
+def _intent(intent, language: str, names_vi: dict[str, str]) -> dict:
+    d = intent.to_dict()
+    return {**d, "name_vi": names_vi.get(intent.cui),
+            "columns": [{**c, "name_vi": names_vi.get(c["cui"])} for c in d["columns"]],
+            "warnings": [w.render(language) for w in intent.warnings]}
+
+
+def result_scores(state: AppState, result: KGResult) -> list[list[dict]]:
+    """Per result row, per intent with columns: the probability of the intent and of each column
+    (`ScoreMatrix.probabilities`, the numbers the explanation quotes), so the page can show what
+    each part contributed. Empty when the text route ranked the page: no column ranked it."""
+    if "fallback" in result.trace:
+        return [[] for _ in result.rows]
+    probs = state.kg.matrix.probabilities([r["row"] for r in result.rows], result.intents)
+    return [[{"intent": i, "p": round(e["intent"], 4),
+              "columns": [{"cui": c, "p": round(p, 4)} for c, p in e["columns"].items()]}
+             for i, e in entry.items()] for entry in probs]
+
+
 def results_event(state: AppState, result: KGResult) -> dict:
     kg = state.kg
-    intents = [{**i.to_dict(), "warnings": [w.render(result.language) for w in i.warnings]}
-               for i in result.intents]
+    intents = [_intent(i, result.language, kg.names_vi) for i in result.intents]
+    scores = result_scores(state, result)
     return {
         "event": "results", "request_id": result.request_id,
         "kg_build_id": kg.versions.get("kg_build_id"),
@@ -69,7 +88,10 @@ def results_event(state: AppState, result: KGResult) -> dict:
         "degraded": result.degraded,
         "results": [{"rank": r["rank"], "study_id": r["study_id"], "image_id": r["image_id"],
                      "image_url": f"/api/v1/images/{r['image_id']}", "view": r["view"],
-                     "score": r["score"]} for r in result.rows],
+                     "score": r["score"], "intents": s,
+                     # a fused score: score = kg_z + clip_part, clip_part = w z(cosine) (D75)
+                     **{k: r[k] for k in ("kg_z", "clip_part") if k in r}}
+                    for r, s in zip(result.rows, scores, strict=True)],
         "timings_ms": result.timings, "trace": result.trace,
         "disclaimer": state.settings.disclaimer_text}
 

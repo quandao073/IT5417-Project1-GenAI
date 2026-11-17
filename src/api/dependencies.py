@@ -64,6 +64,7 @@ class AppState:
     kg: KGSearch | None = None
     kg_reason: str | None = None
     kg_notes: list[str] = field(default_factory=list)   # what is degraded at startup
+    show_report: bool = False       # configs/demo.yaml: the display-only report endpoint (D25)
 
 
 def _open_report_index(state: AppState, studies: int) -> None:
@@ -134,7 +135,7 @@ def build_query_parser(settings: Settings, *, llm_factory=None,
 
 def build_state(settings: Settings, *, encoder_loader=None, client_factory=None,
                 llm_factory=None, warm_up: bool = False, kg_factory=None) -> AppState:
-    state = AppState(settings=settings)
+    state = AppState(settings=settings, show_report=bool(load_config("demo")["show_report"]))
     client_factory = client_factory or _default_client
     try:
         cfg = load_config("models")["image_encoder"]

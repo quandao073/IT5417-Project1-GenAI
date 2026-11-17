@@ -32,5 +32,5 @@ def health(state: Annotated[AppState, Depends(get_state)]):
         neo4j=("disabled" if state.kg is None else "ok" if state.kg.store else "unreachable"),
         kg_build_id=state.kg.versions.get("kg_build_id") if state.kg else None,
         matrix_version=state.kg.versions.get("matrix_version") if state.kg else None,
-        kg_notes=state.kg_notes,
+        kg_notes=state.kg_notes, show_report=state.show_report,
     )

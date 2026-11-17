@@ -283,7 +283,7 @@ Nguyên tắc chung: kết quả luôn lấy từ dữ liệu mà tool đã tr�
 - **LLM không viết Cypher.** Mọi truy vấn Neo4j là template có tham số, chạy bằng user chỉ đọc và có timeout.
 - **LLM chỉ chọn trong ứng viên.** CUI nằm ngoài danh sách mà `lookup_concept` trả bị loại; khi đó lùi về bản tất định.
 - **Diễn giải phải có căn cứ.** Mọi khái niệm và con số trong diễn giải phải có trong đường đi và điểm mà tool trả. Câu vi phạm bị bỏ.
-- **Không đọc report, không đọc nhãn lúc truy vấn** (D39). Câu trích report để hiển thị (D25) còn để ở câu hỏi mở.
+- **Không đọc report, không đọc nhãn lúc truy vấn** (D39). Report chỉ hiện để đối chiếu, qua endpoint riêng, tắt mặc định (WORKLOG D78).
 - **Kiểm tham số.** CUI phải có trong KG; cực tính và view kiểm bằng Pydantic như parser hiện tại.
 - **Cảnh báo bắt buộc** khi hạ về tổ tiên, khi khớp theo vùng giải phẫu, khi suy từ bệnh, khi bỏ một cụm, và khi câu hỏi có bên hoặc mức độ.
 - **Dữ liệu UMLS không vào Git, không vào Docker image.**

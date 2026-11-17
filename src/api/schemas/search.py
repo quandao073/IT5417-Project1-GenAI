@@ -58,6 +58,9 @@ class SearchRequest(BaseModel):
     top_k: int = Field(10, ge=1, le=50)
     views: list[View] | None = Field(
         None, description="AP/PA facet; overrides the views the parser found when given")
+    system: Literal["B1", "B0"] = Field("B1", description=(
+        "B1: parser, template, text encoder (the evaluation's B1). B0: the question's English "
+        "encoded as is, no parser (the evaluation's B0); for the comparison screen"))
 
     @model_validator(mode="before")
     @classmethod
@@ -90,7 +93,8 @@ class SearchResult(BaseModel):
 class SearchResponse(BaseModel):
     request_id: str
     build_id: str
-    parsed_query: ParsedQuery
+    system: Literal["B1", "B0"] = "B1"
+    parsed_query: ParsedQuery | None = Field(description="null for B0, which has no parser")
     query_text: str | None = Field(description=(
         "what the text encoder read: the template of the parsed constraints, or the free text "
         "when none was recognised; null when nothing was searched"))
@@ -119,3 +123,5 @@ class HealthResponse(BaseModel):
     kg_build_id: str | None = None
     matrix_version: str | None = None
     kg_notes: list[str] = Field(default_factory=list)
+    # configs/demo.yaml: GET /api/v1/studies/{id}/report answers only when this is true (D25)
+    show_report: bool = False

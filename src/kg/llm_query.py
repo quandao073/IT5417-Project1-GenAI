@@ -191,7 +191,11 @@ def build_facts(question: str, language: str, intents: list[Intent], rows: list[
                           "concepts": [{"concept": c.name,
                                         "percent": _percent(prob[i]["columns"][c.cui])}
                                        for c in it.columns]})
-        results.append({"rank": row["rank"], "view": row["view"], "match": match})
+        entry = {"rank": row["rank"], "view": row["view"], "match": match}
+        if "kg_z" in row:           # a fused score: rank = z(KG) + w z(CLIP cosine) (D75)
+            entry["rank_score"] = {"kg_z": round(row["kg_z"], 2),
+                                   "clip": round(row["clip_part"], 2)}
+        results.append(entry)
     facts = {"question": question, "language": language, "intents": spec, "results": results}
     if knowledge is not None:
         facts["knowledge"] = [{"id": k["id"], "text": k["text"]} for k in knowledge]
@@ -240,6 +244,68 @@ def range_problem(sentence: str, facts: dict) -> str | None:
         if (int(lo), int(hi)) not in ends:
             return f"range not in the facts: {lo}-{hi}%"
     return None
+
+
+_RANKS = re.compile(r"(?:\branks?|\bimages?|\bhạng|\bảnh(?:\s+(?:hạng|số))?|#)\s*#?\s*"
+                    r"(\d+(?!\s*%)(?:\s*(?:,|\bvà\b|\band\b|&)\s*(?:hạng\s*|ranks?\s*|#)?"
+                    r"\d+(?!\s*%))*)", re.IGNORECASE)
+_PERCENT = re.compile(r"(\d+)\s*%")
+
+
+def _series(facts: dict) -> dict[tuple, dict[int, float]]:
+    """Every per-image quantity of the facts: {key: {rank: value}} (intents and concepts in whole
+    percents, the two terms of a fused score)."""
+    out: dict[tuple, dict[int, float]] = {}
+    for r in facts.get("results", []):
+        for m in r["match"]:
+            out.setdefault(("intent", m["intent"]), {})[r["rank"]] = m["percent"]
+            for c in m["concepts"]:
+                out.setdefault(("concept", m["intent"], c["concept"]), {})[r["rank"]] = c["percent"]
+        for k, v in r.get("rank_score", {}).items():
+            out.setdefault(("score", k), {})[r["rank"]] = v
+    return out
+
+
+def ranking_problem(sentence: str, facts: dict, words: dict[str, list[str]]) -> str | None:
+    """A sentence that compares or ranks images ("highest", "cao nhất", "higher than"…) is kept
+    only when one quantity of the facts makes it true, ties included: the images it names are
+    exactly those at the top (or bottom), or stand in the order it says, or are equal, and every
+    percentage it quotes is that quantity's value at a named image. A concept's own percentages
+    count only when the sentence names that concept (its name or an alias the facts show)."""
+    low = sentence.casefold()
+    claim = next((kind for kind in ("max", "min", "more", "less", "equal")
+                  if any(_has_word(low, w.casefold()) for w in words.get(kind, []))), None)
+    if claim is None:
+        return None
+    ranks = [int(n) for m in _RANKS.findall(sentence) for n in re.findall(r"\d+", m)]
+    ranks = list(dict.fromkeys(ranks))
+    quoted = {int(n) for n in _PERCENT.findall(sentence)}
+    called: dict[str, set[str]] = {}
+    for spec in facts.get("intents", []):
+        for use in spec.get("uses", []):
+            called.setdefault(use["concept"], set()).update([use["concept"],
+                                                             *use.get("aliases", [])])
+    for key, values in _series(facts).items():
+        if key[0] == "concept" and not any(_has_word(low, n.casefold())
+                                           for n in called.get(key[2], {key[2]})):
+            continue
+        if not values or any(r not in values for r in ranks):
+            continue
+        named = {values[r] for r in ranks}
+        if quoted and not quoted <= ({values[r] for r in ranks} if ranks else set(values.values())):
+            continue
+        if claim in ("max", "min"):
+            best = (max if claim == "max" else min)(values.values())
+            at = {r for r, v in values.items() if v == best}
+            if (ranks and set(ranks) == at) or (not ranks and quoted == {best}):
+                return None
+        elif len(ranks) >= 2:
+            seq = [values[r] for r in ranks]
+            if ((claim == "more" and all(a > b for a, b in zip(seq, seq[1:], strict=False)))
+                    or (claim == "less" and all(a < b for a, b in zip(seq, seq[1:], strict=False)))
+                    or (claim == "equal" and len(named) == 1)):
+                return None
+    return f"{claim} claim not true in the facts"
 
 
 def hedge_problem(sentence: str, cited: list[str], hedges: list[str]) -> str | None:
@@ -424,7 +490,8 @@ class Explainer:
 
         def checked(text: str) -> str | None:
             return (self.index.check(text, cuis, phrases, numbers)
-                    or combine_problem(text, facts, words) or range_problem(text, facts))
+                    or combine_problem(text, facts, words) or range_problem(text, facts)
+                    or ranking_problem(text, facts, self.index.cfg.get("ranking_words", {})))
 
         dropped, kept = [], []
         for sentence in _SENTENCE.split(summary.strip()):
