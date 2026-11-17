@@ -16,7 +16,8 @@ const INTENTS: Intent[] = [
   { term: "suy tim", cui: "C1", name: "Heart failure", name_vi: "suy tim", polarity: "PRESENT",
     kind: "disease", combine: "weighted",
     columns: [col("C2", "Cardiomegaly", "tim to", 0.6), col("C3", "Edema", "phù phổi", 0.4)],
-    path: ["Cardiomegaly —SUGGESTS(p=0.006)→ Heart failure"],
+    path: ["Cardiomegaly —SUGGESTS(p=0.0062)→ Heart failure",
+           "Edema —SUGGESTS(p=0.0030)→ Heart failure"],
     warnings: ["Suy từ dấu hiệu (Heart failure)."] },
   { term: "no pneumothorax", cui: "C4", name: "Pneumothorax", name_vi: "tràn khí màng phổi",
     polarity: "ABSENT", kind: "direct", combine: "single",
@@ -69,6 +70,18 @@ describe("components", () => {
     expect(screen.getByText(/Không xét: “trái”/)).toBeTruthy();
   });
 
+  it("a fused B2 card shows the two terms of its score, a B1 card its cosine", () => {
+    render(<ResultCard r={{ ...RESULTS.results[0], score: 2.13, kg_z: 1.93, clip_part: 0.2 }}
+                       intents={INTENTS} />);
+    expect(screen.getByText("điểm trộn 2.13").getAttribute("title")).toMatch(/z\(KG\) \+ 0,2·z\(CLIP\)/);
+    expect(screen.getByText("z(KG) 1.93")).toBeTruthy();
+    expect(screen.getByText("CLIP +0.20")).toBeTruthy();
+    cleanup();
+    render(<ResultCard r={{ ...RESULTS.results[0], intents: [] }} intents={[]} scale="cosine" />);
+    expect(screen.getByText("cosine 1.50")).toBeTruthy();
+    expect(screen.queryByText(/z\(KG\)/)).toBeNull();
+  });
+
   it("a result card shows rank, view, score and the top parts", () => {
     render(<ResultCard r={RESULTS.results[0]} intents={INTENTS} />);
     expect(screen.getByText("#1")).toBeTruthy();
@@ -87,7 +100,12 @@ describe("components", () => {
     expect(screen.getByText("Tóm tắt.")).toBeTruthy();
     expect(screen.getByText("Ảnh 1 khớp.")).toBeTruthy();
     expect(screen.getByRole("tooltip").textContent).toBe("Mục K1 nói về tim to.");
-    expect(screen.getByText(/SUGGESTS/)).toBeTruthy();       // partial: the raw path too
+    // partial: the path too, edges in words, the normalised weight instead of the raw p
+    const path = document.querySelector(".path")!.textContent!;
+    expect(path).toContain("Cardiomegaly —gợi ý→ Heart failure");
+    expect(path).not.toMatch(/p=|SUGGESTS/);
+    const weight = screen.getByText(/trọng số 60%/);
+    expect(weight.getAttribute("title")).toMatch(/cùng xuất hiện trong report/);
   });
 
   it("while the explanation is on its way, the panel says so", () => {

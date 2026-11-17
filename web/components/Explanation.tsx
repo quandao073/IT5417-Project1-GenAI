@@ -1,5 +1,5 @@
 import type { ExplanationEvent, Intent } from "@/lib/api";
-import { both, citations } from "@/lib/present";
+import { both, citations, pathLines, pct, WEIGHT_TIP } from "@/lib/present";
 
 function Cited({ text, items }: { text: string; items: Map<string, string> }) {
   return (
@@ -17,15 +17,27 @@ function Cited({ text, items }: { text: string; items: Map<string, string> }) {
   );
 }
 
-/** The raw path of every intent: what the page shows when the explanation is missing. */
-export function RawPath({ intents }: { intents: Intent[] }) {
-  const shown = intents.filter((i) => i.columns.length > 0);
+/** The KG path of every intent with columns: edges in words ("gợi ý"), each weighed column's
+ * normalised weight (61%) with what it means on hover; never the raw p. */
+export function PathView({ intents }: { intents: Intent[] }) {
+  const shown = intents.filter((i) => i.columns.length > 0 && i.path.length > 0);
   if (shown.length === 0) return <p className="muted small">Không có đường đi KG.</p>;
   return (
     <div>
       {shown.map((it, i) => (
         <div key={i} className="path">
-          {`“${it.term}” → ${both(it.name_vi, it.name)}\n  ${it.path.join("\n  ")}`}
+          <div>{`“${it.term}” → ${both(it.name_vi, it.name)}`}</div>
+          {pathLines(it).map((l, j) => (
+            <div key={j}>
+              {`  ${l.text}`}
+              {l.weight !== undefined && (
+                <span className="weight" tabIndex={0} title={WEIGHT_TIP[it.kind]}
+                      aria-label={`trọng số ${pct(l.weight)}: ${WEIGHT_TIP[it.kind]}`}>
+                  {` · trọng số ${pct(l.weight)}`}
+                </span>
+              )}
+            </div>
+          ))}
         </div>
       ))}
     </div>
@@ -90,7 +102,7 @@ export function Explanation({ event, loading, intents, textRoute = false }: {
       {showPath && (
         <>
           <h3>Đường đi trên KG (thô)</h3>
-          <RawPath intents={intents} />
+          <PathView intents={intents} />
         </>
       )}
     </section>

@@ -30,7 +30,7 @@ from src.kg.llm_query import Choice, build_facts
 from src.kg.messages import Warn, render_all
 from src.kg.scoring import ScoreMatrix
 from src.kg.store import StoreError
-from src.kg.text_fallback import fuse
+from src.kg.text_fallback import fuse, zscore
 from src.kg.translate import is_vietnamese
 from src.query.schema import SearchQuery
 
@@ -239,13 +239,18 @@ class KGSearch:
         weight = qcfg["fusion"]["weight"]
         if any(i.columns for i in intents):
             scores = self.matrix.score(intents)
+            parts = None                    # the two terms of a fused score, per row
             if weight and self.text_fallback is not None and english:
-                scores = fuse(scores, self.text_fallback.cosine(english), weight)
+                cosine = self.text_fallback.cosine(english)
+                parts = (zscore(scores), weight * zscore(cosine))
+                scores = fuse(scores, cosine, weight)      # = parts[0] + parts[1], as float32
                 trace["fusion"] = {"weight": weight, "text": english}
             top = self.matrix.top_k(scores, top_k, tuple(views or query.views))
             rows = [{"rank": r, "row": int(row), "study_id": self.matrix.study_ids[row],
                      "image_id": self.matrix.image_ids[row], "view": str(self.matrix.views[row]),
-                     "score": float(scores[row])} for r, row in enumerate(top, start=1)]
+                     "score": float(scores[row]),
+                     **({"kg_z": float(parts[0][row]), "clip_part": float(parts[1][row])}
+                        if parts else {})} for r, row in enumerate(top, start=1)]
         # nothing wanted was understood: rank by text like B1 (D73); a resolved negation alone
         # keeps the KG ranking
         wanted = [i for i in intents if i.polarity == PRESENT]

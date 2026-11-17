@@ -1,11 +1,13 @@
 import type { Intent, KGResult } from "@/lib/api";
 import { imageSrc } from "@/lib/api";
-import { pct, topParts } from "@/lib/present";
+import { FUSION_TIP, fusionParts, pct, topParts } from "@/lib/present";
 
-export function ResultCard({ r, intents, onOpen, badge }: {
+export function ResultCard({ r, intents, onOpen, badge, scale = "điểm" }: {
   r: KGResult; intents: Intent[]; onOpen?: (r: KGResult) => void; badge?: string;
+  scale?: string;     // what the score is when it is not fused: "cosine" for B0 and B1
 }) {
-  const parts = topParts(intents, r.intents ?? []);
+  const top = topParts(intents, r.intents ?? []);
+  const parts = fusionParts(r);
   return (
     <button type="button" className={`card ${badge ? "shared" : ""}`} onClick={() => onOpen?.(r)}
             aria-label={`Ảnh hạng ${r.rank}, xem chi tiết`}>
@@ -15,14 +17,20 @@ export function ResultCard({ r, intents, onOpen, badge }: {
         <div className="row">
           <span className="rank">#{r.rank}</span>
           {r.view && <span className="tag info">{r.view}</span>}
-          <span className="score" title="Điểm xếp hạng (độ khớp với câu hỏi), không phải xác suất">
-            điểm {r.score.toFixed(2)}
+          <span className="score" title={parts ? FUSION_TIP : `${scale}: thang xếp hạng, không phải xác suất`}>
+            {parts ? "điểm trộn" : scale} {r.score.toFixed(2)}
           </span>
         </div>
+        {parts && (
+          <div className="fusion" title={FUSION_TIP}>
+            <span>z(KG) {parts.kg}</span>
+            <span>CLIP {parts.clip}</span>
+          </div>
+        )}
         {badge && <span className="tag ok">{badge}</span>}
-        {parts.length > 0 && (
-          <ul className="parts" aria-label="Cột đóng góp nhiều nhất">
-            {parts.map((p) => (
+        {top.length > 0 && (
+          <ul className="parts" aria-label="Độ khớp của các cột đóng góp nhiều nhất">
+            {top.map((p) => (
               <li key={p.label}>
                 <span>{p.label}</span>
                 <strong>{pct(p.value)}</strong>

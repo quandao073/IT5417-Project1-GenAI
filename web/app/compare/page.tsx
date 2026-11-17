@@ -11,10 +11,11 @@ import { searchBaseline, searchKGOnce } from "@/lib/api";
 
 type Key = "B1" | "B2" | "B0";
 
-const SYSTEMS: { key: Key; title: string; note: string }[] = [
-  { key: "B1", title: "B1 · parser + câu mẫu + CLIP", note: "14 nhãn, không KG" },
-  { key: "B2", title: "B2 · KG (hệ chính)", note: "KG chọn cột, trộn cosine w 0,2" },
-  { key: "B0", title: "B0 · dịch EN + CLIP", note: "không parser" },
+// The score scale of each column: B0 and B1 rank by cosine, B2 by the fused score (D75).
+const SYSTEMS: { key: Key; title: string; note: string; scale: string }[] = [
+  { key: "B1", title: "B1 · parser + câu mẫu + CLIP", note: "14 nhãn, không KG", scale: "cosine" },
+  { key: "B2", title: "B2 · KG (hệ chính)", note: "KG chọn cột, trộn cosine w 0,2", scale: "điểm trộn" },
+  { key: "B0", title: "B0 · dịch EN + CLIP", note: "không parser", scale: "cosine" },
 ];
 
 interface Column {
@@ -78,7 +79,8 @@ function ComparePage() {
       {cols.B1 && cols.B2 && (
         <p className="small">
           Viền đậm: ảnh có ở hệ khác (nhãn ghi hệ nào). B1 và B2 chung {b1b2} ảnh trong top-k.
-          Thứ hạng là thứ hạng của đánh giá: cùng code với <code>cxr eval-kg</code>.
+          Thứ hạng là thứ hạng của đánh giá: cùng code với <code>cxr eval-kg</code>. Thang điểm khác nhau
+          (B0, B1: cosine; B2: điểm trộn z(KG) + 0,2·z(CLIP)), nên chỉ so thứ hạng, không so điểm giữa các cột.
         </p>
       )}
       <div className="compare">
@@ -89,12 +91,13 @@ function ComparePage() {
             <section key={s.key} className="panel" aria-labelledby={`h-${s.key}`}>
               <h2 id={`h-${s.key}`}>{s.title}</h2>
               <p className="small muted">{s.note}{c.text ? ` · văn bản: “${c.text}”` : ""}</p>
+              <p className="scale-note">Thang điểm: <strong>{s.scale}</strong></p>
               {c.error && <p className="error">{c.error}</p>}
               {c.warnings.map((w) => <span key={w} className="tag warn">{w}</span>)}
               <div className="grid">
                 {c.results.map((r) => {
                   const o = others(s.key, r.image_id);
-                  return <ResultCard key={r.image_id} r={r} intents={c.intents}
+                  return <ResultCard key={r.image_id} r={r} intents={c.intents} scale={s.scale}
                                      badge={o.length ? `cũng ở ${o.join(", ")}` : undefined} />;
                 })}
               </div>

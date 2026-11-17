@@ -1,9 +1,10 @@
 # Ảnh chụp màn hình demo
 
-`cd web && pnpm screenshots` (khi `make demo` đang chạy) chụp trang kết quả của 6 câu, trang chi tiết một ảnh và màn so
-sánh của 2 câu vào thư mục này, kèm `screenshots.json` tóm tắt từng trang (số ảnh, cảnh báo, trạng thái diễn giải).
+`cd web && pnpm screenshots` (khi `make demo` đang chạy) chụp sáu câu của `kich-ban-demo.md` theo thứ tự (màn so
+sánh cho câu 1, trang chi tiết cho câu 2) vào thư mục này, kèm `screenshots.json` ghi lại hệ thống đã trả gì cho từng
+câu (ý, cảnh báo, hai thành phần điểm, diễn giải và câu bị bỏ).
 
-**Ảnh chụp không commit** (`.gitignore`: `docs/demo/*`), vì:
+**Ảnh chụp không commit** (`.gitignore`: `docs/demo/*` trừ `README.md` và `kich-ban-demo.md`), vì:
 
 - Ảnh X-quang là dữ liệu CheXpert. Trang dataset của Stanford AIMI chỉ nói dữ liệu dùng cho nghiên cứu phi thương mại
   "subject to the applicable data use terms"; bản thỏa thuận nằm sau đăng nhập (Redivis), chưa đọc được và chưa có bản

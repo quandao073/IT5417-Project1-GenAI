@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from "react";
 
 import type { KGResult, ResultsEvent } from "@/lib/api";
 import { imageSrc, studyReport } from "@/lib/api";
-import { both, KIND, pct } from "@/lib/present";
+import { PathView } from "@/components/Explanation";
+import { both, FUSION_TIP, fusionParts, KIND, pct } from "@/lib/present";
 
 const VERSION_KEYS: [string, string][] = [
   ["kg_build_id", "KG build"],
@@ -34,6 +35,7 @@ export function Detail({ r, data, line, showReport, onClose }: {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  const parts = fusionParts(r);
   const byIntent = new Map((r.intents ?? []).map((s) => [s.intent, s]));
   return (
     <div className="overlay" role="dialog" aria-modal="true" aria-labelledby="detail-title"
@@ -62,6 +64,12 @@ export function Detail({ r, data, line, showReport, onClose }: {
           )}
         </div>
         <div>
+          {parts && (
+            <p className="small" title={FUSION_TIP}>
+              <strong>Điểm trộn {r.score.toFixed(2)}</strong> = z(KG) {parts.kg} + đóng góp CLIP {parts.clip}
+              <span className="muted"> (0,2·z-cosine; đưa chuột để xem cách tính)</span>
+            </p>
+          )}
           {line && (<><h3>Diễn giải cho ảnh này</h3><p>{line}</p></>)}
           <h3>Điểm từng cột</h3>
           {data.trace.fallback ? (
@@ -98,9 +106,7 @@ export function Detail({ r, data, line, showReport, onClose }: {
             mức này càng thấp. Đây là độ khớp truy vấn, không phải kết luận về ảnh.
           </p>
           <h3>Đường đi trên KG</h3>
-          {data.intents.filter((i) => i.path.length).map((it, i) => (
-            <div key={i} className="path">{`“${it.term}”\n  ${it.path.join("\n  ")}`}</div>
-          ))}
+          <PathView intents={data.intents} />
           <h3>Phiên bản</h3>
           <dl className="versions">
             {VERSION_KEYS.filter(([k]) => data.versions[k] != null).map(([k, label]) => (

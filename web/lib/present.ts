@@ -1,7 +1,7 @@
 // How the page words what the API returns. No diagnosis: a score says how well an image fits
 // the question (docs/v2-kg-design.md, "Rào chắn").
 
-import type { Intent, IntentScore } from "./api";
+import type { Intent, IntentScore, KGResult } from "./api";
 
 // Fixed on every page (docs/v2-kg-design.md, "Rào chắn"): kept word for word, in English.
 export const DISCLAIMER =
@@ -84,4 +84,40 @@ export function citations(text: string): { text: string; cite?: string }[] {
   }
   if (last < text.length) out.push({ text: text.slice(last) });
   return out;
+}
+
+export const FUSION_TIP =
+  "Hạng = z(KG) + 0,2·z(CLIP). z(KG): điểm KG của ảnh, chuẩn hóa trên cả corpus cho câu hỏi này. " +
+  "z(CLIP): cosine giữa câu hỏi (bản tiếng Anh) và ảnh, chuẩn hóa cùng cách; đóng góp CLIP = 0,2·z(CLIP).";
+
+const sign = (x: number) => (x >= 0 ? `+${x.toFixed(2)}` : x.toFixed(2));
+
+/** The two terms of a fused score, or null when the page was not fused. */
+export function fusionParts(r: KGResult): { kg: string; clip: string } | null {
+  if (r.kg_z === undefined || r.clip_part === undefined) return null;
+  return { kg: r.kg_z.toFixed(2), clip: sign(r.clip_part) };
+}
+
+const EDGE: Record<string, string> = { SUGGESTS: "gợi ý", TYPICALLY_AT: "thường gặp ở" };
+
+export const WEIGHT_TIP: Record<string, string> = {
+  disease: "Tỉ lệ cùng xuất hiện trong report (đã chuẩn hóa giữa các dấu hiệu gợi ý)",
+  anatomy: "Tỉ lệ gặp ở vùng này trong report (chuẩn hóa theo dấu hiệu điển hình nhất)",
+};
+
+export interface PathLine {
+  text: string;            // the edge in words, without the raw p
+  weight?: number;         // the column's normalised weight, when the line is one column's route
+}
+
+/** The intent's path for the page: edge names in Vietnamese ("gợi ý"), the raw p of SUGGESTS
+ * replaced by the column's normalised weight (61%), one line per column where the route has. */
+export function pathLines(it: Intent): PathLine[] {
+  // only the disease and anatomy routes weigh their columns, one path line per column
+  const weighed = it.kind in WEIGHT_TIP && it.path.length === it.columns.length;
+  return it.path.map((line, i) => ({
+    text: line.replace(/\s*—([A-Z_]+)(?:\(p=[\d.]+\))?→\s*/g,
+                       (_, edge: string) => ` —${EDGE[edge] ?? edge}→ `),
+    weight: weighed ? it.columns[i].weight : undefined,
+  }));
 }

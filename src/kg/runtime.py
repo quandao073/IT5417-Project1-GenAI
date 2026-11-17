@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 from pathlib import Path
 
@@ -148,7 +149,9 @@ def build_kg_search(settings: Settings, manifest: dict, images: pl.DataFrame, *,
                               kl["explain"]["timeout_seconds"], index, base)
         translate_text = _text(kl["translate"]["prompt_file"])
         translator = Translator(model_ask(client("translate"), guard, translate_text,
-                                          kl["translate"]["timeout_seconds"]))
+                                          kl["translate"]["timeout_seconds"]),
+                                vi_ascii_phrases(pl.read_parquet(graph_dir / "aliases.parquet",
+                                                                 columns=["norm", "lang"])))
         versions |= {"translate_model": kl["translate"]["model"],
                      "translate_prompt_sha256": sha256(translate_text),
                      "fusion_weight": cfg["query"]["fusion"]["weight"]}
@@ -191,6 +194,17 @@ def build_kg_search(settings: Settings, manifest: dict, images: pl.DataFrame, *,
         # a TLS handshake and the prompt cache are paid off the request path
         threading.Thread(target=parser.parse, args=("cardiomegaly",), daemon=True).start()
     return search, notes
+
+
+def vi_ascii_phrases(aliases: pl.DataFrame) -> frozenset[str]:
+    """Vietnamese aliases of the KG written in plain ASCII ("suy tim", "tdmp") that are no English
+    alias and hold no word that is one ("copd", "sheath catheter"): a question holding one is
+    Vietnamese though it has no Vietnamese letter, so B0 and the score fusion read its English
+    (translate.is_vietnamese)."""
+    en = set(aliases.filter(pl.col("lang") == "en")["norm"].str.to_lowercase())
+    return frozenset(n for n in aliases.filter(pl.col("lang") == "vi")["norm"].str.to_lowercase()
+                     if re.fullmatch(r"[a-z0-9]+( [a-z0-9]+)*", n) and n not in en
+                     and not en & set(n.split()))
 
 
 def vi_names(aliases: pl.DataFrame) -> dict[str, str]:

@@ -306,7 +306,8 @@ def cmd_eval_kg(args: argparse.Namespace) -> int:
             # English is B0's, from the same cache (T44)
             search.cfg["query"]["fusion"]["weight"] = 0
             search.translator = Translator(lambda q: caller.call(
-                "b0_translate", t_text, t_sha, {"question": q}, q, kr.TRANSLATE_SCHEMA)["text"])
+                "b0_translate", t_text, t_sha, {"question": q}, q, kr.TRANSLATE_SCHEMA)["text"],
+                search.translator.ascii_phrases if search.translator else frozenset())
             runner = kr.Runner(rows=rows, split=args.split, ecfg=ecfg, work=work,
                                ledger=ledger, t_text=t_text, t_sha=t_sha,
                                **{k: parts[k] for k in (
@@ -401,7 +402,8 @@ def cmd_eval_kg_explain(args: argparse.Namespace) -> int:
         search, caller = parts["search"], parts["translator"]
         t_text, t_sha = _prompt(ecfg, "translate_prompt")
         search.translator = Translator(lambda q: caller.call(
-            "b0_translate", t_text, t_sha, {"question": q}, q, kr.TRANSLATE_SCHEMA)["text"])
+            "b0_translate", t_text, t_sha, {"question": q}, q, kr.TRANSLATE_SCHEMA)["text"],
+            search.translator.ascii_phrases if search.translator else frozenset())
         e = search.explainer
         if e is None or e.knowledge is None:
             raise SystemExit("STOP: the search does not explain with knowledge (kg.yaml explain)")

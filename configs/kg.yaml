@@ -330,6 +330,15 @@ explain:
     weighted: [weighted, weighting, weight mix, trọng số]
   hedge_words: [often, usually, may, might, can, typically, commonly, sometimes, frequently, generally, mostly,
                 thường, có thể, đôi khi, hay gặp]
+  # A sentence comparing or ranking images is kept only when the facts make it true, ties included
+  # (llm_query.ranking_problem; demo review 2026-11-17).
+  ranking_words:
+    max: [highest, best, strongest, greatest, largest, top-ranked, cao nhất, tốt nhất, mạnh nhất, lớn nhất,
+          khớp nhất]
+    min: [lowest, worst, weakest, smallest, thấp nhất, kém nhất, yếu nhất, nhỏ nhất]
+    more: [higher than, stronger than, better than, greater than, cao hơn, mạnh hơn, tốt hơn, lớn hơn]
+    less: [lower than, weaker than, worse than, thấp hơn, yếu hơn, kém hơn, nhỏ hơn]
+    equal: [equal, the same, tied, bằng nhau, ngang nhau, như nhau]
 
 # Definitions of the concepts a search can show (src/kg/knowledge.py, `cxr kg-definitions`). Everything written lives in
 # knowledge/ beside the graph directory, data/kg/knowledge/ (UMLS definitions and the glosses made from them, T38).

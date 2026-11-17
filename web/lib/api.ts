@@ -43,6 +43,8 @@ export interface KGResult {
   view: string;
   score: number;
   intents: IntentScore[];
+  kg_z?: number;        // a fused score: score = kg_z + clip_part (z(KG) + 0.2 z(cosine))
+  clip_part?: number;
 }
 
 export interface TraceTerm {

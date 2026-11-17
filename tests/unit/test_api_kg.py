@@ -142,3 +142,14 @@ def test_vi_names_prefers_hand_made_then_concepts_yaml_then_the_shortest():
         "lang": ["vi", "vi", "vi", "vi", "vi", "en"],
         "source": ["concepts_yaml", "llm", "manual", "llm", "llm", "mrconso"]})
     assert vi_names(aliases) == {"C1": "tay", "C2": "một"}
+
+
+def test_vi_ascii_phrases_keep_only_vietnamese_forms_that_are_no_english_word():
+    import polars as pl
+
+    from src.kg.runtime import vi_ascii_phrases
+
+    aliases = pl.DataFrame({
+        "norm": ["suy tim", "tràn dịch", "copd", "sheath catheter", "catheter", "copd", "tdmp"],
+        "lang": ["vi", "vi", "vi", "vi", "en", "en", "vi"]})
+    assert vi_ascii_phrases(aliases) == {"suy tim", "tdmp"}

@@ -249,6 +249,22 @@ def test_fusion_is_the_evaluated_one_and_weight_zero_is_the_kg_score():
     vec = np.eye(len(m.study_ids), dtype="float32")[-1]
     assert [r["study_id"] for r in got.rows] == ke.fuse(m, got.intents, fb.vectors, vec, 0.2, 5,
                                                         ())
+    for r in got.rows:                  # the two terms the page shows add up to the score
+        assert abs(r["kg_z"] + r["clip_part"] - r["score"]) < 1e-5
+    assert all("kg_z" not in r for r in plain.rows)
+
+
+def test_an_unaccented_vietnamese_phrase_of_the_kg_is_translated():
+    from src.kg.translate import Translator, is_vietnamese
+
+    phrases = frozenset({"suy tim", "tdmp"})
+    assert is_vietnamese("suy tim", phrases) and is_vietnamese("phim co TDMP", phrases)
+    assert not is_vietnamese("suy tim", frozenset())
+    assert not is_vietnamese("heart failure", phrases)
+    assert not is_vietnamese("suy timber", phrases)          # whole words only
+    t = Translator(lambda q: "heart failure", phrases)
+    assert t.english("suy tim").text == "heart failure" and t.english("suy tim").called
+    assert t.english("heart failure").called is False
 
 
 def test_the_translation_runs_beside_the_parser():

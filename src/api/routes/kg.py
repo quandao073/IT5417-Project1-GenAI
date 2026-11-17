@@ -88,7 +88,9 @@ def results_event(state: AppState, result: KGResult) -> dict:
         "degraded": result.degraded,
         "results": [{"rank": r["rank"], "study_id": r["study_id"], "image_id": r["image_id"],
                      "image_url": f"/api/v1/images/{r['image_id']}", "view": r["view"],
-                     "score": r["score"], "intents": s}
+                     "score": r["score"], "intents": s,
+                     # a fused score: score = kg_z + clip_part, clip_part = w z(cosine) (D75)
+                     **{k: r[k] for k in ("kg_z", "clip_part") if k in r}}
                     for r, s in zip(result.rows, scores, strict=True)],
         "timings_ms": result.timings, "trace": result.trace,
         "disclaimer": state.settings.disclaimer_text}

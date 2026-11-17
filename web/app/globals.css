@@ -129,6 +129,13 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   cursor: pointer; transition: border-color 150ms ease-out;
 }
 .card:hover { border-color: var(--accent); }
+.fusion {
+  display: flex; justify-content: space-between; font-size: 0.85rem; color: var(--muted);
+  border-top: 1px dashed var(--border); border-bottom: 1px dashed var(--border);
+  margin: 0.35rem 0 0.2rem; padding: 0.15rem 0; cursor: help; font-variant-numeric: tabular-nums;
+}
+.weight { color: var(--accent); font-weight: 700; cursor: help; border-bottom: 1px dotted var(--accent); }
+.scale-note { font-size: 0.85rem; color: var(--muted); margin: 0 0 0.5rem; }
 .card img, .thumb {
   width: 100%; aspect-ratio: 1 / 1; object-fit: contain; background: var(--image-bg); display: block;
 }

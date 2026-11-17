@@ -7,6 +7,7 @@ the parser. A failed call gives None, and the search then uses the question as w
 from __future__ import annotations
 
 import json
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -17,10 +18,15 @@ SCHEMA = {"type": "object", "additionalProperties": False, "required": ["text"],
           "properties": {"text": {"type": "string"}}}
 
 
-def is_vietnamese(question: str) -> bool:
+def is_vietnamese(question: str, ascii_phrases: frozenset[str] = frozenset()) -> bool:
     """A letter only Vietnamese uses (the rule parser's test; it matches the language of all 172
-    benchmark questions)."""
-    return bool(_VI_CHARS & set(normalize(question)))
+    benchmark questions), or one of `ascii_phrases`: Vietnamese forms written without such a
+    letter ("suy tim"), as whole words of the normalised question."""
+    text = normalize(question)
+    if _VI_CHARS & set(text):
+        return True
+    padded = f" {' '.join(re.findall(r'[a-z0-9]+', text))} "
+    return any(f" {p} " in padded for p in ascii_phrases)
 
 
 def usable(text: str | None) -> str:
@@ -37,11 +43,14 @@ class Translation:
 
 
 class Translator:
-    def __init__(self, ask: Callable[[str], str]):
-        self.ask = ask
+    def __init__(self, ask: Callable[[str], str], ascii_phrases: frozenset[str] = frozenset()):
+        self.ask, self.ascii_phrases = ask, ascii_phrases
+
+    def is_vietnamese(self, question: str) -> bool:
+        return is_vietnamese(question, self.ascii_phrases)
 
     def english(self, question: str) -> Translation:
-        if not is_vietnamese(question):
+        if not self.is_vietnamese(question):
             return Translation(question, False)
         started = time.perf_counter()
         try:
