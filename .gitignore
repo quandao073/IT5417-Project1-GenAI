@@ -35,6 +35,7 @@ htmlcov/
 # --- Node / Next.js ---
 node_modules/
 web/.next/
+web/.next-dev/
 web/out/
 web/.turbo/
 web/next-env.d.ts
