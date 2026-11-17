@@ -49,6 +49,7 @@ class KGResult:
     trace: dict
     timings: dict
     degraded: list[str] = field(default_factory=list)
+    status: str = "ok"          # "out_of_scope": the request asks for no chest X-ray (D79)
 
     def warnings_text(self) -> list[str]:
         everything = [*self.warnings, *[w for i in self.intents for w in i.warnings]]
@@ -221,6 +222,17 @@ class KGSearch:
                 seen.add(key)
         intents = unique
         trace["intents"] = [i.to_dict() for i in intents]
+
+        # a request for no chest X-ray at all, from the language model (never the rule parser),
+        # where no phrase found a concept: no images, no explanation, the translation
+        # is not waited for (D79)
+        if (parsed.parser == "llm" and query.scope == "out_of_scope"
+                and not any(i.cui for i in intents)):
+            trace["scope"] = {"scope": query.scope, "reason": query.scope_reason}
+            timings["total_ms"] = (time.perf_counter() - started) * 1000
+            return KGResult(uuid.uuid4().hex, question, query.language, query, intents, warnings,
+                            [], trace, {k: round(v, 1) for k, v in timings.items()}, degraded,
+                            status="out_of_scope")
 
         if english is not None:
             t = time.perf_counter()

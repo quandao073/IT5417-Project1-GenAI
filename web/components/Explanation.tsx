@@ -50,6 +50,7 @@ const STATUS: Record<ExplanationEvent["status"], string> = {
   ungrounded: "bị bỏ: không câu nào có căn cứ",
   failed: "lỗi model ngôn ngữ",
   disabled: "đã tắt",
+  out_of_scope: "không có: câu hỏi ngoài phạm vi",
   no_results: "không có kết quả",
 };
 

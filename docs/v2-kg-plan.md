@@ -21,7 +21,7 @@ ghi vào `docs/measured-facts.md`, quyết định vào `WORKLOG.md`. Ngưỡng 
 | V2-8 | Đánh giá chính thức, heldout một lần | V2-7 | ✅ 2026-11-11: heldout một lần (D75): B2 + trộn − B1 +0,138 [+0,078; +0,198]; sau heldout D76, D77; `docs/kg-evaluation.md`, *Kết luận đánh giá* |
 | V2-9 | Agent (ablation) và UI | V2-8 | 🔄 UI xong (D78, `make demo`); agent ⏳ |
 | V2-10 | Thêm ảnh không dựng lại KG: embed rồi nối logit vào ma trận bằng probe đã có (N6) | V2-6 | ⏳ |
-| V2-11 | CI: pytest + ruff mỗi lần push (N12) | — | ⏳ |
+| V2-11 | CI: pytest + ruff mỗi lần push (N12) | — | ✅ `.github/workflows/ci.yml`, ~1,5 phút, badge ở README |
 | V2-12 | Số đo vận hành: log JSON từng request, báo cáo độ trễ, chi phí LLM, tỉ lệ fallback (N10) | V2-6 | ⏳ |
 | V2-13 | Runbook và chạy thử `docker compose` trên máy sạch (N12, T15) | V2-6 | ⏳ |
 | V2-14 | Quy trình kiểm lại hiệu chỉnh cho ảnh từ nguồn khác (N7) | V2-6 | ⏳ |
@@ -35,16 +35,15 @@ Ngoài V2 (chưa xếp lịch):
 38 Disease lõi chưa có đường và có dưới 50 lượt nhắc trên pool (danh sách ở `data/kg/graph/diseases_without_route.json`;
 sau khi thêm cạnh của lượt rà đường còn 37): không chấm được, không phân xử thêm trong V2.
 
-**TIẾP THEO** (V2-7, V2-8 đóng 2026-11-11), theo thứ tự:
+**TIẾP THEO** (V2-7, V2-8 đóng 2026-11-11; V2-11 và UI của V2-9 xong 2026-11-17), theo thứ tự:
 
-1. V2-11: CI chạy pytest + ruff mỗi lần push (N12).
-2. V2-10: thêm ảnh mà không dựng lại KG (N6).
-3. V2-12: số đo vận hành: log, độ trễ, chi phí LLM, tỉ lệ fallback (N10).
-4. V2-13: runbook và chạy thử `docker compose` trên máy sạch (N12, T15).
-5. V2-14: kiểm lại hiệu chỉnh cho ảnh từ nguồn khác (N7).
-6. V2-9: agent (ablation); UI demo đã xong (D78).
-7. X-1: cột vòng hai.
-8. Viết báo cáo đồ án, từ *Kết luận đánh giá* của `docs/kg-evaluation.md`.
+1. V2-10: thêm ảnh mà không dựng lại KG (N6).
+2. V2-12: số đo vận hành: log, độ trễ, chi phí LLM, tỉ lệ fallback (N10).
+3. V2-13: runbook và chạy thử `docker compose` trên máy sạch (N12, T15).
+4. V2-14: kiểm lại hiệu chỉnh cho ảnh từ nguồn khác (N7).
+5. V2-9: agent (ablation); UI demo đã xong (D78, D79).
+6. X-1: cột vòng hai.
+7. Viết báo cáo đồ án, từ *Kết luận đánh giá* của `docs/kg-evaluation.md`.
 
 ## Dữ liệu
 
@@ -70,7 +69,7 @@ Cả hai thư mục nằm dưới `data/` (gitignored). Không commit, không đ
 | Ma trận điểm | `data/indexes/image_scores/<build_id>_ext1/`: 37 cột (14 nhãn + 23 cột mở rộng, D62), hiệu chỉnh trên pool-val; `cxr kg-quality` → `quality.json` (6 cột yếu, D55) | Cột vòng hai (X-1) |
 | KG | `cxr kg-build-graph` → `data/kg/graph/`, `kg_build_id` **kg_1637d5c0ee06** (băm năm bảng KG; bảng ghi theo thứ tự cố định nên dựng lại hay sửa chú thích config không đổi id): 9.632 nút (lõi 595), IS_A 10.234, PART_OF 3.826, SUGGESTS 69, TYPICALLY_AT 579; độ nối D59 theo lượt nhắc 0,948; cạnh tay ở `graph.manual_edges` | 48 Disease lõi có lượt nhắc vẫn chưa có đường (`docs/v2-6-smoke.md`) |
 | Neo4j | service `neo4j` (profile `kg`), `cxr kg-load-neo4j`, `validate-indexes --kg` (D65) | — |
-| Truy vấn B2 | `cxr kg-query`, `POST /api/v1/search/kg` (D66–D69); parser, chooser, diễn giải đều dùng `claude-haiku-5-5`; smoke 24 câu ở `docs/v2-6-smoke.md` | Lớp 4 heldout đo bằng v4 + kiểm cũ (D77); N2 dao động quanh 1,5 s; CI (V2-11); UI chờ `pnpm` (T5) |
+| Truy vấn B2 | `cxr kg-query`, `POST /api/v1/search/kg` (D66–D69); parser, chooser, diễn giải đều dùng `claude-haiku-5-5`; smoke 24 câu ở `docs/v2-6-smoke.md` | Lớp 4 heldout đo bằng v4 + kiểm cũ (D77); N2 dao động quanh 1,5 s |
 
 ## Các task
 
@@ -175,7 +174,8 @@ Disease chờ phân xử, 4 là ứng viên cột vòng hai; N2 p95 1,51 s.
 
 - **V2-10.** Lệnh thêm ảnh: embed shard mới, nối logit bằng probe đã hiệu chỉnh, không đổi các dòng cũ của ma trận,
   không dựng lại KG; 1.000 ảnh < 5 phút CPU.
-- **V2-11.** CI (GitHub Actions): `uv sync`, `pytest -q`, `ruff check`; không cần dữ liệu thật; < 5 phút.
+- **V2-11.** CI (GitHub Actions): `uv sync`, `pytest -q`, `ruff check`; không cần dữ liệu thật; < 5 phút. Xong
+  2026-11-17: thêm job `web` (`pnpm typecheck`, `pnpm test`); hai job chạy song song, lần đầu 74 s và 26 s.
 - **V2-12.** Nạp `configs/logging.yaml` (đang chưa dùng); mỗi request một dòng log JSON có độ trễ từng bước, token và
   chi phí LLM, cờ fallback, các id truy vết; lệnh báo cáo p50/p95, tỉ lệ fallback, chi phí mỗi 1.000 câu.
 - **V2-13.** Runbook: dựng từ đầu, nâng cấp encoder hoặc KG, khôi phục khi Qdrant hoặc Neo4j hỏng; build và chạy

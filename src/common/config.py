@@ -47,7 +47,8 @@ def default_config_dir() -> Path:
 
 def load_config(name: str, config_dir: Path | None = None) -> dict:
     """Load `configs/<name>.yaml`. `name` is a bare name, never a path."""
-    if name != Path(name).name or name in {"", ".", ".."}:
+    # "/" and "\\" on every OS: on Linux "sub\data" is one file name, not a path (CI, V2-11)
+    if name != Path(name).name or "/" in name or "\\" in name or name in {"", ".", ".."}:
         raise ValueError(f"Config name must be a bare name, got {name!r}")
     path = (config_dir or default_config_dir()) / f"{name}.yaml"
     if not path.is_file():

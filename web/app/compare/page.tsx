@@ -3,6 +3,7 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 
+import { OutOfScope } from "@/components/OutOfScope";
 import { ResultCard } from "@/components/ResultGrid";
 import type { FormValue } from "@/components/SearchForm";
 import { SearchForm } from "@/components/SearchForm";
@@ -19,6 +20,7 @@ const SYSTEMS: { key: Key; title: string; note: string; scale: string }[] = [
 ];
 
 interface Column {
+  refusal?: ResultsEvent;      // B2 refused a request for no chest X-ray (D79)
   results: KGResult[];
   intents: Intent[];
   text?: string | null;
@@ -48,6 +50,7 @@ function ComparePage() {
       .then((r): Column => ({ results: asKG(r), intents: [], text: r.query_text, warnings: r.warnings }), fail);
     const b2 = searchKGOnce({ query: v.query, top_k: v.topK, views: v.views })
       .then((r: ResultsEvent): Column => ({ results: r.results, intents: r.intents,
+                                            refusal: r.status === "out_of_scope" ? r : undefined,
                                             text: r.trace.fallback?.text, warnings: r.warnings }), fail);
     const [c1, c2, c0] = await Promise.all([b1, b2, b0]);
     setCols({ B1: c1, B2: c2, B0: c0 });
@@ -93,6 +96,7 @@ function ComparePage() {
               <p className="small muted">{s.note}{c.text ? ` · văn bản: “${c.text}”` : ""}</p>
               <p className="scale-note">Thang điểm: <strong>{s.scale}</strong></p>
               {c.error && <p className="error">{c.error}</p>}
+              {c.refusal && <OutOfScope data={c.refusal} />}
               {c.warnings.map((w) => <span key={w} className="tag warn">{w}</span>)}
               <div className="grid">
                 {c.results.map((r) => {

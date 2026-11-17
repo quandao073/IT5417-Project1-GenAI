@@ -257,9 +257,9 @@ def test_fusion_is_the_evaluated_one_and_weight_zero_is_the_kg_score():
 def test_an_unaccented_vietnamese_phrase_of_the_kg_is_translated():
     from src.kg.translate import Translator, is_vietnamese
 
-    phrases = frozenset({"suy tim", "tdmp"})
+    phrases = {"suy tim": "suy tim = heart failure", "tdmp": "tdmp = pleural effusion"}
     assert is_vietnamese("suy tim", phrases) and is_vietnamese("phim co TDMP", phrases)
-    assert not is_vietnamese("suy tim", frozenset())
+    assert not is_vietnamese("suy tim", ())
     assert not is_vietnamese("heart failure", phrases)
     assert not is_vietnamese("suy timber", phrases)          # whole words only
     t = Translator(lambda q: "heart failure", phrases)
@@ -296,3 +296,80 @@ def test_the_text_route_is_not_taken_when_something_wanted_was_scored_or_only_ne
     only_no = parse_reply(exclude=["Pleural Effusion"])
     got = make_search(parser_chat=Chat(only_no), text_fallback=_fallback(matrix())).search("y")
     assert "text_fallback" not in codes(got) and got.rows
+
+
+def test_unaccented_vietnamese_goes_to_its_own_prompt_and_accented_to_the_evaluated_one():
+    import polars as pl
+
+    from src.kg.runtime import vi_ascii_phrases
+    from src.kg.translate import Translator, strip_marks
+
+    assert strip_marks("tràn dịch màng phổi, Đường") == "tran dich mang phoi, Duong"
+    aliases = pl.DataFrame({"cui": ["C1", "C2", "C3", "C4"],
+                            "text": ["suy tim", "tràn dịch màng phổi", "phù", "copd"],
+                            "norm": ["suy tim", "tràn dịch màng phổi", "phù", "copd"],
+                            "lang": ["vi", "vi", "vi", "en"]})
+    nodes = pl.DataFrame({"cui": ["C1", "C2", "C3", "C4"],
+                          "name": ["Heart failure", "Pleural effusion (disorder)", "Edema",
+                                   "COPD"]})
+    phrases = vi_ascii_phrases(aliases, nodes)
+    assert phrases == {"suy tim": "suy tim = heart failure",       # "phu" alone would catch English
+                       "tran dich mang phoi": "tràn dịch màng phổi = pleural effusion"}
+    asked: list[tuple[str, str]] = []
+    t = Translator(lambda q: asked.append(("plain", q)) or "x", phrases,
+                   lambda q: asked.append(("unaccented", q)) or "y")
+    for q in ("suy tim", "tran dich mang phoi trai", "tràn dịch màng phổi", "pleural effusion"):
+        t.english(q)
+    assert asked == [
+        ("unaccented", "suy tim\nTerm: suy tim = heart failure"),
+        ("unaccented", "tran dich mang phoi trai\nTerm: tràn dịch màng phổi = pleural effusion"),
+        ("plain", "tràn dịch màng phổi")]
+    # the evaluation passes no unaccented prompt: the question as written, to the evaluated one
+    asked.clear()
+    Translator(lambda q: asked.append(("plain", q)) or "x", phrases).english("suy tim")
+    assert asked == [("plain", "suy tim")]
+
+
+
+# -- requests for no chest X-ray (D79) ---------------------------------------------------------
+
+def _scoped(reply, **kw):
+    from tests.kg.search_kit import matrix
+
+    fb = _fallback(matrix())
+    return make_search(parser_chat=Chat(reply), text_fallback=fb, **kw), fb
+
+
+def test_out_of_scope_with_nothing_recognised_returns_no_images_and_no_text_route():
+    search, fb = _scoped(parse_reply(scope="out_of_scope"), explain_chat=Chat({}))
+    got = search.search("ảnh chó mèo")
+    assert got.status == "out_of_scope" and got.rows == [] and fb.encoder.texts == []
+    assert got.trace["scope"]["scope"] == "out_of_scope" and "fallback" not in got.trace
+    assert search.explain(got) is None
+
+
+def test_out_of_scope_with_an_unknown_term_is_still_refused():
+    search, _ = _scoped(parse_reply(terms=[("con mèo", "PRESENT")], scope="out_of_scope"),
+                        choose_chat=Chat({"cui": None}))
+    got = search.search("con mèo")
+    assert got.status == "out_of_scope" and got.rows == []
+
+
+def test_a_recognised_concept_overrides_out_of_scope():
+    search, _ = _scoped(parse_reply(include=["Pleural Effusion"], scope="out_of_scope"))
+    got = search.search("tràn dịch màng phổi và sỏi thận")
+    assert got.status == "ok" and got.rows
+
+
+def test_in_scope_without_a_concept_keeps_the_text_route():
+    search, fb = _scoped(parse_reply(terms=[("xyz qwerty", "PRESENT")], scope="chest_xray"))
+    got = search.search("xyz qwerty")
+    assert got.status == "ok" and got.rows and got.trace["fallback"]["route"] == "text"
+
+
+def test_the_rule_parser_never_refuses_and_keeps_the_text_route_with_its_warning():
+    search, fb = _scoped(parse_reply(scope="out_of_scope"))
+    search.parser.llm = None                      # the language model is down: rule parser
+    got = search.search("ảnh chó mèo")
+    assert got.status == "ok" and got.rows and "fallback" in got.trace
+    assert any(w.code == "llm_fallback" for w in got.warnings)

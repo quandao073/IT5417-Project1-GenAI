@@ -44,6 +44,9 @@ TEXT = {
     "llm_fallback": {
         "en": "The language model was unavailable ({reason}); the deterministic route was used.",
         "vi": "Model ngôn ngữ không dùng được ({reason}); đã dùng đường tất định."},
+    "out_of_scope": {
+        "en": "This system only searches chest X-ray images.",
+        "vi": "Hệ thống chỉ tìm ảnh X-quang ngực."},
     "text_fallback": {
         "en": "No concept was recognised; results follow text similarity.",
         "vi": "Không nhận ra khái niệm; kết quả theo độ giống văn bản."},

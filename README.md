@@ -1,5 +1,7 @@
 # CXR Semantic Retrieval
 
+[![ci](https://github.com/quandao073/IT5417-Project1-GenAI/actions/workflows/ci.yml/badge.svg)](https://github.com/quandao073/IT5417-Project1-GenAI/actions/workflows/ci.yml)
+
 Tìm ảnh X-quang ngực bằng câu hỏi tự nhiên, tiếng Anh hoặc tiếng Việt, chỉ dựa vào ảnh.
 
 ## Bài toán
@@ -209,6 +211,10 @@ uv run pytest -m model            # adapter thật trên trọng số đã tải
 uv run pytest -m integration      # cần Qdrant
 uv run ruff check src tests
 ```
+
+CI (`.github/workflows/ci.yml`) chạy `uv sync --all-extras --locked`, `ruff` và `pytest -q` (bỏ các test cần mô
+hình, Qdrant, Neo4j, LLM hay dữ liệu theo marker sẵn có), cùng `pnpm typecheck` và `pnpm test` của `web/`, mỗi lần push và
+mỗi PR; khoảng 1,5 phút.
 
 ## Cấu trúc
 
